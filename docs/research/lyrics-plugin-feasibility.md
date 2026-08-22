@@ -156,7 +156,7 @@ A local 2026-08-23 compatibility probe fetched a cached TTML response from the d
 - Test `404` and cache-miss `401` as empty results; test `422`, `429`, `5xx`, network failure, malformed JSON, and missing/blank `ttml` as the chosen error classes.
 - Verify the manifest denies undeclared hosts and does not request library/user permissions.
 - Build with TinyGo, package the `.ndp`, and inspect the archive for exactly the expected manifest/module assets.
-- Run end to end against a local Navidrome containing #5733: a track with a sidecar must produce no Better Lyrics request; a track without any local lyric source must invoke the plugin and display successfully returned TTML in the sidebar.
+- Run end-to-end against a local Navidrome containing #5733: a track with a sidecar must produce no Better Lyrics request; a track without any local lyric source must invoke the plugin and display successfully returned TTML in the sidebar.
 - Exercise simultaneous requests to confirm the plugin respects Navidrome's concurrency bound and handles `Retry-After` without a retry storm.
 
 ## Open risks and gates

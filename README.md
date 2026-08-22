@@ -25,12 +25,15 @@ Enabled = true
 
 The plugin ID comes from the package filename. Keep the file named `better-lyrics.ndp`, or use its new filename in `LyricsPriority`.
 
-After installation, validate and enable the plugin:
+After copying the package, validate it, ask a running Navidrome instance to discover it, and enable it:
 
 ```bash
 navidrome plugin validate better-lyrics.ndp
+navidrome plugin rescan
 navidrome plugin enable better-lyrics
 ```
+
+`plugin rescan` is needed when `Plugins.AutoReload` is disabled. Restarting Navidrome or setting `Plugins.AutoReload = true` are alternatives that also discover a newly copied package before it is enabled.
 
 With the priority above, Navidrome stops at the first non-empty source. Sidecar and embedded lyrics therefore win; Better Lyrics is contacted only when every configured local source is empty.
 
@@ -49,7 +52,7 @@ See the Better Lyrics documentation for the current [authentication](https://lyr
 
 ## Privacy and attribution
 
-Using this plugin sends song metadata and the Navidrome server's IP address and user agent to Better Lyrics and its infrastructure. Better Lyrics says request logs can be retained for up to seven days; review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
+Using this plugin sends song metadata, the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version>`) to Better Lyrics and its infrastructure; it does not send the browser's user agent. Better Lyrics says request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
 
 Lyrics are supplied by Better Lyrics and its upstream providers. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
 
