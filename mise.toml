@@ -1,0 +1,52 @@
+[tools]
+go = "1.25.14"
+tinygo = "0.40.1"
+"aqua:WebAssembly/binaryen" = "132"
+
+[tasks.fmt]
+description = "Format Go source"
+run = "gofmt -w ."
+
+[tasks.fmt-check]
+description = "Check Go formatting"
+run = '''
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+  printf 'Go files need formatting:\n%s\n' "$unformatted"
+  exit 1
+fi
+'''
+
+[tasks.test]
+description = "Run race-enabled unit tests"
+run = "go test -race ./..."
+
+[tasks.build]
+description = "Build the Navidrome WebAssembly plugin"
+run = "tinygo build -opt=2 -scheduler=none -no-debug -o plugin.wasm -target wasip1 -buildmode=c-shared ."
+
+[tasks.package]
+description = "Package the Navidrome plugin"
+depends = ["build"]
+run = "zip -q -j -FS better-lyrics.ndp plugin.wasm manifest.json"
+
+[tasks.package-check]
+description = "Validate the plugin package contents"
+depends = ["package"]
+run = '''
+unzip -t better-lyrics.ndp
+entries="$(unzip -Z1 better-lyrics.ndp | LC_ALL=C sort)"
+expected="$(printf 'manifest.json\nplugin.wasm')"
+if [ "$entries" != "$expected" ]; then
+  printf 'Unexpected package contents:\n%s\n' "$entries"
+  exit 1
+fi
+'''
+
+[tasks.check]
+description = "Run all checks and build the package"
+run = '''
+mise run fmt-check
+mise run test
+mise run package-check
+'''

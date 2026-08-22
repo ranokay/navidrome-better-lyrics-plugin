@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.63.2/plugins/manifest-schema.json",
+  "name": "Better Lyrics",
+  "author": "Yuuta",
+  "version": "0.1.0",
+  "description": "Provides synchronized TTML lyrics from the Better Lyrics API",
+  "website": "https://github.com/ranokay/navidrome-better-lyrics-plugin",
+  "permissions": {
+    "http": {
+      "reason": "Fetch synchronized lyrics from the Better Lyrics API",
+      "requiredHosts": [
+        "lyrics-api.boidu.dev"
+      ]
+    }
+  }
+}
