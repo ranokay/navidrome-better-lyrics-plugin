@@ -20,8 +20,9 @@ const (
 	degradedLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	negativeLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	defaultRateLimitCooldown      = 30 * time.Second
-	lyricsCacheKeyPrefix          = "lyrics:v1:"
-	betterLyricsCooldownKey       = "rate-limit:better-lyrics:v1"
+	lyricsCacheKeyPrefix          = "lyrics:v2:"
+	betterLyricsGlobalCooldownKey = "rate-limit:better-lyrics:global:v2"
+	betterLyricsQueryCooldownKey  = "rate-limit:better-lyrics:query:v2:"
 )
 
 type lyricsCacheStore interface {
@@ -30,6 +31,19 @@ type lyricsCacheStore interface {
 }
 
 type noopLyricsCache struct{}
+
+type rateLimitCooldownError struct {
+	global    bool
+	remaining time.Duration
+}
+
+func (e *rateLimitCooldownError) Error() string {
+	scope := "request"
+	if e.global {
+		scope = "API"
+	}
+	return fmt.Sprintf("better lyrics %s cooldown active for %s", scope, e.remaining)
+}
 
 func (noopLyricsCache) Get(string) ([]byte, bool, error) {
 	return nil, false, nil
@@ -99,37 +113,67 @@ func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyri
 	_ = p.cache.SetWithTTL(key, value, ttl)
 }
 
-func (p *betterLyricsProvider) activeBetterLyricsCooldown() error {
-	value, exists, err := p.cache.Get(betterLyricsCooldownKey)
+func (p *betterLyricsProvider) activeBetterLyricsCooldown(requestURL string) error {
+	if remaining := p.activeCooldown(betterLyricsGlobalCooldownKey); remaining > 0 {
+		return &rateLimitCooldownError{global: true, remaining: remaining}
+	}
+	if remaining := p.activeCooldown(rateLimitQueryKey(requestURL)); remaining > 0 {
+		return &rateLimitCooldownError{remaining: remaining}
+	}
+	return nil
+}
+
+func (p *betterLyricsProvider) activeCooldown(key string) time.Duration {
+	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
 		// A cache failure must not make the lyrics provider unavailable.
 		//nolint:nilerr // Cooldown enforcement intentionally fails open.
-		return nil
+		return 0
 	}
 
 	untilUnix, err := strconv.ParseInt(string(value), 10, 64)
 	if err != nil {
 		//nolint:nilerr // Ignore a corrupt cooldown value and keep serving requests.
-		return nil
+		return 0
 	}
 	remaining := time.Unix(untilUnix, 0).Sub(p.now())
 	if remaining <= 0 {
-		return nil
+		return 0
 	}
 	seconds := durationSecondsCeil(remaining)
-	return fmt.Errorf("better lyrics API cooldown active for %s", time.Duration(seconds)*time.Second)
+	return time.Duration(seconds) * time.Second
 }
 
-func (p *betterLyricsProvider) rememberRateLimit(response *host.HTTPResponse) {
+func (p *betterLyricsProvider) rememberRateLimit(response *host.HTTPResponse, requestURL string) time.Duration {
 	now := p.now()
-	deadline := now.Add(retryAfterDuration(response.Headers, now))
+	retryAfter := retryAfterDuration(response.Headers, now)
+	deadline := now.Add(retryAfter)
 	untilUnix := deadline.Unix()
 	if deadline.Nanosecond() != 0 {
 		// The deadline is stored as whole Unix seconds, so round up rather than shorten Retry-After.
 		untilUnix++
 	}
 	ttlSeconds := durationSecondsCeil(time.Unix(untilUnix, 0).Sub(now))
-	_ = p.cache.SetWithTTL(betterLyricsCooldownKey, []byte(strconv.FormatInt(untilUnix, 10)), ttlSeconds)
+	key := rateLimitQueryKey(requestURL)
+	if globalRateLimit(response) {
+		key = betterLyricsGlobalCooldownKey
+	}
+	_ = p.cache.SetWithTTL(key, []byte(strconv.FormatInt(untilUnix, 10)), ttlSeconds)
+	return retryAfter
+}
+
+func rateLimitQueryKey(requestURL string) string {
+	digest := sha256.Sum256([]byte(requestURL))
+	return fmt.Sprintf("%s%x", betterLyricsQueryCooldownKey, digest)
+}
+
+func globalRateLimit(response *host.HTTPResponse) bool {
+	limitType := strings.ToLower(strings.TrimSpace(headerValue(response.Headers, "X-RateLimit-Type")))
+	if limitType != "" {
+		return limitType == "exceeded"
+	}
+	body := strings.ToLower(string(response.Body))
+	return !strings.Contains(body, "no cached data") && !strings.Contains(body, "requires cached data")
 }
 
 func retryAfterDuration(headers map[string]string, now time.Time) time.Duration {

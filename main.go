@@ -101,66 +101,60 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 	}
 
 	var lookupErrors []error
-	betterLyricsAvailable := false
-	cooldownReported := false
+	globalCooldownReported := false
+	var best lyricsCandidate
 	var text string
 	var retryWithoutOptionalMetadata bool
-	if cooldownErr := p.activeBetterLyricsCooldown(); cooldownErr != nil {
-		lookupErrors = append(lookupErrors, cooldownErr)
-		cooldownReported = true
-	} else {
-		betterLyricsAvailable = true
-		var err error
-		text, retryWithoutOptionalMetadata, err = p.fetchBetterLyricsTTML(requestURL, headers)
-		if err != nil {
-			lookupErrors = append(lookupErrors, err)
-			betterLyricsAvailable = false
-			cooldownReported = isRateLimitError(err)
-		} else if text != "" {
-			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), false, nil
+	var err error
+	text, retryWithoutOptionalMetadata, err = p.fetchBetterLyricsTTML(requestURL, headers)
+	if err != nil {
+		lookupErrors = append(lookupErrors, err)
+		globalCooldownReported = isGlobalRateLimitError(err)
+	} else if text != "" {
+		best = newLyricsCandidate(lyrics.LyricsText{Text: text}, "ttml", "ttml")
+		if best.quality == timingSyllable {
+			return best.response, false, nil
 		}
 	}
 
 	minimalURL, _ := lyricsRequestURLWithoutOptionalMetadata(input.Track)
-	if betterLyricsAvailable && retryWithoutOptionalMetadata && minimalURL != requestURL {
+	if retryWithoutOptionalMetadata && minimalURL != requestURL {
 		var err error
 		text, _, err = p.fetchBetterLyricsTTML(minimalURL, headers)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
-			cooldownReported = cooldownReported || isRateLimitError(err)
+			globalCooldownReported = globalCooldownReported || isGlobalRateLimitError(err)
 		} else if text != "" {
-			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), false, nil
+			best = preferLyricsCandidate(best, newLyricsCandidate(lyrics.LyricsText{Text: text}, "ttml", "ttml"))
+			if best.quality == timingSyllable {
+				return best.response, len(lookupErrors) > 0, nil
+			}
 		}
 	}
 
-	var plainFallback lyrics.LyricsText
 	unisonURL, _ := unisonRequestURL(input.Track)
 	unisonLyrics, unisonFormat, err := p.fetchUnisonLyrics(unisonURL, headers)
 	if err != nil {
 		lookupErrors = append(lookupErrors, err)
 	} else if unisonLyrics.Text != "" {
-		if unisonFormat != "plain" {
-			return sourcedLyricsResponse(unisonLyrics, "unison", unisonFormat), len(lookupErrors) > 0, nil
-		}
-		plainFallback = unisonLyrics
-	}
-
-	if !cooldownReported {
-		if cooldownErr := p.activeBetterLyricsCooldown(); cooldownErr != nil {
-			lookupErrors = append(lookupErrors, cooldownErr)
-		} else {
-			kugouURL, _ := kugouRequestURL(input.Track)
-			kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
-			if err != nil {
-				lookupErrors = append(lookupErrors, err)
-			} else if kugouLyrics.Text != "" {
-				return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), len(lookupErrors) > 0, nil
-			}
+		best = preferLyricsCandidate(best, newLyricsCandidate(unisonLyrics, "unison", unisonFormat))
+		if best.quality == timingSyllable {
+			return best.response, len(lookupErrors) > 0, nil
 		}
 	}
 
-	if plainFallback.Text != "" {
-		return sourcedLyricsResponse(plainFallback, "unison", "plain"), len(lookupErrors) > 0, nil
+	if (!best.present() || best.quality < timingLine) && !globalCooldownReported {
+		kugouURL, _ := kugouRequestURL(input.Track)
+		kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
+		if err != nil {
+			lookupErrors = append(lookupErrors, err)
+		} else if kugouLyrics.Text != "" {
+			best = preferLyricsCandidate(best, newLyricsCandidate(kugouLyrics, "kugou", "lrc"))
+		}
+	}
+
+	if best.present() {
+		return best.response, len(lookupErrors) > 0, nil
 	}
 	if len(lookupErrors) > 0 {
 		return lyrics.GetLyricsResponse{}, false, errors.Join(lookupErrors...)
@@ -179,6 +173,9 @@ func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyri
 }
 
 func (p *betterLyricsProvider) fetchBetterLyricsTTML(requestURL string, headers map[string]string) (string, bool, error) {
+	if cooldownErr := p.activeBetterLyricsCooldown(requestURL); cooldownErr != nil {
+		return "", !isGlobalRateLimitError(cooldownErr), cooldownErr
+	}
 	response, err := p.send(host.HTTPRequest{
 		Method:    "GET",
 		URL:       requestURL,
@@ -205,8 +202,8 @@ func (p *betterLyricsProvider) fetchBetterLyricsTTML(requestURL string, headers 
 	case 401, 404:
 		return "", true, nil
 	case 429:
-		p.rememberRateLimit(response)
-		return "", false, apiResponseError(response)
+		retryAfter := p.rememberRateLimit(response, requestURL)
+		return "", !globalRateLimit(response), rateLimitResponseError("better lyrics API", response, retryAfter)
 	default:
 		return "", false, apiResponseError(response)
 	}
@@ -249,6 +246,9 @@ func (p *betterLyricsProvider) fetchUnisonLyrics(requestURL string, headers map[
 }
 
 func (p *betterLyricsProvider) fetchKugouLyrics(requestURL string, headers map[string]string) (lyrics.LyricsText, error) {
+	if cooldownErr := p.activeBetterLyricsCooldown(requestURL); cooldownErr != nil {
+		return lyrics.LyricsText{}, cooldownErr
+	}
 	response, err := p.sendRequest("Better Lyrics Kugou API", requestURL, headers)
 	if err != nil {
 		return lyrics.LyricsText{}, err
@@ -267,8 +267,8 @@ func (p *betterLyricsProvider) fetchKugouLyrics(requestURL string, headers map[s
 	case 401, 404:
 		return lyrics.LyricsText{}, nil
 	case 429:
-		p.rememberRateLimit(response)
-		return lyrics.LyricsText{}, providerResponseError("Better Lyrics Kugou API", response)
+		retryAfter := p.rememberRateLimit(response, requestURL)
+		return lyrics.LyricsText{}, rateLimitResponseError("Better Lyrics Kugou API", response, retryAfter)
 	default:
 		return lyrics.LyricsText{}, providerResponseError("Better Lyrics Kugou API", response)
 	}
@@ -365,21 +365,23 @@ func apiResponseError(response *host.HTTPResponse) error {
 }
 
 type providerHTTPError struct {
-	source string
-	status int32
-	detail string
+	source            string
+	status            int32
+	detail            string
+	retryAfterSeconds int64
+	globalRateLimit   bool
 }
 
 func (e *providerHTTPError) Error() string {
-	if e.detail == "" {
-		return fmt.Sprintf("%s returned HTTP %d", e.source, e.status)
+	detail := ""
+	if e.detail != "" {
+		detail = ": " + e.detail
 	}
-	return fmt.Sprintf("%s returned HTTP %d: %s", e.source, e.status, e.detail)
-}
-
-func isRateLimitError(err error) bool {
-	var responseErr *providerHTTPError
-	return errors.As(err, &responseErr) && responseErr.status == 429
+	retry := ""
+	if e.retryAfterSeconds > 0 {
+		retry = fmt.Sprintf("; retry after %ds", e.retryAfterSeconds)
+	}
+	return fmt.Sprintf("%s returned HTTP %d%s%s", e.source, e.status, detail, retry)
 }
 
 func providerResponseError(source string, response *host.HTTPResponse) error {
@@ -395,6 +397,25 @@ func providerResponseError(source string, response *host.HTTPResponse) error {
 		detail = string(detailRunes[:maximumAPIErrorRunes]) + "…"
 	}
 	return &providerHTTPError{source: source, status: response.StatusCode, detail: detail}
+}
+
+func rateLimitResponseError(source string, response *host.HTTPResponse, retryAfter time.Duration) error {
+	err := providerResponseError(source, response)
+	responseErr, ok := err.(*providerHTTPError)
+	if ok {
+		responseErr.retryAfterSeconds = durationSecondsCeil(retryAfter)
+		responseErr.globalRateLimit = globalRateLimit(response)
+	}
+	return err
+}
+
+func isGlobalRateLimitError(err error) bool {
+	var responseErr *providerHTTPError
+	if errors.As(err, &responseErr) {
+		return responseErr.status == 429 && responseErr.globalRateLimit
+	}
+	var cooldownErr *rateLimitCooldownError
+	return errors.As(err, &cooldownErr) && cooldownErr.global
 }
 
 func pluginUserAgent() string {

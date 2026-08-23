@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -32,8 +33,8 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 		{
 			name:         "returns TTML unchanged",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  <tt xml:lang=\"en\">timed text</tt>\n"}`)},
-			wantText:     "  <tt xml:lang=\"en\">timed text</tt>\n",
+			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\">timed text</tt>\n"}`)},
+			wantText:     "  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\">timed text</tt>\n",
 			wantProvider: "ttml",
 			wantFormat:   "ttml",
 			wantRequests: 1,
@@ -156,7 +157,7 @@ func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.
 		requests++
 		return &host.HTTPResponse{
 			StatusCode: 200,
-			Body:       []byte(`{"ttml":"<tt>cached lyrics</tt>"}`),
+			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached lyrics</tt>"}`),
 		}, nil
 	}, cache, time.Now)
 
@@ -310,8 +311,11 @@ func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing
 		}
 		return &host.HTTPResponse{
 			StatusCode: 429,
-			Headers:    map[string]string{"Retry-After": "12"},
-			Body:       []byte(`{"error":"Rate limit exceeded"}`),
+			Headers: map[string]string{
+				"Retry-After":      "12",
+				"X-RateLimit-Type": "exceeded",
+			},
+			Body: []byte(`{"error":"Rate limit exceeded"}`),
 		}, nil
 	}, cache, func() time.Time { return now })
 
@@ -345,6 +349,95 @@ func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing
 	}
 	if secondRequests != 1 {
 		t.Fatalf("second request count = %d, want one Unison request", secondRequests)
+	}
+}
+
+func TestBetterLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
+	cache := newFakeLyricsCache()
+	requests := make([]host.HTTPRequest, 0, 4)
+	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests = append(requests, request)
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		if parsed.Query().Get("s") == "Wanted" {
+			return &host.HTTPResponse{
+				StatusCode: 200,
+				Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">wanted lyrics</tt>"}`),
+			}, nil
+		}
+		if parsed.Host == "unison.boidu.dev" {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		return &host.HTTPResponse{
+			StatusCode: 429,
+			Headers: map[string]string{
+				"Retry-After":      "30",
+				"X-RateLimit-Type": "cached",
+			},
+			Body: []byte(`{"error":"Rate limit exceeded. No cached data available."}`),
+		}, nil
+	}, cache, func() time.Time { return now })
+
+	_, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Skipped", Artist: "Artist"}})
+	if err == nil || !strings.Contains(err.Error(), "retry after 30s") {
+		t.Fatalf("first GetLyrics() error = %v, want query cooldown retry time", err)
+	}
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Wanted", Artist: "Artist"}})
+	if err != nil {
+		t.Fatalf("wanted GetLyrics() error = %v, want nil", err)
+	}
+	if len(result.Lyrics) != 1 || result.Lyrics[0].Text == "" {
+		t.Fatalf("wanted GetLyrics() lyrics = %#v, want TTML", result.Lyrics)
+	}
+	if got := requests[len(requests)-1].URL; !strings.Contains(got, "s=Wanted") {
+		t.Fatalf("last request = %q, want the different song to reach Better Lyrics", got)
+	}
+}
+
+func TestBetterLyricsProvider_RetriesAQueryRateLimitWithBroaderMetadata(t *testing.T) {
+	t.Parallel()
+
+	requests := make([]host.HTTPRequest, 0, 2)
+	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests = append(requests, request)
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		if parsed.Query().Has("al") {
+			return &host.HTTPResponse{
+				StatusCode: 429,
+				Headers: map[string]string{
+					"Retry-After":      "30",
+					"X-RateLimit-Type": "cached",
+				},
+				Body: []byte(`{"error":"This request requires cached data, but no cache is available for this query."}`),
+			}, nil
+		}
+		return &host.HTTPResponse{
+			StatusCode: 200,
+			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">broader cached match</tt>"}`),
+		}, nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+		Title: "Song", Artist: "Artist", Album: "Album", Duration: 180,
+	}})
+
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	if len(result.Lyrics) != 1 || !strings.Contains(result.Lyrics[0].Text, "broader cached match") {
+		t.Fatalf("GetLyrics() lyrics = %#v, want broader cached TTML", result.Lyrics)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("GetLyrics() request count = %d, want full and minimal TTML queries", len(requests))
 	}
 }
 
@@ -389,10 +482,13 @@ func TestBetterLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) 
 	currentTime := now
 	cache := newFakeLyricsCache()
 	provider := newBetterLyricsProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
-	provider.rememberRateLimit(&host.HTTPResponse{Headers: map[string]string{"Retry-After": "1"}})
+	const requestURL = "https://lyrics-api.boidu.dev/getLyrics?s=Song&a=Artist"
+	provider.rememberRateLimit(&host.HTTPResponse{
+		Headers: map[string]string{"Retry-After": "1", "X-RateLimit-Type": "exceeded"},
+	}, requestURL)
 
 	currentTime = now.Add(100 * time.Millisecond)
-	if err := provider.activeBetterLyricsCooldown(); err == nil {
+	if err := provider.activeBetterLyricsCooldown(requestURL); err == nil {
 		t.Fatal("cooldown after 100ms = nil, want the one-second Retry-After to remain active")
 	}
 	if ttl := cache.lastTTL(); ttl != 2 {
@@ -400,7 +496,7 @@ func TestBetterLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) 
 	}
 
 	currentTime = now.Add(1100 * time.Millisecond)
-	if err := provider.activeBetterLyricsCooldown(); err != nil {
+	if err := provider.activeBetterLyricsCooldown(requestURL); err != nil {
 		t.Fatalf("cooldown after rounded deadline = %v, want nil", err)
 	}
 }
@@ -462,7 +558,7 @@ func TestBetterLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	var request host.HTTPRequest
 	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		request = input
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt>lyrics</tt>"}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">lyrics</tt>"}`)}, nil
 	})
 
 	_, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
@@ -515,7 +611,7 @@ func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 
 	responses := []*host.HTTPResponse{
 		{StatusCode: 401, Body: []byte(`{"error":"API key required"}`)},
-		{StatusCode: 200, Body: []byte(`{"ttml":"<tt>cached lyrics</tt>"}`)},
+		{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached lyrics</tt>"}`)},
 	}
 	var requests []host.HTTPRequest
 	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -532,7 +628,7 @@ func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "<tt>cached lyrics</tt>" {
+	if len(result.Lyrics) != 1 || !strings.Contains(result.Lyrics[0].Text, "cached lyrics") {
 		t.Fatalf("GetLyrics() lyrics = %#v, want cached TTML", result.Lyrics)
 	}
 	assertLyricsSource(t, result.Source, "ttml", "ttml")
@@ -575,8 +671,8 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 	}{
 		{
 			name:             "returns Unison TTML before trying Kugou",
-			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt>unison rich</tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
-			wantText:         "<tt>unison rich</tt>",
+			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">unison rich</tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
+			wantText:         `<tt xmlns:itunes="urn:itunes" itunes:timing="Syllable">unison rich</tt>`,
 			wantLanguage:     "ko",
 			wantProvider:     "unison",
 			wantFormat:       "ttml",
@@ -673,6 +769,117 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 				if kugouQuery.Query().Has("al") || kugouQuery.Query().Has("d") {
 					t.Fatalf("Kugou request query = %q, want title and artist only", kugouQuery.RawQuery)
 				}
+			}
+		})
+	}
+}
+
+func TestBetterLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) {
+	t.Parallel()
+
+	const (
+		betterWord     = `<tt xmlns:itunes="urn:itunes" itunes:timing="Word"><p begin="1" end="2"><span begin="1" end="2">words</span></p></tt>`
+		unisonSyllable = `<tt xmlns:itunes="urn:itunes" itunes:timing="Syllable"><p begin="1" end="2"><span begin="1" end="1.5">sylla</span><span begin="1.5" end="2">bles</span></p></tt>`
+		betterTie      = `<tt xmlns:itunes="urn:itunes" itunes:timing="Word"><p begin="1" end="2"><span begin="1" end="2">better</span></p></tt>`
+		unisonTie      = `<tt xmlns:itunes="urn:itunes" itunes:timing="Word"><p begin="1" end="2"><span begin="1" end="2">unison</span></p></tt>`
+		betterSyllable = `<tt xmlns:itunes="urn:itunes" itunes:timing="Syllable"><p begin="1" end="2"><span begin="1" end="2">best</span></p></tt>`
+	)
+
+	tests := []struct {
+		name         string
+		betterTTML   string
+		unisonTTML   string
+		wantTTML     string
+		wantProvider string
+		wantRequests int
+	}{
+		{
+			name:         "prefers Unison syllables over Better Lyrics words",
+			betterTTML:   betterWord,
+			unisonTTML:   unisonSyllable,
+			wantTTML:     unisonSyllable,
+			wantProvider: "unison",
+			wantRequests: 2,
+		},
+		{
+			name:         "keeps Better Lyrics when timing quality ties",
+			betterTTML:   betterTie,
+			unisonTTML:   unisonTie,
+			wantTTML:     betterTie,
+			wantProvider: "ttml",
+			wantRequests: 2,
+		},
+		{
+			name:         "returns Better Lyrics syllables without a lower-priority request",
+			betterTTML:   betterSyllable,
+			wantTTML:     betterSyllable,
+			wantProvider: "ttml",
+			wantRequests: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			requests := 0
+			provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				requests++
+				parsed, err := url.Parse(request.URL)
+				if err != nil {
+					t.Fatalf("parse request URL: %v", err)
+				}
+				switch parsed.Host {
+				case "lyrics-api.boidu.dev":
+					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":` + strconv.Quote(test.betterTTML) + `}`)}, nil
+				case "unison.boidu.dev":
+					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":` + strconv.Quote(test.unisonTTML) + `,"format":"ttml","language":"en"}}`)}, nil
+				default:
+					t.Fatalf("unexpected request URL: %s", request.URL)
+					return nil, nil
+				}
+			})
+
+			result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+			if err != nil {
+				t.Fatalf("GetLyrics() error = %v, want nil", err)
+			}
+			if len(result.Lyrics) != 1 {
+				t.Fatalf("GetLyrics() lyrics = %#v, want one result", result.Lyrics)
+			}
+			if result.Lyrics[0].Text != test.wantTTML {
+				t.Fatalf("GetLyrics() text = %q, want %q", result.Lyrics[0].Text, test.wantTTML)
+			}
+			assertLyricsSource(t, result.Source, test.wantProvider, "ttml")
+			if requests != test.wantRequests {
+				t.Fatalf("GetLyrics() request count = %d, want %d", requests, test.wantRequests)
+			}
+		})
+	}
+}
+
+func TestTTMLTimingQuality(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ttml string
+		want lyricTimingQuality
+	}{
+		{name: "syllable metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><p begin="1"/></tt>`, want: timingSyllable},
+		{name: "word metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Word"><p begin="1"/></tt>`, want: timingWord},
+		{name: "line metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Line"><p begin="1"/></tt>`, want: timingLine},
+		{name: "timed spans without metadata", ttml: `<tt><p begin="1" end="2"><span begin="1" end="2">word</span></p></tt>`, want: timingWord},
+		{name: "ignores timed metadata spans", ttml: `<tt><head><text><span begin="1">translation</span></text></head><body><p begin="1">line</p></body></tt>`, want: timingLine},
+		{name: "timed lines only", ttml: `<tt><p begin="1" end="2">line</p></tt>`, want: timingLine},
+		{name: "untimed text", ttml: `<tt><p>plain</p></tt>`, want: timingUnsynced},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ttmlTimingQuality(test.ttml); got != test.want {
+				t.Fatalf("ttmlTimingQuality() = %v, want %v", got, test.want)
 			}
 		})
 	}

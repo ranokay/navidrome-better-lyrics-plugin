@@ -40,13 +40,14 @@ With the priority above, Navidrome stops at the first non-empty source. Sidecar 
 
 ## Provider behavior
 
-The plugin tries sources in this order:
+The plugin ranks usable results by synchronization quality:
 
-1. Better Lyrics TTML using title, artist, album, and duration.
-2. The same TTML endpoint using only title and artist when the richer request returns `401` or `404`. This works around the API's metadata-specific cache keys without weakening the first match attempt.
-3. Unison using title, artist, and duration. TTML and LRC results return immediately; plain text is retained as a last resort.
-4. Better Lyrics Kugou using title and artist for a line-synchronized fallback.
-5. Retained Unison plain text when no synchronized source succeeded.
+1. Syllable-timed TTML.
+2. Word-timed TTML.
+3. Line-timed TTML or LRC.
+4. Unsynchronized text.
+
+The plugin checks Better Lyrics TTML first using title, artist, album, and duration. It retries with only title and artist after `401`, `404`, or a cached-tier `429`, because the broader query may already be cached. A syllable-timed result returns immediately. Lower-quality TTML is compared with Unison before selection, and Kugou is queried only when neither service produced line-timed or better lyrics. Better Lyrics wins ties, followed by Unison and Kugou.
 
 Legacy is deprecated and is not queried. Successful TTML, LRC, and plain text are preserved exactly as received so Navidrome can select the matching parser.
 
@@ -57,8 +58,8 @@ The public API is cache-first:
 - `404 Not Found` is a normal no-match result.
 - Independent provider failures do not block a later provider. If every provider misses, operational failures are returned to Navidrome for logging.
 - Successful results reached after clean provider responses are cached in Navidrome's plugin store for 24 hours. Successful lower-priority fallbacks reached after an operational failure and complete misses are cached for five minutes, so preferred providers can be retried promptly. The store is capped at 8 MB; transport, server, parsing, and rate-limit failure responses are never cached.
-- A `429 Too Many Requests` response starts a shared cooldown for both Better Lyrics TTML and Kugou. The plugin honors `Retry-After` as either seconds or an HTTP date, falling back to 30 seconds when the header is absent or invalid. Unison remains available during the cooldown.
-- Each HTTP attempt has a six-second timeout. On a cold cache, a successful TTML lookup normally makes one request; the complete miss path makes at most four sequential requests.
+- A cached-tier `429 Too Many Requests` cools down only the failed query, so an uncached Kugou request cannot block another song's cached TTML. An explicit `X-RateLimit-Type: exceeded` response starts a shared cooldown for all Better Lyrics endpoints. The plugin honors `Retry-After` as either seconds or an HTTP date, falling back to 30 seconds when the header is absent or invalid. Unison remains available during either cooldown.
+- Each HTTP attempt has a six-second timeout. On a cold cache, a syllable-timed Better Lyrics result makes one request; comparing lower-quality candidates or completing a miss makes at most four sequential requests.
 
 See the Better Lyrics documentation for the current [authentication](https://lyrics-api-docs.boidu.dev/docs/authentication), [rate limits](https://lyrics-api-docs.boidu.dev/docs/rate-limiting), and [response format](https://lyrics-api-docs.boidu.dev/docs/response-format).
 
