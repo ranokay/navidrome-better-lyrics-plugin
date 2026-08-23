@@ -261,7 +261,9 @@ func (p *betterLyricsProvider) fetchBetterLyricsTTML(requestURL string, headers 
 			return "", false, false, fmt.Errorf("decode Better Lyrics API response: %w", err)
 		}
 		if strings.TrimSpace(payload.TTML) == "" {
-			return "", false, false, nil
+			// An empty TTML payload is a clean miss for this query, so broader
+			// metadata tiers may still find a usable cached entry.
+			return "", true, false, nil
 		}
 		return payload.TTML, false, false, nil
 	case 401:

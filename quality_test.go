@@ -1,12 +1,13 @@
 package main
 
 import (
-	"github.com/navidrome/navidrome/plugins/pdk/go/host"
-	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/host"
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
 func TestBetterLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) {
@@ -120,6 +121,57 @@ func TestTTMLTimingQuality(t *testing.T) {
 	}
 }
 
+func TestBetterLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		if parsed.Host == "lyrics-api.boidu.dev" {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p>broken"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]valid fallback","format":"lrc","language":"en"}}`)}, nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil because a fallback succeeded", err)
+	}
+	assertLyricsSource(t, result.Source, "unison", "lrc")
+	if requests != 2 {
+		t.Fatalf("request count = %d, want malformed Better Lyrics then Unison", requests)
+	}
+}
+
+func TestBetterLyricsProvider_UntimedLRCDoesNotBeatKugouLineSync(t *testing.T) {
+	t.Parallel()
+
+	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		switch {
+		case parsed.Host == "unison.boidu.dev":
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"plain text mislabeled as lrc","format":"lrc","language":"en"}}`)}, nil
+		case parsed.Path == "/kugou/getLyrics":
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]real line sync"}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, result.Source, "kugou", "lrc")
+}
+
 func TestBetterLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testing.T) {
 	t.Parallel()
 
@@ -149,34 +201,4 @@ func TestBetterLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testin
 	if requests != 5 {
 		t.Fatalf("GetLyrics() request count = %d, want 5", requests)
 	}
-}
-
-func TestBetterLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
-	t.Parallel()
-
-	responses := []*host.HTTPResponse{
-		{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
-		{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
-	}
-	var requests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
-		requests = append(requests, input)
-		return responses[len(requests)-1], nil
-	})
-
-	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
-		Title: "Song", Artist: "Artist", Album: "Album", Duration: 123,
-	}})
-	if err != nil {
-		t.Fatalf("GetLyrics() error = %v, want nil", err)
-	}
-	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]community line" {
-		t.Fatalf("GetLyrics() lyrics = %#v, want Unison LRC", result.Lyrics)
-	}
-	assertLyricsSource(t, result.Source, "unison", "lrc")
-	if len(requests) != 2 {
-		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
-	}
-	assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
-	assertRequestEndpoint(t, requests[1], "https://unison.boidu.dev/lyrics")
 }

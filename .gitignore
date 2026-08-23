@@ -1,3 +1,1 @@
-plugin.wasm
-*.ndp
-coverage.out
+.DS_Store

@@ -2,12 +2,13 @@ package main
 
 import (
 	"errors"
-	"github.com/navidrome/navidrome/plugins/pdk/go/host"
-	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/host"
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
 func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
@@ -179,5 +180,18 @@ func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.
 	assertLyricsSource(t, secondResult.Source, "ttml", "ttml")
 	if ttl := cache.lastTTL(); ttl != positiveLyricsCacheTTLSeconds {
 		t.Fatalf("positive cache TTL = %d, want %d", ttl, positiveLyricsCacheTTLSeconds)
+	}
+}
+
+func TestAPIResponseErrorTruncatesDetail(t *testing.T) {
+	t.Parallel()
+
+	detail := strings.Repeat("x", maximumAPIErrorRunes+20)
+	err := apiResponseError(&host.HTTPResponse{
+		StatusCode: 500,
+		Body:       []byte(`{"error":"` + detail + `"}`),
+	})
+	if !strings.HasSuffix(err.Error(), "…") {
+		t.Fatalf("apiResponseError() = %q, want truncated detail", err)
 	}
 }

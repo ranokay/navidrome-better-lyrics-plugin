@@ -47,7 +47,7 @@ The plugin ranks usable results by synchronization quality:
 3. Line-timed TTML or timestamped LRC.
 4. Unsynchronized text.
 
-The plugin checks Better Lyrics TTML first using title, artist, album, and duration. After a `401`, `404`, or cached-tier `429`, it broadens the lookup without immediately discarding useful disambiguation: first title, artist, and duration without album, then title and artist only. A valid syllable-timed result returns immediately. Lower-quality TTML is compared with Unison before selection. Unison follows the same specificity-first idea on clean misses: title, artist, album, and duration; then title, artist, and duration; then title and artist. Kugou is queried only when no service has produced line-timed or better lyrics. Better Lyrics wins quality ties, followed by Unison and Kugou.
+The plugin checks Better Lyrics TTML first using title, artist, album, and duration. After a `401`, `404`, an empty TTML payload, or a cached-tier `429`, it broadens the lookup without immediately discarding useful disambiguation: first title, artist, and duration without album, then title and artist only. A valid syllable-timed result returns immediately. Lower-quality TTML is compared with Unison before selection. Unison follows the same specificity-first idea on clean misses: title, artist, album, and duration; then title, artist, and duration; then title and artist. Kugou is queried only when no service has produced line-timed or better lyrics. Better Lyrics wins quality ties, followed by Unison and Kugou.
 
 Provider-reported TTML must parse as complete XML before it can win the quality comparison, so malformed high-quality metadata cannot suppress a usable fallback. LRC is considered line-synchronized only when it contains timestamped lyric lines. Successful TTML, LRC, and plain text are otherwise preserved exactly as received so Navidrome can select the matching parser.
 
@@ -93,6 +93,17 @@ mise run check
 `mise run check` verifies formatting, runs the race-enabled Go tests, builds the WebAssembly module with the standard Go WASI toolchain, packages `better-lyrics.ndp`, and checks the archive.
 
 The implementation temporarily replaces the released Go PDK with the additive provenance contract from PR #13. Older Navidrome hosts ignore the optional source metadata and continue receiving the lyrics; compatible hosts display it.
+
+## Releases
+
+Every downloadable artifact is named `better-lyrics.ndp`; the version lives inside its `manifest.json`. To cut a release, set `version` in `manifest.json` and push a matching tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow verifies that the tag equals `v` plus the manifest version, reruns `mise run check`, and publishes a GitHub release containing `better-lyrics.ndp` with automatically generated notes.
 
 ## License
 
