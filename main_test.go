@@ -75,7 +75,7 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 429, Body: []byte(`{"message":"Please try again later"}`)},
 			wantError:    "HTTP 429: Please try again later",
-			wantRequests: 3,
+			wantRequests: 2,
 		},
 		{
 			name:         "surfaces server status without echoing invalid body",
@@ -268,6 +268,40 @@ func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing
 	}
 	if secondRequests != 1 {
 		t.Fatalf("second request count = %d, want one Unison request", secondRequests)
+	}
+}
+
+func TestBetterLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	cache.setError = errors.New("cache unavailable")
+	requests := 0
+	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		if parsed.Host == "unison.boidu.dev" {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		if requests > 1 {
+			t.Fatalf("request after observed rate limit = %s, want only Unison fallback", request.URL)
+		}
+		return &host.HTTPResponse{
+			StatusCode: 429,
+			Headers:    map[string]string{"Retry-After": "12"},
+			Body:       []byte(`{"error":"Rate limit exceeded"}`),
+		}, nil
+	}, cache, time.Now)
+
+	_, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+		t.Fatalf("GetLyrics() error = %v, want HTTP 429", err)
+	}
+	if requests != 2 {
+		t.Fatalf("request count = %d, want Better Lyrics then Unison with Kugou suppressed", requests)
 	}
 }
 
@@ -792,9 +826,10 @@ func TestManifestAllowsOnlyProviderHosts(t *testing.T) {
 }
 
 type fakeLyricsCache struct {
-	mu     sync.Mutex
-	values map[string][]byte
-	ttls   []int64
+	mu       sync.Mutex
+	values   map[string][]byte
+	ttls     []int64
+	setError error
 }
 
 func newFakeLyricsCache() *fakeLyricsCache {
@@ -811,6 +846,9 @@ func (c *fakeLyricsCache) Get(key string) ([]byte, bool, error) {
 func (c *fakeLyricsCache) SetWithTTL(key string, value []byte, ttlSeconds int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.setError != nil {
+		return c.setError
+	}
 	c.values[key] = append([]byte(nil), value...)
 	c.ttls = append(c.ttls, ttlSeconds)
 	return nil

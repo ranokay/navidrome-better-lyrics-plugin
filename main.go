@@ -145,17 +145,17 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 		plainFallback = unisonLyrics
 	}
 
-	if cooldownErr := p.activeBetterLyricsCooldown(); cooldownErr != nil {
-		if !cooldownReported {
+	if !cooldownReported {
+		if cooldownErr := p.activeBetterLyricsCooldown(); cooldownErr != nil {
 			lookupErrors = append(lookupErrors, cooldownErr)
-		}
-	} else {
-		kugouURL, _ := kugouRequestURL(input.Track)
-		kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
-		if err != nil {
-			lookupErrors = append(lookupErrors, err)
-		} else if kugouLyrics.Text != "" {
-			return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), nil
+		} else {
+			kugouURL, _ := kugouRequestURL(input.Track)
+			kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
+			if err != nil {
+				lookupErrors = append(lookupErrors, err)
+			} else if kugouLyrics.Text != "" {
+				return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), nil
+			}
 		}
 	}
 
