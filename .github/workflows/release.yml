@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Package and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install toolchain
+        uses: jdx/mise-action@v3
+        with:
+          cache: true
+
+      - name: Verify tag matches the plugin version
+        if: github.ref_type == 'tag'
+        run: |
+          expected="v$(jq -r .version manifest.json)"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            printf 'Tag %s does not match plugin version %s\n' "$GITHUB_REF_NAME" "$expected"
+            exit 1
+          fi
+          printf 'Releasing plugin version %s\n' "$(jq -r .version manifest.json)"
+
+      - name: Run checks and package the plugin
+        run: mise run check
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" better-lyrics.ndp \
+            --title "better-lyrics $GITHUB_REF_NAME" \
+            --generate-notes
