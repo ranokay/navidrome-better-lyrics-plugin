@@ -61,7 +61,7 @@ See the Better Lyrics documentation for the current [authentication](https://lyr
 
 ## Privacy and attribution
 
-Using this plugin sends song metadata, the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version>`) to Better Lyrics and Unison; it does not send the browser's user agent. Better Lyrics receives title, artist, album, and duration on the first attempt, while Unison receives title, artist, and duration. Better Lyrics says request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
+Using this plugin sends song metadata, the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version> (+https://github.com/ranokay/navidrome-better-lyrics-plugin)`) to Better Lyrics and Unison; it does not send the browser's user agent. Better Lyrics receives title, artist, album, and duration on the first attempt, while Unison receives title, artist, and duration. Better Lyrics says request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
 
 Lyrics are supplied by Better Lyrics, Unison, and their upstream contributors. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
 

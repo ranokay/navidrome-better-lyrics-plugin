@@ -48,7 +48,7 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":`)},
 			wantError:    "decode Better Lyrics API response",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "treats unauthenticated cache miss as no match",
@@ -61,34 +61,34 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 422, Body: []byte(`{"error":"Invalid track metadata"}`)},
 			wantError:    "HTTP 422: Invalid track metadata",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "surfaces rate limit failure",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 429, Body: []byte(`{"message":"Please try again later"}`)},
 			wantError:    "HTTP 429: Please try again later",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "surfaces server status without echoing invalid body",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 503, Body: []byte(`not-json`)},
 			wantError:    "better lyrics API returned HTTP 503",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "surfaces transport failure",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			sendError:    errors.New("network unavailable"),
 			wantError:    "request Better Lyrics API: network unavailable",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "rejects nil transport response",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			wantError:    "better lyrics API returned no response",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "skips incomplete track metadata",
@@ -406,6 +406,37 @@ func TestBetterLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
 	}
 	assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
 	assertRequestEndpoint(t, requests[1], "https://unison.boidu.dev/lyrics")
+}
+
+func TestBetterLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainText(t *testing.T) {
+	t.Parallel()
+
+	responses := []*host.HTTPResponse{
+		{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
+		{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"community plain","format":"plain","language":"en"}}`)},
+		{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]kugou line","provider":"kugou"}`)},
+	}
+	var requests []host.HTTPRequest
+	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests = append(requests, input)
+		return responses[len(requests)-1], nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+		Title: "Song", Artist: "Artist", Album: "Album", Duration: 123,
+	}})
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]kugou line" {
+		t.Fatalf("GetLyrics() lyrics = %#v, want Kugou LRC", result.Lyrics)
+	}
+	if len(requests) != 3 {
+		t.Fatalf("GetLyrics() request count = %d, want 3", len(requests))
+	}
+	assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
+	assertRequestEndpoint(t, requests[1], "https://unison.boidu.dev/lyrics")
+	assertRequestEndpoint(t, requests[2], "https://lyrics-api.boidu.dev/kugou/getLyrics")
 }
 
 func assertRequestEndpoint(t *testing.T, request host.HTTPRequest, want string) {

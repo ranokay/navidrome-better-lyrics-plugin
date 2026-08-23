@@ -100,7 +100,6 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		text, _, err = p.fetchBetterLyricsTTML(minimalURL, headers)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
-			betterLyricsAvailable = false
 		} else if text != "" {
 			return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: text}}}, nil
 		}
@@ -118,14 +117,12 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		plainFallback = unisonLyrics
 	}
 
-	if betterLyricsAvailable {
-		kugouURL, _ := kugouRequestURL(input.Track)
-		kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
-		if err != nil {
-			lookupErrors = append(lookupErrors, err)
-		} else if kugouLyrics.Text != "" {
-			return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{kugouLyrics}}, nil
-		}
+	kugouURL, _ := kugouRequestURL(input.Track)
+	kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
+	if err != nil {
+		lookupErrors = append(lookupErrors, err)
+	} else if kugouLyrics.Text != "" {
+		return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{kugouLyrics}}, nil
 	}
 
 	if plainFallback.Text != "" {
