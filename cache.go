@@ -99,11 +99,14 @@ func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyri
 func (p *betterLyricsProvider) activeBetterLyricsCooldown() error {
 	value, exists, err := p.cache.Get(betterLyricsCooldownKey)
 	if err != nil || !exists {
+		// A cache failure must not make the lyrics provider unavailable.
+		//nolint:nilerr // Cooldown enforcement intentionally fails open.
 		return nil
 	}
 
 	untilUnix, err := strconv.ParseInt(string(value), 10, 64)
 	if err != nil {
+		//nolint:nilerr // Ignore a corrupt cooldown value and keep serving requests.
 		return nil
 	}
 	remaining := time.Unix(untilUnix, 0).Sub(p.now())
@@ -111,7 +114,7 @@ func (p *betterLyricsProvider) activeBetterLyricsCooldown() error {
 		return nil
 	}
 	seconds := durationSecondsCeil(remaining)
-	return fmt.Errorf("Better Lyrics API cooldown active for %s", time.Duration(seconds)*time.Second)
+	return fmt.Errorf("better lyrics API cooldown active for %s", time.Duration(seconds)*time.Second)
 }
 
 func (p *betterLyricsProvider) rememberRateLimit(response *host.HTTPResponse) {
