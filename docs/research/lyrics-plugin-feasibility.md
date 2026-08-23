@@ -177,3 +177,9 @@ A local 2026-08-23 compatibility probe fetched a cached TTML response from the d
 ## Recommendation
 
 Proceed with a small experimental provider only if the repository owner accepts three facts up front: it does not install the sidebar, unauthenticated coverage is cached-only today, and public distribution needs an explicit license/service-rights decision. Technically, the clean design is a stateless TTML pass-through provider selected last in `LyricsPriority`; Navidrome, rather than the plugin, should remain responsible for detecting sidecar and embedded lyrics.
+
+## Implementation follow-up
+
+A later live reproduction with BABYMONSTER's `SHEESH` exposed a cache-key edge case that the initial design missed. The title-and-artist request was cached, while the same request with album and duration returned an unauthenticated cache miss. The implementation now retries TTML without optional metadata only after a full-metadata `401` or `404`.
+
+The plugin also queries Unison as a separate community backend and the Better Lyrics Kugou endpoint as a line-synchronized fallback. It preserves TTML, LRC, and plain responses for Navidrome's content-sniffing parser, keeps Unison plain text until synchronized fallbacks have failed, and does not query the deprecated Legacy endpoint. This expands the manifest HTTP allowlist to `unison.boidu.dev` and requires the Unison attribution documented in the README.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -34,60 +35,60 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			name:         "treats not found as no match",
 			track:        lyrics.TrackInfo{Title: "Unknown", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 404, Body: []byte(`{"error":"Lyrics not available"}`)},
-			wantRequests: 1,
+			wantRequests: 3,
 		},
 		{
 			name:         "treats empty TTML as no match",
 			track:        lyrics.TrackInfo{Title: "Instrumental", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  "}`)},
-			wantRequests: 1,
+			wantRequests: 3,
 		},
 		{
 			name:         "rejects malformed success response",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":`)},
 			wantError:    "decode Better Lyrics API response",
-			wantRequests: 1,
+			wantRequests: 2,
 		},
 		{
 			name:         "treats unauthenticated cache miss as no match",
 			track:        lyrics.TrackInfo{Title: "Uncached", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 401, Body: []byte(`{"error":"API key required"}`)},
-			wantRequests: 1,
+			wantRequests: 3,
 		},
 		{
 			name:         "surfaces invalid request response",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 422, Body: []byte(`{"error":"Invalid track metadata"}`)},
 			wantError:    "HTTP 422: Invalid track metadata",
-			wantRequests: 1,
+			wantRequests: 2,
 		},
 		{
 			name:         "surfaces rate limit failure",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 429, Body: []byte(`{"message":"Please try again later"}`)},
 			wantError:    "HTTP 429: Please try again later",
-			wantRequests: 1,
+			wantRequests: 2,
 		},
 		{
 			name:         "surfaces server status without echoing invalid body",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 503, Body: []byte(`not-json`)},
 			wantError:    "better lyrics API returned HTTP 503",
-			wantRequests: 1,
+			wantRequests: 2,
 		},
 		{
 			name:         "surfaces transport failure",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			sendError:    errors.New("network unavailable"),
 			wantError:    "request Better Lyrics API: network unavailable",
-			wantRequests: 1,
+			wantRequests: 2,
 		},
 		{
 			name:         "rejects nil transport response",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			wantError:    "better lyrics API returned no response",
-			wantRequests: 1,
+			wantRequests: 2,
 		},
 		{
 			name:         "skips incomplete track metadata",
@@ -101,9 +102,16 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			t.Parallel()
 
 			requests := 0
-			provider := newBetterLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests++
-				return test.response, test.sendError
+				parsed, err := url.Parse(request.URL)
+				if err != nil {
+					t.Fatalf("parse request URL: %v", err)
+				}
+				if parsed.Host == "lyrics-api.boidu.dev" && parsed.Path == "/getLyrics" {
+					return test.response, test.sendError
+				}
+				return &host.HTTPResponse{StatusCode: 404}, nil
 			})
 
 			result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: test.track})
@@ -137,7 +145,7 @@ func TestBetterLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	var request host.HTTPRequest
 	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		request = input
-		return &host.HTTPResponse{StatusCode: 404}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt>lyrics</tt>"}`)}, nil
 	})
 
 	_, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
@@ -182,6 +190,233 @@ func TestBetterLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	}
 	if request.TimeoutMs != httpTimeoutMilliseconds {
 		t.Errorf("timeout = %d, want %d", request.TimeoutMs, httpTimeoutMilliseconds)
+	}
+}
+
+func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
+	t.Parallel()
+
+	responses := []*host.HTTPResponse{
+		{StatusCode: 401, Body: []byte(`{"error":"API key required"}`)},
+		{StatusCode: 200, Body: []byte(`{"ttml":"<tt>cached lyrics</tt>"}`)},
+	}
+	var requests []host.HTTPRequest
+	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests = append(requests, input)
+		return responses[len(requests)-1], nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+		Title:    "SHEESH",
+		Artist:   "BABYMONSTER",
+		Album:    "BABYMONS7ER - EP",
+		Duration: 170.36,
+	}})
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "<tt>cached lyrics</tt>" {
+		t.Fatalf("GetLyrics() lyrics = %#v, want cached TTML", result.Lyrics)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
+	}
+
+	fullQuery, err := url.Parse(requests[0].URL)
+	if err != nil {
+		t.Fatalf("parse full request URL: %v", err)
+	}
+	if fullQuery.Query().Get("al") != "BABYMONS7ER - EP" || fullQuery.Query().Get("d") != "170" {
+		t.Fatalf("full request query = %q, want album and duration", fullQuery.RawQuery)
+	}
+
+	minimalQuery, err := url.Parse(requests[1].URL)
+	if err != nil {
+		t.Fatalf("parse minimal request URL: %v", err)
+	}
+	if minimalQuery.Query().Get("s") != "SHEESH" || minimalQuery.Query().Get("a") != "BABYMONSTER" {
+		t.Fatalf("minimal request query = %q, want title and artist", minimalQuery.RawQuery)
+	}
+	if minimalQuery.Query().Has("al") || minimalQuery.Query().Has("d") {
+		t.Fatalf("minimal request query = %q, want no album or duration", minimalQuery.RawQuery)
+	}
+}
+
+func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		unisonResponse   *host.HTTPResponse
+		kugouResponse    *host.HTTPResponse
+		wantText         string
+		wantLanguage     string
+		wantRequestCount int
+	}{
+		{
+			name:             "returns Unison TTML before trying Kugou",
+			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt>unison rich</tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
+			wantText:         "<tt>unison rich</tt>",
+			wantLanguage:     "ko",
+			wantRequestCount: 3,
+		},
+		{
+			name:             "returns Unison LRC before trying Kugou",
+			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]unison line","format":"lrc","language":"en","syncType":"linesync"}}`)},
+			wantText:         "[00:01.00]unison line",
+			wantLanguage:     "en",
+			wantRequestCount: 3,
+		},
+		{
+			name:             "prefers synchronized Kugou over Unison plain text",
+			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"unison plain","format":"plain","language":"en","syncType":"plain"}}`)},
+			kugouResponse:    &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]kugou line","provider":"kugou"}`)},
+			wantText:         "[00:01.00]kugou line",
+			wantRequestCount: 4,
+		},
+		{
+			name:             "keeps Unison plain text as the last resort",
+			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"unison plain","format":"plain","language":"en","syncType":"plain"}}`)},
+			kugouResponse:    &host.HTTPResponse{StatusCode: 404},
+			wantText:         "unison plain",
+			wantLanguage:     "en",
+			wantRequestCount: 4,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			responses := []*host.HTTPResponse{
+				{StatusCode: 401, Body: []byte(`{"error":"API key required"}`)},
+				{StatusCode: 404, Body: []byte(`{"error":"not found"}`)},
+				test.unisonResponse,
+			}
+			if test.kugouResponse != nil {
+				responses = append(responses, test.kugouResponse)
+			}
+
+			var requests []host.HTTPRequest
+			provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+				requests = append(requests, input)
+				if len(requests) > len(responses) {
+					t.Fatalf("unexpected request %d: %s", len(requests), input.URL)
+				}
+				return responses[len(requests)-1], nil
+			})
+
+			result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+				Title:    "SHEESH",
+				Artist:   "BABYMONSTER",
+				Album:    "BABYMONS7ER - EP",
+				Duration: 170.36,
+			}})
+			if err != nil {
+				t.Fatalf("GetLyrics() error = %v, want nil", err)
+			}
+			if len(result.Lyrics) != 1 || result.Lyrics[0].Text != test.wantText || result.Lyrics[0].Lang != test.wantLanguage {
+				t.Fatalf("GetLyrics() lyrics = %#v, want text %q and language %q", result.Lyrics, test.wantText, test.wantLanguage)
+			}
+			if len(requests) != test.wantRequestCount {
+				t.Fatalf("GetLyrics() request count = %d, want %d", len(requests), test.wantRequestCount)
+			}
+
+			assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
+			assertRequestEndpoint(t, requests[1], "https://lyrics-api.boidu.dev/getLyrics")
+			assertRequestEndpoint(t, requests[2], "https://unison.boidu.dev/lyrics")
+			unisonQuery, err := url.Parse(requests[2].URL)
+			if err != nil {
+				t.Fatalf("parse Unison request URL: %v", err)
+			}
+			if unisonQuery.Query().Get("song") != "SHEESH" || unisonQuery.Query().Get("artist") != "BABYMONSTER" || unisonQuery.Query().Get("duration") != "170" {
+				t.Fatalf("Unison request query = %q, want song, artist, and duration", unisonQuery.RawQuery)
+			}
+			if unisonQuery.Query().Has("album") {
+				t.Fatalf("Unison request query = %q, want album omitted for broader matching", unisonQuery.RawQuery)
+			}
+			if len(requests) == 4 {
+				assertRequestEndpoint(t, requests[3], "https://lyrics-api.boidu.dev/kugou/getLyrics")
+				kugouQuery, err := url.Parse(requests[3].URL)
+				if err != nil {
+					t.Fatalf("parse Kugou request URL: %v", err)
+				}
+				if kugouQuery.Query().Has("al") || kugouQuery.Query().Has("d") {
+					t.Fatalf("Kugou request query = %q, want title and artist only", kugouQuery.RawQuery)
+				}
+			}
+		})
+	}
+}
+
+func TestBetterLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testing.T) {
+	t.Parallel()
+
+	responses := []*host.HTTPResponse{
+		{StatusCode: 404},
+		{StatusCode: 404},
+		{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"subtitle","format":"srt"}}`)},
+		{StatusCode: 404},
+	}
+	requests := 0
+	provider := newBetterLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		response := responses[requests]
+		requests++
+		return response, nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+		Title: "Song", Artist: "Artist", Album: "Album", Duration: 123,
+	}})
+	if err == nil || !strings.Contains(err.Error(), `unsupported Unison lyrics format "srt"`) {
+		t.Fatalf("GetLyrics() error = %v, want unsupported Unison format", err)
+	}
+	if len(result.Lyrics) != 0 {
+		t.Fatalf("GetLyrics() lyrics = %#v, want empty", result.Lyrics)
+	}
+	if requests != 4 {
+		t.Fatalf("GetLyrics() request count = %d, want 4", requests)
+	}
+}
+
+func TestBetterLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
+	t.Parallel()
+
+	responses := []*host.HTTPResponse{
+		{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
+		{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
+	}
+	var requests []host.HTTPRequest
+	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests = append(requests, input)
+		return responses[len(requests)-1], nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+		Title: "Song", Artist: "Artist", Album: "Album", Duration: 123,
+	}})
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]community line" {
+		t.Fatalf("GetLyrics() lyrics = %#v, want Unison LRC", result.Lyrics)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
+	}
+	assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
+	assertRequestEndpoint(t, requests[1], "https://unison.boidu.dev/lyrics")
+}
+
+func assertRequestEndpoint(t *testing.T, request host.HTTPRequest, want string) {
+	t.Helper()
+
+	parsed, err := url.Parse(request.URL)
+	if err != nil {
+		t.Fatalf("parse request URL: %v", err)
+	}
+	if got := parsed.Scheme + "://" + parsed.Host + parsed.Path; got != want {
+		t.Fatalf("request endpoint = %q, want %q", got, want)
 	}
 }
 
@@ -283,5 +518,26 @@ func TestPluginVersion(t *testing.T) {
 
 	if got := pluginVersion(); got != "0.1.0" {
 		t.Fatalf("pluginVersion() = %q, want 0.1.0", got)
+	}
+}
+
+func TestManifestAllowsOnlyProviderHosts(t *testing.T) {
+	t.Parallel()
+
+	var manifest struct {
+		Permissions struct {
+			HTTP struct {
+				RequiredHosts []string `json:"requiredHosts"`
+			} `json:"http"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	got := strings.Join(manifest.Permissions.HTTP.RequiredHosts, ",")
+	want := "lyrics-api.boidu.dev,unison.boidu.dev"
+	if got != want {
+		t.Fatalf("manifest HTTP hosts = %q, want %q", got, want)
 	}
 }

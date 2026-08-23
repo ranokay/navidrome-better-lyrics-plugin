@@ -1,8 +1,8 @@
 # Navidrome Better Lyrics plugin
 
-A Navidrome lyrics-provider plugin that uses the public [Better Lyrics API](https://lyrics-api-docs.boidu.dev/) when a track has no local lyrics.
+A Navidrome lyrics-provider plugin that uses the public [Better Lyrics API](https://lyrics-api-docs.boidu.dev/) and [Unison community database](https://unison.boidu.dev/) when a track has no local lyrics.
 
-The plugin does not inject or replace Navidrome's interface. It returns the API's TTML document unchanged through Navidrome's Lyrics capability, so compatible clients—including the sidebar proposed in [navidrome/navidrome#5733](https://github.com/navidrome/navidrome/pull/5733)—can render the same syllable timing, translations, and pronunciation data as local TTML files.
+The plugin does not inject or replace Navidrome's interface. It returns TTML, LRC, or plain lyrics unchanged through Navidrome's Lyrics capability. Compatible clients, including the sidebar proposed in [navidrome/navidrome#5733](https://github.com/navidrome/navidrome/pull/5733), can render the same rich timing and metadata present in provider TTML.
 
 ## Requirements
 
@@ -37,26 +37,37 @@ navidrome plugin enable better-lyrics
 
 With the priority above, Navidrome stops at the first non-empty source. Sidecar and embedded lyrics therefore win; Better Lyrics is contacted only when every configured local source is empty.
 
-## API behavior
+## Provider behavior
 
-The plugin sends the track title, artist, album, and duration to `https://lyrics-api.boidu.dev/getLyrics`. It preserves successful TTML exactly as received.
+The plugin tries sources in this order:
+
+1. Better Lyrics TTML using title, artist, album, and duration.
+2. The same TTML endpoint using only title and artist when the richer request returns `401` or `404`. This works around the API's metadata-specific cache keys without weakening the first match attempt.
+3. Unison using title, artist, and duration. TTML and LRC results return immediately; plain text is retained as a last resort.
+4. Better Lyrics Kugou using title and artist for a line-synchronized fallback.
+5. Retained Unison plain text when no synchronized source succeeded.
+
+Legacy is deprecated and is not queried. Successful TTML, LRC, and plain text are preserved exactly as received so Navidrome can select the matching parser.
 
 The public API is cache-first:
 
 - Cached songs do not require an API key.
-- Uncached songs can return `401 Unauthorized`; the plugin treats that cached-only miss as no lyrics because Better Lyrics is not currently issuing new API keys.
-- `404 Not Found` is treated as a normal no-match result.
-- Invalid-request, rate-limit, network, malformed-response, and server failures are logged by Navidrome and do not replace higher-priority lyrics.
+- Uncached Better Lyrics requests can return `401 Unauthorized`; the plugin treats that cached-only miss as a normal provider miss because Better Lyrics is not currently issuing new API keys.
+- `404 Not Found` is a normal no-match result.
+- Independent provider failures do not block a later provider. If every provider misses, operational failures are returned to Navidrome for logging.
+- Each HTTP attempt has a six-second timeout. A successful TTML lookup normally makes one request; the complete miss path makes at most four sequential requests.
 
 See the Better Lyrics documentation for the current [authentication](https://lyrics-api-docs.boidu.dev/docs/authentication), [rate limits](https://lyrics-api-docs.boidu.dev/docs/rate-limiting), and [response format](https://lyrics-api-docs.boidu.dev/docs/response-format).
 
 ## Privacy and attribution
 
-Using this plugin sends song metadata, the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version>`) to Better Lyrics and its infrastructure; it does not send the browser's user agent. Better Lyrics says request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
+Using this plugin sends song metadata, the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version>`) to Better Lyrics and Unison; it does not send the browser's user agent. Better Lyrics receives title, artist, album, and duration on the first attempt, while Unison receives title, artist, and duration. Better Lyrics says request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
 
-Lyrics are supplied by Better Lyrics and its upstream providers. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
+Lyrics are supplied by Better Lyrics, Unison, and their upstream contributors. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
 
 Thanks to [Better Lyrics](https://betterlyrics.org/) for making its synchronized-lyrics API available.
+
+Lyrics from Unison ([unison.boidu.dev](https://unison.boidu.dev/)). Unison requires this attribution. Navidrome's current lyrics plugin contract has no provider-attribution field, so the plugin cannot also place the credit beside lyrics in the client UI.
 
 ## Development
 
@@ -76,4 +87,4 @@ The implementation targets the Navidrome v0.63.2 Go PDK so the plugin is built a
 
 The original source in this repository remains available under the [MIT License](LICENSE).
 
-Packaged `.ndp` artifacts statically include the [Navidrome Go PDK](https://github.com/navidrome/navidrome/tree/v0.63.2/plugins/pdk/go), which is licensed under GPL-3.0. Distribution of the combined artifact must comply with the PDK's GPL-3.0 terms. The Better Lyrics API is a separate network service; no Better Lyrics server or extension source is copied into this plugin.
+Packaged `.ndp` artifacts statically include the [Navidrome Go PDK](https://github.com/navidrome/navidrome/tree/v0.63.2/plugins/pdk/go), which is licensed under GPL-3.0. Distribution of the combined artifact must comply with the PDK's GPL-3.0 terms. The Better Lyrics API and Unison are separate network services; no server, database, or extension source is copied into this plugin.
