@@ -14,8 +14,8 @@
       ]
     },
     "kvstore": {
-      "reason": "Cache lyrics and share Better Lyrics rate-limit cooldowns",
-      "maxSize": "8MB"
+      "reason": "Cache lyrics and share provider rate-limit cooldowns",
+      "maxSize": "32MB"
     }
   }
 }

@@ -2,6 +2,8 @@
 
 package main
 
+func logCacheDebug(string) {}
+
 func defaultLyricsCache() lyricsCacheStore {
 	return noopLyricsCache{}
 }
