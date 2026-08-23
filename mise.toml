@@ -23,19 +23,19 @@ run = "go test -race ./..."
 [tasks.build]
 description = "Build the Navidrome WebAssembly plugin"
 # TinyGo 0.40.1 panics in the PDK's JSON decoder before the provider is called.
-run = "GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm ."
+run = "mkdir -p dist && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o dist/plugin.wasm ./plugin"
 
 [tasks.package]
 description = "Package the Navidrome plugin"
 depends = ["build"]
-run = "zip -q -j -FS better-lyrics.ndp plugin.wasm manifest.json"
+run = "zip -q -j -FS dist/better-lyrics.ndp dist/plugin.wasm plugin/manifest.json"
 
 [tasks.package-check]
 description = "Validate the plugin package contents"
 depends = ["package"]
 run = '''
-unzip -t better-lyrics.ndp
-entries="$(unzip -Z1 better-lyrics.ndp | LC_ALL=C sort)"
+unzip -t dist/better-lyrics.ndp
+entries="$(unzip -Z1 dist/better-lyrics.ndp | LC_ALL=C sort)"
 expected="$(printf 'manifest.json\nplugin.wasm')"
 if [ "$entries" != "$expected" ]; then
   printf 'Unexpected package contents:\n%s\n' "$entries"

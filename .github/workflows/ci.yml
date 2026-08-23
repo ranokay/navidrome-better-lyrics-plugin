@@ -33,5 +33,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: better-lyrics
-          path: better-lyrics.ndp
+          path: dist/better-lyrics.ndp
           if-no-files-found: error

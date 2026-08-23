@@ -29,12 +29,12 @@ jobs:
       - name: Verify tag matches the plugin version
         if: github.ref_type == 'tag'
         run: |
-          expected="v$(jq -r .version manifest.json)"
+          expected="v$(jq -r .version plugin/manifest.json)"
           if [ "$GITHUB_REF_NAME" != "$expected" ]; then
             printf 'Tag %s does not match plugin version %s\n' "$GITHUB_REF_NAME" "$expected"
             exit 1
           fi
-          printf 'Releasing plugin version %s\n' "$(jq -r .version manifest.json)"
+          printf 'Releasing plugin version %s\n' "$(jq -r .version plugin/manifest.json)"
 
       - name: Run checks and package the plugin
         run: mise run check
@@ -44,6 +44,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" better-lyrics.ndp \
+          gh release create "$GITHUB_REF_NAME" dist/better-lyrics.ndp \
             --title "better-lyrics $GITHUB_REF_NAME" \
             --generate-notes

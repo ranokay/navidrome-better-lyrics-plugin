@@ -1,1 +1,30 @@
+# Build artifacts
+/dist/
+plugin.wasm
+*.ndp
+
+# Go test and coverage output
+*.test
+coverage.out
+coverage.html
+
+# macOS
 .DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux backup files
+*~
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
