@@ -92,7 +92,7 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		lookupErrors = append(lookupErrors, err)
 		betterLyricsAvailable = false
 	} else if text != "" {
-		return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: text}}}, nil
+		return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
 	}
 
 	minimalURL, _ := lyricsRequestURLWithoutOptionalMetadata(input.Track)
@@ -101,7 +101,7 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
 		} else if text != "" {
-			return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: text}}}, nil
+			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
 		}
 	}
 
@@ -112,7 +112,7 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		lookupErrors = append(lookupErrors, err)
 	} else if unisonLyrics.Text != "" {
 		if unisonFormat != "plain" {
-			return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{unisonLyrics}}, nil
+			return sourcedLyricsResponse(unisonLyrics, "unison", unisonFormat), nil
 		}
 		plainFallback = unisonLyrics
 	}
@@ -122,16 +122,26 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 	if err != nil {
 		lookupErrors = append(lookupErrors, err)
 	} else if kugouLyrics.Text != "" {
-		return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{kugouLyrics}}, nil
+		return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), nil
 	}
 
 	if plainFallback.Text != "" {
-		return lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{plainFallback}}, nil
+		return sourcedLyricsResponse(plainFallback, "unison", "plain"), nil
 	}
 	if len(lookupErrors) > 0 {
 		return lyrics.GetLyricsResponse{}, errors.Join(lookupErrors...)
 	}
 	return lyrics.GetLyricsResponse{}, nil
+}
+
+func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {
+	return lyrics.GetLyricsResponse{
+		Lyrics: []lyrics.LyricsText{text},
+		Source: &lyrics.LyricsSource{
+			Provider: provider,
+			Format:   format,
+		},
+	}
 }
 
 func (p *betterLyricsProvider) fetchBetterLyricsTTML(requestURL string, headers map[string]string) (string, bool, error) {

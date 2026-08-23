@@ -21,6 +21,8 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 		response     *host.HTTPResponse
 		sendError    error
 		wantText     string
+		wantProvider string
+		wantFormat   string
 		wantError    string
 		wantRequests int
 	}{
@@ -29,6 +31,8 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  <tt xml:lang=\"en\">timed text</tt>\n"}`)},
 			wantText:     "  <tt xml:lang=\"en\">timed text</tt>\n",
+			wantProvider: "ttml",
+			wantFormat:   "ttml",
 			wantRequests: 1,
 		},
 		{
@@ -135,6 +139,7 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			if len(result.Lyrics) != 1 || result.Lyrics[0].Text != test.wantText {
 				t.Fatalf("GetLyrics() lyrics = %#v, want one raw TTML entry %q", result.Lyrics, test.wantText)
 			}
+			assertLyricsSource(t, result.Source, test.wantProvider, test.wantFormat)
 		})
 	}
 }
@@ -218,6 +223,7 @@ func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "<tt>cached lyrics</tt>" {
 		t.Fatalf("GetLyrics() lyrics = %#v, want cached TTML", result.Lyrics)
 	}
+	assertLyricsSource(t, result.Source, "ttml", "ttml")
 	if len(requests) != 2 {
 		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
 	}
@@ -251,6 +257,8 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 		kugouResponse    *host.HTTPResponse
 		wantText         string
 		wantLanguage     string
+		wantProvider     string
+		wantFormat       string
 		wantRequestCount int
 	}{
 		{
@@ -258,6 +266,8 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt>unison rich</tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
 			wantText:         "<tt>unison rich</tt>",
 			wantLanguage:     "ko",
+			wantProvider:     "unison",
+			wantFormat:       "ttml",
 			wantRequestCount: 3,
 		},
 		{
@@ -265,6 +275,8 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]unison line","format":"lrc","language":"en","syncType":"linesync"}}`)},
 			wantText:         "[00:01.00]unison line",
 			wantLanguage:     "en",
+			wantProvider:     "unison",
+			wantFormat:       "lrc",
 			wantRequestCount: 3,
 		},
 		{
@@ -272,6 +284,8 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"unison plain","format":"plain","language":"en","syncType":"plain"}}`)},
 			kugouResponse:    &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]kugou line","provider":"kugou"}`)},
 			wantText:         "[00:01.00]kugou line",
+			wantProvider:     "kugou",
+			wantFormat:       "lrc",
 			wantRequestCount: 4,
 		},
 		{
@@ -280,6 +294,8 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			kugouResponse:    &host.HTTPResponse{StatusCode: 404},
 			wantText:         "unison plain",
 			wantLanguage:     "en",
+			wantProvider:     "unison",
+			wantFormat:       "plain",
 			wantRequestCount: 4,
 		},
 	}
@@ -318,6 +334,7 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			if len(result.Lyrics) != 1 || result.Lyrics[0].Text != test.wantText || result.Lyrics[0].Lang != test.wantLanguage {
 				t.Fatalf("GetLyrics() lyrics = %#v, want text %q and language %q", result.Lyrics, test.wantText, test.wantLanguage)
 			}
+			assertLyricsSource(t, result.Source, test.wantProvider, test.wantFormat)
 			if len(requests) != test.wantRequestCount {
 				t.Fatalf("GetLyrics() request count = %d, want %d", len(requests), test.wantRequestCount)
 			}
@@ -401,6 +418,7 @@ func TestBetterLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
 	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]community line" {
 		t.Fatalf("GetLyrics() lyrics = %#v, want Unison LRC", result.Lyrics)
 	}
+	assertLyricsSource(t, result.Source, "unison", "lrc")
 	if len(requests) != 2 {
 		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
 	}
@@ -431,6 +449,7 @@ func TestBetterLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainTex
 	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]kugou line" {
 		t.Fatalf("GetLyrics() lyrics = %#v, want Kugou LRC", result.Lyrics)
 	}
+	assertLyricsSource(t, result.Source, "kugou", "lrc")
 	if len(requests) != 3 {
 		t.Fatalf("GetLyrics() request count = %d, want 3", len(requests))
 	}
@@ -448,6 +467,21 @@ func assertRequestEndpoint(t *testing.T, request host.HTTPRequest, want string) 
 	}
 	if got := parsed.Scheme + "://" + parsed.Host + parsed.Path; got != want {
 		t.Fatalf("request endpoint = %q, want %q", got, want)
+	}
+}
+
+func assertLyricsSource(t *testing.T, source *lyrics.LyricsSource, wantProvider, wantFormat string) {
+	t.Helper()
+	if source == nil {
+		t.Fatalf("GetLyrics() source = nil, want provider %q and format %q", wantProvider, wantFormat)
+	}
+	if source.Provider != wantProvider || source.Format != wantFormat {
+		t.Fatalf(
+			"GetLyrics() source = %#v, want provider %q and format %q",
+			source,
+			wantProvider,
+			wantFormat,
+		)
 	}
 }
 

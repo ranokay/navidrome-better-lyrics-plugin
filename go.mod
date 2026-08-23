@@ -4,6 +4,8 @@ go 1.25.0
 
 require github.com/navidrome/navidrome/plugins/pdk/go v0.0.0-20260711131814-be10f89c1179
 
+replace github.com/navidrome/navidrome/plugins/pdk/go => github.com/ranokay/navidrome/plugins/pdk/go v0.0.0-20260823024204-f950db37d9b4
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/extism/go-pdk v1.1.3 // indirect

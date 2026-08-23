@@ -2,13 +2,14 @@
 
 A Navidrome lyrics-provider plugin that uses the public [Better Lyrics API](https://lyrics-api-docs.boidu.dev/) and [Unison community database](https://unison.boidu.dev/) when a track has no local lyrics.
 
-The plugin does not inject or replace Navidrome's interface. It returns TTML, LRC, or plain lyrics unchanged through Navidrome's Lyrics capability. Compatible clients, including the sidebar proposed in [navidrome/navidrome#5733](https://github.com/navidrome/navidrome/pull/5733), can render the same rich timing and metadata present in provider TTML.
+The plugin does not inject or replace Navidrome's interface. It returns TTML, LRC, or plain lyrics unchanged through Navidrome's Lyrics capability. Compatible clients, including the sidebar proposed in [navidrome/navidrome#5733](https://github.com/navidrome/navidrome/pull/5733), can render the same rich timing and metadata present in provider TTML. On builds with [ranokay/navidrome#13](https://github.com/ranokay/navidrome/pull/13), it also reports the selected provider and format for the sidebar's source popover.
 
 ## Requirements
 
 - Navidrome v0.63.2 or newer
 - Navidrome plugins enabled
 - A Navidrome client that displays synchronized lyrics; PR #5733 is required specifically for its responsive sidebar UI until that work ships upstream
+- PR #13 is required specifically for source details in that sidebar until the provenance contract ships upstream
 
 ## Install
 
@@ -67,7 +68,7 @@ Lyrics are supplied by Better Lyrics, Unison, and their upstream contributors. T
 
 Thanks to [Better Lyrics](https://betterlyrics.org/) for making its synchronized-lyrics API available.
 
-Lyrics from Unison ([unison.boidu.dev](https://unison.boidu.dev/)). Unison requires this attribution. Navidrome's current lyrics plugin contract has no provider-attribution field, so the plugin cannot also place the credit beside lyrics in the client UI.
+Lyrics from Unison ([unison.boidu.dev](https://unison.boidu.dev/)). Unison requires this attribution. Builds with PR #13 also identify Unison as the selected provider beside the lyrics.
 
 ## Development
 
@@ -81,10 +82,10 @@ mise run check
 
 `mise run check` verifies formatting, runs the race-enabled Go tests, builds the WebAssembly module, packages `better-lyrics.ndp`, and checks the archive.
 
-The implementation targets the Navidrome v0.63.2 Go PDK so the plugin is built against a released Lyrics-capability contract rather than a moving branch.
+The implementation temporarily replaces the released Go PDK with the additive provenance contract from PR #13. Older Navidrome hosts ignore the optional source metadata and continue receiving the lyrics; compatible hosts display it.
 
 ## License
 
 The original source in this repository remains available under the [MIT License](LICENSE).
 
-Packaged `.ndp` artifacts statically include the [Navidrome Go PDK](https://github.com/navidrome/navidrome/tree/v0.63.2/plugins/pdk/go), which is licensed under GPL-3.0. Distribution of the combined artifact must comply with the PDK's GPL-3.0 terms. The Better Lyrics API and Unison are separate network services; no server, database, or extension source is copied into this plugin.
+Packaged `.ndp` artifacts statically include the [Navidrome Go PDK](https://github.com/ranokay/navidrome/tree/lyrics-source-provenance/plugins/pdk/go), which is licensed under GPL-3.0. Distribution of the combined artifact must comply with the PDK's GPL-3.0 terms. The Better Lyrics API and Unison are separate network services; no server, database, or extension source is copied into this plugin.
