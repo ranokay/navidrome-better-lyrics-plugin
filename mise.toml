@@ -1,6 +1,5 @@
 [tools]
 go = "1.25.14"
-tinygo = "0.40.1"
 "aqua:WebAssembly/binaryen" = "132"
 
 [tasks.fmt]
@@ -23,7 +22,8 @@ run = "go test -race ./..."
 
 [tasks.build]
 description = "Build the Navidrome WebAssembly plugin"
-run = "tinygo build -opt=2 -scheduler=none -no-debug -o plugin.wasm -target wasip1 -buildmode=c-shared ."
+# TinyGo 0.40.1 panics in the PDK's JSON decoder before the provider is called.
+run = "GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm ."
 
 [tasks.package]
 description = "Package the Navidrome plugin"

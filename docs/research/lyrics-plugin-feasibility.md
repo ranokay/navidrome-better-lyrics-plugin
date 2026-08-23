@@ -139,7 +139,7 @@ PR #5733's frontend hook calls `getLyricsBySongId`, coalesces concurrent request
 
 ## Smallest viable architecture
 
-1. **One Go/TinyGo WebAssembly module.** Follow the official plugin shape and call `lyrics.Register` with a provider implementing `GetLyrics`. Pin a compatible Navidrome PDK version in `go.mod` ([official plugin module](https://github.com/navidrome/apple-music-plugin/blob/60a6100f7aaeca676de71cc7b343e49ef42e2fca/go.mod#L1-L9)).
+1. **One Go WebAssembly module.** Follow the official plugin shape and call `lyrics.Register` with a provider implementing `GetLyrics`. Pin a compatible Navidrome PDK version in `go.mod` ([official plugin module](https://github.com/navidrome/apple-music-plugin/blob/60a6100f7aaeca676de71cc7b343e49ef42e2fca/go.mod#L1-L9)).
 2. **Minimal manifest permissions.** Request only `http.requiredHosts = ["lyrics-api.boidu.dev"]`. Do not request users, library, filesystem, or write permissions. A host `cache` permission is optional for a short positive cache; omit it from the first version unless load testing justifies it.
 3. **Deterministic request construction.** Reject empty title/artist before making HTTP calls. Use proper URL query encoding. Send `s`, `a`, optional `al`, and duration seconds `d`, plus an identifiable plugin user agent.
 4. **Preserve TTML exactly.** Decode only the response envelope, require non-empty `ttml`, ignore unknown fields and optional `score`, and return the original TTML as one lyrics entry. Do not normalize whitespace or down-convert to LRC.
@@ -155,7 +155,7 @@ A local 2026-08-23 compatibility probe fetched a cached TTML response from the d
 - Use a saved, appropriately licensed/minimized fixture to assert byte-for-byte TTML pass-through on `200`.
 - Test `404` and cache-miss `401` as empty results; test `422`, `429`, `5xx`, network failure, malformed JSON, and missing/blank `ttml` as the chosen error classes.
 - Verify the manifest denies undeclared hosts and does not request library/user permissions.
-- Build with TinyGo, package the `.ndp`, and inspect the archive for exactly the expected manifest/module assets.
+- Build with Go's `wasip1/wasm` target, package the `.ndp`, and inspect the archive for exactly the expected manifest/module assets.
 - Run end-to-end against a local Navidrome containing #5733: a track with a sidecar must produce no Better Lyrics request; a track without any local lyric source must invoke the plugin and display successfully returned TTML in the sidebar.
 - Exercise simultaneous requests to confirm the plugin respects Navidrome's concurrency bound and handles `Retry-After` without a retry storm.
 
