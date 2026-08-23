@@ -187,6 +187,83 @@ func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.
 	}
 }
 
+func TestBetterLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		responses    []*host.HTTPResponse
+		wantProvider string
+		wantFormat   string
+		wantTTL      int64
+	}{
+		{
+			name: "uses the positive TTL after clean misses",
+			responses: []*host.HTTPResponse{
+				{StatusCode: 404},
+				{StatusCode: 404},
+				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
+			},
+			wantProvider: "unison",
+			wantFormat:   "lrc",
+			wantTTL:      positiveLyricsCacheTTLSeconds,
+		},
+		{
+			name: "uses a short TTL after a Better Lyrics failure",
+			responses: []*host.HTTPResponse{
+				{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
+				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
+			},
+			wantProvider: "unison",
+			wantFormat:   "lrc",
+			wantTTL:      int64(5 * time.Minute / time.Second),
+		},
+		{
+			name: "uses a short TTL for plain text after a Kugou failure",
+			responses: []*host.HTTPResponse{
+				{StatusCode: 404},
+				{StatusCode: 404},
+				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"community plain","format":"plain","language":"en"}}`)},
+				{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
+			},
+			wantProvider: "unison",
+			wantFormat:   "plain",
+			wantTTL:      int64(5 * time.Minute / time.Second),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cache := newFakeLyricsCache()
+			requests := 0
+			provider := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+				if requests >= len(test.responses) {
+					t.Fatalf("unexpected request %d", requests+1)
+				}
+				response := test.responses[requests]
+				requests++
+				return response, nil
+			}, cache, time.Now)
+
+			result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
+				Title: "Song", Artist: "Artist", Album: "Album", Duration: 123,
+			}})
+			if err != nil {
+				t.Fatalf("GetLyrics() error = %v, want nil", err)
+			}
+			assertLyricsSource(t, result.Source, test.wantProvider, test.wantFormat)
+			if requests != len(test.responses) {
+				t.Fatalf("GetLyrics() request count = %d, want %d", requests, len(test.responses))
+			}
+			if ttl := cache.lastTTL(); ttl != test.wantTTL {
+				t.Fatalf("fallback cache TTL = %d, want %d", ttl, test.wantTTL)
+			}
+		})
+	}
+}
+
 func TestBetterLyricsProvider_CachesCompleteMisses(t *testing.T) {
 	t.Parallel()
 
@@ -302,6 +379,29 @@ func TestBetterLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.
 	}
 	if requests != 2 {
 		t.Fatalf("request count = %d, want Better Lyrics then Unison with Kugou suppressed", requests)
+	}
+}
+
+func TestBetterLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 23, 6, 0, 0, int(900*time.Millisecond), time.UTC)
+	currentTime := now
+	cache := newFakeLyricsCache()
+	provider := newBetterLyricsProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
+	provider.rememberRateLimit(&host.HTTPResponse{Headers: map[string]string{"Retry-After": "1"}})
+
+	currentTime = now.Add(100 * time.Millisecond)
+	if err := provider.activeBetterLyricsCooldown(); err == nil {
+		t.Fatal("cooldown after 100ms = nil, want the one-second Retry-After to remain active")
+	}
+	if ttl := cache.lastTTL(); ttl != 2 {
+		t.Fatalf("fractional cooldown TTL = %d, want 2 seconds to cover the rounded deadline", ttl)
+	}
+
+	currentTime = now.Add(1100 * time.Millisecond)
+	if err := provider.activeBetterLyricsCooldown(); err != nil {
+		t.Fatalf("cooldown after rounded deadline = %v, want nil", err)
 	}
 }
 

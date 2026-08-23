@@ -78,17 +78,17 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		return cached, nil
 	}
 
-	response, err := p.fetchLyrics(input)
+	response, hadOperationalFailure, err := p.fetchLyrics(input)
 	if err == nil {
-		p.cacheLyrics(input.Track, response)
+		p.cacheLyrics(input.Track, response, hadOperationalFailure)
 	}
 	return response, err
 }
 
-func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
+func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, bool, error) {
 	requestURL, ok := lyricsRequestURL(input.Track)
 	if !ok {
-		return lyrics.GetLyricsResponse{}, nil
+		return lyrics.GetLyricsResponse{}, false, nil
 	}
 
 	headers := map[string]string{
@@ -97,7 +97,7 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 	}
 
 	if p.send == nil {
-		return lyrics.GetLyricsResponse{}, fmt.Errorf("better lyrics request sender is not configured")
+		return lyrics.GetLyricsResponse{}, false, fmt.Errorf("better lyrics request sender is not configured")
 	}
 
 	var lookupErrors []error
@@ -117,7 +117,7 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 			betterLyricsAvailable = false
 			cooldownReported = isRateLimitError(err)
 		} else if text != "" {
-			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
+			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), false, nil
 		}
 	}
 
@@ -129,7 +129,7 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 			lookupErrors = append(lookupErrors, err)
 			cooldownReported = cooldownReported || isRateLimitError(err)
 		} else if text != "" {
-			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
+			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), false, nil
 		}
 	}
 
@@ -140,7 +140,7 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 		lookupErrors = append(lookupErrors, err)
 	} else if unisonLyrics.Text != "" {
 		if unisonFormat != "plain" {
-			return sourcedLyricsResponse(unisonLyrics, "unison", unisonFormat), nil
+			return sourcedLyricsResponse(unisonLyrics, "unison", unisonFormat), len(lookupErrors) > 0, nil
 		}
 		plainFallback = unisonLyrics
 	}
@@ -154,18 +154,18 @@ func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric
 			if err != nil {
 				lookupErrors = append(lookupErrors, err)
 			} else if kugouLyrics.Text != "" {
-				return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), nil
+				return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), len(lookupErrors) > 0, nil
 			}
 		}
 	}
 
 	if plainFallback.Text != "" {
-		return sourcedLyricsResponse(plainFallback, "unison", "plain"), nil
+		return sourcedLyricsResponse(plainFallback, "unison", "plain"), len(lookupErrors) > 0, nil
 	}
 	if len(lookupErrors) > 0 {
-		return lyrics.GetLyricsResponse{}, errors.Join(lookupErrors...)
+		return lyrics.GetLyricsResponse{}, false, errors.Join(lookupErrors...)
 	}
-	return lyrics.GetLyricsResponse{}, nil
+	return lyrics.GetLyricsResponse{}, false, nil
 }
 
 func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {

@@ -17,6 +17,7 @@ import (
 const (
 	lyricsCacheMaxSize            = "8MB"
 	positiveLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
+	degradedLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	negativeLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	defaultRateLimitCooldown      = 30 * time.Second
 	lyricsCacheKeyPrefix          = "lyrics:v1:"
@@ -79,7 +80,7 @@ func (p *betterLyricsProvider) readCachedLyrics(track lyrics.TrackInfo) (lyrics.
 	return response, true
 }
 
-func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyrics.GetLyricsResponse) {
+func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyrics.GetLyricsResponse, hadOperationalFailure bool) {
 	key, ok := lyricsCacheKey(track)
 	if !ok {
 		return
@@ -88,6 +89,8 @@ func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyri
 	ttl := positiveLyricsCacheTTLSeconds
 	if len(response.Lyrics) == 0 {
 		ttl = negativeLyricsCacheTTLSeconds
+	} else if hadOperationalFailure {
+		ttl = degradedLyricsCacheTTLSeconds
 	}
 	value, err := json.Marshal(response)
 	if err != nil {
@@ -118,10 +121,15 @@ func (p *betterLyricsProvider) activeBetterLyricsCooldown() error {
 }
 
 func (p *betterLyricsProvider) rememberRateLimit(response *host.HTTPResponse) {
-	duration := retryAfterDuration(response.Headers, p.now())
-	seconds := durationSecondsCeil(duration)
-	until := p.now().Add(time.Duration(seconds) * time.Second).Unix()
-	_ = p.cache.SetWithTTL(betterLyricsCooldownKey, []byte(strconv.FormatInt(until, 10)), seconds)
+	now := p.now()
+	deadline := now.Add(retryAfterDuration(response.Headers, now))
+	untilUnix := deadline.Unix()
+	if deadline.Nanosecond() != 0 {
+		// The deadline is stored as whole Unix seconds, so round up rather than shorten Retry-After.
+		untilUnix++
+	}
+	ttlSeconds := durationSecondsCeil(time.Unix(untilUnix, 0).Sub(now))
+	_ = p.cache.SetWithTTL(betterLyricsCooldownKey, []byte(strconv.FormatInt(untilUnix, 10)), ttlSeconds)
 }
 
 func retryAfterDuration(headers map[string]string, now time.Time) time.Duration {

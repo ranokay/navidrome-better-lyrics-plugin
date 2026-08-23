@@ -56,7 +56,7 @@ The public API is cache-first:
 - Uncached Better Lyrics requests can return `401 Unauthorized`; the plugin treats that cached-only miss as a normal provider miss because Better Lyrics is not currently issuing new API keys.
 - `404 Not Found` is a normal no-match result.
 - Independent provider failures do not block a later provider. If every provider misses, operational failures are returned to Navidrome for logging.
-- Successful results are cached in Navidrome's plugin store for 24 hours, while complete misses are cached for five minutes. The store is capped at 8 MB; transport, server, parsing, and rate-limit failures are never cached.
+- Successful results reached after clean provider responses are cached in Navidrome's plugin store for 24 hours. Successful lower-priority fallbacks reached after an operational failure and complete misses are cached for five minutes, so preferred providers can be retried promptly. The store is capped at 8 MB; transport, server, parsing, and rate-limit failure responses are never cached.
 - A `429 Too Many Requests` response starts a shared cooldown for both Better Lyrics TTML and Kugou. The plugin honors `Retry-After` as either seconds or an HTTP date, falling back to 30 seconds when the header is absent or invalid. Unison remains available during the cooldown.
 - Each HTTP attempt has a six-second timeout. On a cold cache, a successful TTML lookup normally makes one request; the complete miss path makes at most four sequential requests.
 
