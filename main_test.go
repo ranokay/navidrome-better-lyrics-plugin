@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
@@ -140,6 +143,181 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 				t.Fatalf("GetLyrics() lyrics = %#v, want one raw TTML entry %q", result.Lyrics, test.wantText)
 			}
 			assertLyricsSource(t, result.Source, test.wantProvider, test.wantFormat)
+		})
+	}
+}
+
+func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	requests := 0
+	first := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{
+			StatusCode: 200,
+			Body:       []byte(`{"ttml":"<tt>cached lyrics</tt>"}`),
+		}, nil
+	}, cache, time.Now)
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}
+	firstResult, err := first.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("first GetLyrics() error = %v, want nil", err)
+	}
+
+	second := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		t.Fatal("second GetLyrics() made a network request, want shared cache hit")
+		return nil, nil
+	}, cache, time.Now)
+	secondResult, err := second.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("second GetLyrics() error = %v, want nil", err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("network request count = %d, want 1", requests)
+	}
+	if len(firstResult.Lyrics) != 1 || len(secondResult.Lyrics) != 1 || secondResult.Lyrics[0].Text != firstResult.Lyrics[0].Text {
+		t.Fatalf("cached result = %#v, want %#v", secondResult, firstResult)
+	}
+	assertLyricsSource(t, secondResult.Source, "ttml", "ttml")
+	if ttl := cache.lastTTL(); ttl != positiveLyricsCacheTTLSeconds {
+		t.Fatalf("positive cache TTL = %d, want %d", ttl, positiveLyricsCacheTTLSeconds)
+	}
+}
+
+func TestBetterLyricsProvider_CachesCompleteMisses(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	requests := 0
+	provider := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	}, cache, time.Now)
+	input := lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Unknown", Artist: "Artist"}}
+
+	for range 2 {
+		result, err := provider.GetLyrics(input)
+		if err != nil {
+			t.Fatalf("GetLyrics() error = %v, want nil", err)
+		}
+		if len(result.Lyrics) != 0 {
+			t.Fatalf("GetLyrics() lyrics = %#v, want empty", result.Lyrics)
+		}
+	}
+
+	if requests != 3 {
+		t.Fatalf("network request count = %d, want 3 from the first lookup only", requests)
+	}
+	if ttl := cache.lastTTL(); ttl != negativeLyricsCacheTTLSeconds {
+		t.Fatalf("negative cache TTL = %d, want %d", ttl, negativeLyricsCacheTTLSeconds)
+	}
+}
+
+func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
+	cache := newFakeLyricsCache()
+	firstRequests := 0
+	first := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		firstRequests++
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		if parsed.Host == "unison.boidu.dev" {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		return &host.HTTPResponse{
+			StatusCode: 429,
+			Headers:    map[string]string{"Retry-After": "12"},
+			Body:       []byte(`{"error":"Rate limit exceeded"}`),
+		}, nil
+	}, cache, func() time.Time { return now })
+
+	_, err := first.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "First", Artist: "Artist"}})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+		t.Fatalf("first GetLyrics() error = %v, want HTTP 429", err)
+	}
+	if firstRequests != 2 {
+		t.Fatalf("first request count = %d, want Better Lyrics then Unison with Kugou suppressed", firstRequests)
+	}
+	if ttl := cache.lastTTL(); ttl != 12 {
+		t.Fatalf("cooldown TTL = %d, want Retry-After value 12", ttl)
+	}
+
+	secondRequests := 0
+	second := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		secondRequests++
+		parsed, err := url.Parse(request.URL)
+		if err != nil {
+			t.Fatalf("parse request URL: %v", err)
+		}
+		if parsed.Host != "unison.boidu.dev" {
+			t.Fatalf("request during shared cooldown = %s, want Unison only", request.URL)
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	}, cache, func() time.Time { return now })
+
+	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
+	if err == nil || !strings.Contains(err.Error(), "cooldown active") {
+		t.Fatalf("second GetLyrics() error = %v, want active cooldown", err)
+	}
+	if secondRequests != 1 {
+		t.Fatalf("second request count = %d, want one Unison request", secondRequests)
+	}
+}
+
+func TestBetterLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	requests := 0
+	provider := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{StatusCode: 503}, nil
+	}, cache, time.Now)
+	input := lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}
+
+	for range 2 {
+		_, err := provider.GetLyrics(input)
+		if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
+			t.Fatalf("GetLyrics() error = %v, want HTTP 503", err)
+		}
+	}
+
+	if requests != 6 {
+		t.Fatalf("network request count = %d, want both three-provider lookups", requests)
+	}
+	if ttl := cache.lastTTL(); ttl != 0 {
+		t.Fatalf("cache TTL = %d, want no cached operational failure", ttl)
+	}
+}
+
+func TestRetryAfterDuration(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		header string
+		want   time.Duration
+	}{
+		{name: "seconds", header: "12", want: 12 * time.Second},
+		{name: "HTTP date", header: now.Add(45 * time.Second).Format(http.TimeFormat), want: 45 * time.Second},
+		{name: "missing", want: defaultRateLimitCooldown},
+		{name: "invalid", header: "later", want: defaultRateLimitCooldown},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := retryAfterDuration(map[string]string{"retry-after": test.header}, now); got != test.want {
+				t.Fatalf("retryAfterDuration() = %s, want %s", got, test.want)
+			}
 		})
 	}
 }
@@ -594,6 +772,9 @@ func TestManifestAllowsOnlyProviderHosts(t *testing.T) {
 			HTTP struct {
 				RequiredHosts []string `json:"requiredHosts"`
 			} `json:"http"`
+			KVStore struct {
+				MaxSize string `json:"maxSize"`
+			} `json:"kvstore"`
 		} `json:"permissions"`
 	}
 	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
@@ -605,4 +786,41 @@ func TestManifestAllowsOnlyProviderHosts(t *testing.T) {
 	if got != want {
 		t.Fatalf("manifest HTTP hosts = %q, want %q", got, want)
 	}
+	if got := manifest.Permissions.KVStore.MaxSize; got != lyricsCacheMaxSize {
+		t.Fatalf("manifest KV store maxSize = %q, want %q", got, lyricsCacheMaxSize)
+	}
+}
+
+type fakeLyricsCache struct {
+	mu     sync.Mutex
+	values map[string][]byte
+	ttls   []int64
+}
+
+func newFakeLyricsCache() *fakeLyricsCache {
+	return &fakeLyricsCache{values: make(map[string][]byte)}
+}
+
+func (c *fakeLyricsCache) Get(key string) ([]byte, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value, exists := c.values[key]
+	return append([]byte(nil), value...), exists, nil
+}
+
+func (c *fakeLyricsCache) SetWithTTL(key string, value []byte, ttlSeconds int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.values[key] = append([]byte(nil), value...)
+	c.ttls = append(c.ttls, ttlSeconds)
+	return nil
+}
+
+func (c *fakeLyricsCache) lastTTL() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.ttls) == 0 {
+		return 0
+	}
+	return c.ttls[len(c.ttls)-1]
 }

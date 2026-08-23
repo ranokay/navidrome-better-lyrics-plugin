@@ -12,6 +12,10 @@
         "lyrics-api.boidu.dev",
         "unison.boidu.dev"
       ]
+    },
+    "kvstore": {
+      "reason": "Cache lyrics and share Better Lyrics rate-limit cooldowns",
+      "maxSize": "8MB"
     }
   }
 }

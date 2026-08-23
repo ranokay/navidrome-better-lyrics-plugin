@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
@@ -29,7 +30,9 @@ var manifestJSON []byte
 type requestSender func(host.HTTPRequest) (*host.HTTPResponse, error)
 
 type betterLyricsProvider struct {
-	send requestSender
+	send  requestSender
+	cache lyricsCacheStore
+	now   func() time.Time
 }
 
 type apiResponse struct {
@@ -65,12 +68,24 @@ func init() {
 func main() {}
 
 func newBetterLyricsProvider(send requestSender) *betterLyricsProvider {
-	return &betterLyricsProvider{send: send}
+	return newBetterLyricsProviderWithDependencies(send, defaultLyricsCache(), time.Now)
 }
 
 // GetLyrics prefers rich TTML, then synchronized community/provider results,
 // while retaining Unison plain text as the final fallback.
 func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
+	if cached, ok := p.readCachedLyrics(input.Track); ok {
+		return cached, nil
+	}
+
+	response, err := p.fetchLyrics(input)
+	if err == nil {
+		p.cacheLyrics(input.Track, response)
+	}
+	return response, err
+}
+
+func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
 	requestURL, ok := lyricsRequestURL(input.Track)
 	if !ok {
 		return lyrics.GetLyricsResponse{}, nil
@@ -86,20 +101,33 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 	}
 
 	var lookupErrors []error
-	betterLyricsAvailable := true
-	text, retryWithoutOptionalMetadata, err := p.fetchBetterLyricsTTML(requestURL, headers)
-	if err != nil {
-		lookupErrors = append(lookupErrors, err)
-		betterLyricsAvailable = false
-	} else if text != "" {
-		return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
+	betterLyricsAvailable := false
+	cooldownReported := false
+	var text string
+	var retryWithoutOptionalMetadata bool
+	if cooldownErr := p.activeBetterLyricsCooldown(); cooldownErr != nil {
+		lookupErrors = append(lookupErrors, cooldownErr)
+		cooldownReported = true
+	} else {
+		betterLyricsAvailable = true
+		var err error
+		text, retryWithoutOptionalMetadata, err = p.fetchBetterLyricsTTML(requestURL, headers)
+		if err != nil {
+			lookupErrors = append(lookupErrors, err)
+			betterLyricsAvailable = false
+			cooldownReported = isRateLimitError(err)
+		} else if text != "" {
+			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
+		}
 	}
 
 	minimalURL, _ := lyricsRequestURLWithoutOptionalMetadata(input.Track)
 	if betterLyricsAvailable && retryWithoutOptionalMetadata && minimalURL != requestURL {
+		var err error
 		text, _, err = p.fetchBetterLyricsTTML(minimalURL, headers)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
+			cooldownReported = cooldownReported || isRateLimitError(err)
 		} else if text != "" {
 			return sourcedLyricsResponse(lyrics.LyricsText{Text: text}, "ttml", "ttml"), nil
 		}
@@ -117,12 +145,18 @@ func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.
 		plainFallback = unisonLyrics
 	}
 
-	kugouURL, _ := kugouRequestURL(input.Track)
-	kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
-	if err != nil {
-		lookupErrors = append(lookupErrors, err)
-	} else if kugouLyrics.Text != "" {
-		return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), nil
+	if cooldownErr := p.activeBetterLyricsCooldown(); cooldownErr != nil {
+		if !cooldownReported {
+			lookupErrors = append(lookupErrors, cooldownErr)
+		}
+	} else {
+		kugouURL, _ := kugouRequestURL(input.Track)
+		kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers)
+		if err != nil {
+			lookupErrors = append(lookupErrors, err)
+		} else if kugouLyrics.Text != "" {
+			return sourcedLyricsResponse(kugouLyrics, "kugou", "lrc"), nil
+		}
 	}
 
 	if plainFallback.Text != "" {
@@ -170,6 +204,9 @@ func (p *betterLyricsProvider) fetchBetterLyricsTTML(requestURL string, headers 
 		return payload.TTML, false, nil
 	case 401, 404:
 		return "", true, nil
+	case 429:
+		p.rememberRateLimit(response)
+		return "", false, apiResponseError(response)
 	default:
 		return "", false, apiResponseError(response)
 	}
@@ -229,6 +266,9 @@ func (p *betterLyricsProvider) fetchKugouLyrics(requestURL string, headers map[s
 		return lyrics.LyricsText{Text: payload.Lyrics}, nil
 	case 401, 404:
 		return lyrics.LyricsText{}, nil
+	case 429:
+		p.rememberRateLimit(response)
+		return lyrics.LyricsText{}, providerResponseError("Better Lyrics Kugou API", response)
 	default:
 		return lyrics.LyricsText{}, providerResponseError("Better Lyrics Kugou API", response)
 	}
@@ -324,6 +364,24 @@ func apiResponseError(response *host.HTTPResponse) error {
 	return providerResponseError("better lyrics API", response)
 }
 
+type providerHTTPError struct {
+	source string
+	status int32
+	detail string
+}
+
+func (e *providerHTTPError) Error() string {
+	if e.detail == "" {
+		return fmt.Sprintf("%s returned HTTP %d", e.source, e.status)
+	}
+	return fmt.Sprintf("%s returned HTTP %d: %s", e.source, e.status, e.detail)
+}
+
+func isRateLimitError(err error) bool {
+	var responseErr *providerHTTPError
+	return errors.As(err, &responseErr) && responseErr.status == 429
+}
+
 func providerResponseError(source string, response *host.HTTPResponse) error {
 	var payload apiErrorResponse
 	_ = json.Unmarshal(response.Body, &payload)
@@ -332,15 +390,11 @@ func providerResponseError(source string, response *host.HTTPResponse) error {
 	if detail == "" {
 		detail = strings.TrimSpace(payload.Message)
 	}
-	if detail == "" {
-		return fmt.Errorf("%s returned HTTP %d", source, response.StatusCode)
-	}
-
 	detailRunes := []rune(detail)
 	if len(detailRunes) > maximumAPIErrorRunes {
 		detail = string(detailRunes[:maximumAPIErrorRunes]) + "…"
 	}
-	return fmt.Errorf("%s returned HTTP %d: %s", source, response.StatusCode, detail)
+	return &providerHTTPError{source: source, status: response.StatusCode, detail: detail}
 }
 
 func pluginUserAgent() string {
