@@ -40,6 +40,9 @@ type lyricsProvider struct {
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
 	sources []lyricsSource
+	// enqueueSweepSources re-enqueues a continuation carrying only the sources a
+	// sweep had to defer when its budget ran out.
+	enqueueSweepSources func(lyrics.TrackInfo, []string) error
 }
 
 var _ lyrics.Lyrics = (*lyricsProvider)(nil)
@@ -70,7 +73,11 @@ func newLyricsProviderWithDeps(send requestSender, cache lyricsCacheStore, now f
 	if enqueue == nil {
 		enqueue = func(lyrics.TrackInfo) error { return nil }
 	}
-	return &lyricsProvider{send: send, cache: cache, now: now, configLookup: lookup, enqueueSweep: enqueue}
+	provider := &lyricsProvider{send: send, cache: cache, now: now, configLookup: lookup, enqueueSweep: enqueue}
+	if provider.enqueueSweepSources == nil {
+		provider.enqueueSweepSources = defaultSweepSourcesEnqueuer()
+	}
+	return provider
 }
 
 // newLyricsProviderWithSourcesAt is newLyricsProviderWithSources with an
@@ -110,6 +117,12 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
 		if candidate.present() {
 			if !sweepComplete {
+				// The sweep may have cached a better result after this winner was
+				// written: re-rank before serving (CodeRabbit/Codex finding).
+				if best := p.readBestFromSourceCache(track, sources); best.present() && best.quality > candidate.quality {
+					p.cacheWinner(track, sources, best, false)
+					candidate = best
+				}
 				p.maybeEnqueueSweep(track)
 			}
 			return candidate.response, nil

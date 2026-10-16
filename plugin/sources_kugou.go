@@ -23,7 +23,7 @@ func fetchKugouLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadl
 	if !ok {
 		return nil, lookupHealthy, nil
 	}
-	text, err := p.fetchKugouLyrics(kugouURL, betterLyricsSharedHeaders(), deadline)
+	text, err := p.fetchKugouLyrics(kugouURL, p.betterLyricsHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}

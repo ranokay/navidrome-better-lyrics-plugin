@@ -11,6 +11,12 @@ import (
 // no-op keeps unit tests deterministic.
 func createSweepQueue() error { return nil }
 
+// defaultSweepSourcesEnqueuer is a no-op in native test builds; tests override
+// provider.enqueueSweepSources directly.
+func defaultSweepSourcesEnqueuer() func(lyrics.TrackInfo, []string) error {
+	return func(lyrics.TrackInfo, []string) error { return nil }
+}
+
 // defaultSweepEnqueuer is a no-op in native test builds; tests that exercise the
 // enqueue path inject their own recorder.
 func defaultSweepEnqueuer() func(lyrics.TrackInfo) error {

@@ -171,21 +171,21 @@ func (p *lyricsProvider) readCachedCandidate(key string) (lyricsCandidate, bool)
 	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, true
 }
 
-func (p *lyricsProvider) storeCandidateValue(key string, candidate lyricsCandidate, ttl int64) {
+func (p *lyricsProvider) storeCandidateValue(key string, candidate lyricsCandidate, ttl int64) bool {
 	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.quality, Response: candidate.response})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
-		return
+		return false
 	}
-	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, ttl)
+	return p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, ttl)
 }
 
 // storeCandidateBytes writes an already-marshaled envelope with the shared
 // per-entry cap and KV headroom guards.
-func (p *lyricsProvider) storeCandidateBytes(key string, value []byte, oversized bool, ttl int64) {
+func (p *lyricsProvider) storeCandidateBytes(key string, value []byte, oversized bool, ttl int64) bool {
 	if oversized {
 		logCacheDebug(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), maxCachedLyricsEntryBytes))
-		return
+		return false
 	}
 	if usageStore, ok := p.cache.(lyricsCacheUsageStore); ok {
 		used, err := usageStore.StorageUsed()
@@ -193,12 +193,14 @@ func (p *lyricsProvider) storeCandidateBytes(key string, value []byte, oversized
 			logCacheDebug(fmt.Sprintf("lyrics cache usage lookup failed: %v", err))
 		} else if used >= lyricsCacheMaxBytes-lyricsCacheReservedBytes || used+int64(len(value)) > lyricsCacheMaxBytes-lyricsCacheReservedBytes {
 			logCacheDebug("lyrics cache entry skipped to preserve rate-limit storage headroom")
-			return
+			return false
 		}
 	}
 	if err := p.cache.SetWithTTL(key, value, ttl); err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache write failed: %v", err))
+		return false
 	}
+	return true
 }
 
 func (p *lyricsProvider) readCachedSourceCandidate(track lyrics.TrackInfo, sourceID string) (lyricsCandidate, bool) {
@@ -209,12 +211,14 @@ func (p *lyricsProvider) readCachedSourceCandidate(track lyrics.TrackInfo, sourc
 	return p.readCachedCandidate(key)
 }
 
-func (p *lyricsProvider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string, candidate lyricsCandidate) {
+// cacheSourceCandidate persists one per-source result and reports whether the
+// write actually landed, so the sweep only counts entries it really cached.
+func (p *lyricsProvider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string, candidate lyricsCandidate) bool {
 	key, ok := lyricsCacheKeyForSource(track, sourceID)
 	if !ok || !candidate.present() {
-		return
+		return false
 	}
-	p.storeCandidateValue(key, candidate, sourceCacheTTLSeconds(candidate.quality))
+	return p.storeCandidateValue(key, candidate, sourceCacheTTLSeconds(candidate.quality))
 }
 
 // readBestFromSourceCache ranks fresh per-source results in configured order; the

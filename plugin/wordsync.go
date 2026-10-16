@@ -174,8 +174,11 @@ func collectWords(body string, mode wordSyncMode, lineStartMs, lineEndMs int64) 
 	}
 
 	words := make([]timedWord, 0, len(tuples))
+	// QRC marks space runs as their own timed tokens; dropping them would render
+	// "Shapeof", so only the QRC dialect keeps whitespace-only tokens.
 	addWord := func(startMs, endMs int64, text string) {
-		if strings.TrimSpace(text) == "" {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" && (mode != wordSyncQRC || text == "") {
 			return
 		}
 		words = append(words, timedWord{StartMs: startMs, EndMs: endMs, Text: text})
@@ -215,7 +218,11 @@ func enhancedLRCFromTimedLines(lines []timedLine) string {
 			out.WriteString(inlineLRCStamp(word.StartMs))
 			out.WriteString(word.Text)
 		}
-		out.WriteString(line.Text)
+		if len(line.Words) == 0 {
+			// Wordless lines keep their whole text; word-bearing lines already
+			// rendered each token above, so appending Text again would duplicate it.
+			out.WriteString(line.Text)
+		}
 		out.WriteByte('\n')
 	}
 	return out.String()

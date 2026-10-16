@@ -13,7 +13,7 @@ import (
 func TestMusixmatchCandidates_WordRichsync(t *testing.T) {
 	t.Parallel()
 
-	token := "2610167050534b6e5898bbe3d29aefc854650e77a299e4b4355144"
+	token := "test-user-token"
 	richsync := `[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":120}]}]`
 	searchBody := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":360230953,"track_duration":234}}]}}}`
 	subtitlesBody := `{"message":{"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":200},"body":{"richsync_body":` + strconv.Quote(richsync) + `}}}}}}`

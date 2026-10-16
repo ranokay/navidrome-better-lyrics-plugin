@@ -107,8 +107,7 @@ func TestSweep_CompletionWritesDoneMarker(t *testing.T) {
 
 	provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 
-	trackKey, _ := lyricsTrackKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
-	if _, exists, _ := cache.Get(sweepDonePrefix + trackKey); !exists {
+	if _, exists, _ := cache.Get(sweepDoneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, activeSourcesList())); !exists {
 		t.Fatal("completed sweep did not record its done marker")
 	}
 	if provider.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) {
@@ -130,8 +129,15 @@ func TestSweep_FailuresKeepTheTrackReSweepable(t *testing.T) {
 
 	status := provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 	assertContains(t, status, "failed=1")
-	trackKey, _ := lyricsTrackKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
-	if _, exists, _ := cache.Get(sweepDonePrefix + trackKey); exists {
+	if _, exists, _ := cache.Get(sweepDoneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, activeSourcesList())); exists {
 		t.Fatal("failed sweep wrote a done marker")
 	}
+}
+
+// activeSourcesList mirrors the injected source lists exactly so the
+// fingerprinted done key matches what the sweep wrote.
+func activeSourcesList() []lyricsSource {
+	// The sweep-derived tests inject sources with ids "one"/"two"; the done
+	// fingerprint hashes only those ids, so no catalog lookup is needed here.
+	return []lyricsSource{{ID: "one"}, {ID: "two"}}
 }

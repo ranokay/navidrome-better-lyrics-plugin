@@ -95,9 +95,10 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 		}
 		return nil, lookupHealthy, nil
 	default:
-		// Unknown payload type: treat the first row's timestamps as absent.
+		// Unknown payload type: return whatever is usable rather than discard
+		// otherwise valid lyrics (Codex: unknown dialects must not be dropped).
 		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain")
-		if candidate.present() && candidate.quality > timingUnsynced {
+		if candidate.present() {
 			return []lyricsCandidate{candidate}, lookupHealthy, nil
 		}
 		return nil, lookupHealthy, nil

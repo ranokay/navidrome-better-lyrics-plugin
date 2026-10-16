@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -24,19 +25,20 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	}
 
 	response, health, err := p.fetchLRCLibEndpoint("LRCLib get", getURL, deadline)
-	if err != nil || len(response) > 0 {
-		if err != nil {
-			return nil, health, err
-		}
+	if err != nil {
+		return nil, health, err
+	}
+	if len(response) > 0 {
 		candidate, candErr := lrclibCandidate(p, response)
-		if candErr != nil {
+		if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
 			return nil, lookupDegraded, candErr
 		}
-		if candidate.present() {
+		if candErr == nil && candidate.present() {
 			return []lyricsCandidate{candidate}, health, nil
 		}
 	}
-
+	// An unusable exact match (instrumental, empty) is a miss rather than a
+	// failure: the duration-scoped search still gets its chance below.
 	// The exact lookup misses or the payload cannot be used; broaden by title and
 	// artist, keeping the best duration match.
 	searchQuery := url.Values{"track_name": {strings.TrimSpace(track.Title)}, "artist_name": {trackArtist(track)}}
@@ -71,11 +73,16 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	if err != nil {
 		return nil, lookupDegraded, fmt.Errorf("re-encode LRCLib match: %w", err)
 	}
-	candidate, candErr := lrclibCandidate(p, bestJSON)
-	if candErr != nil {
+	matchCandidate, candErr := lrclibCandidate(p, bestJSON)
+	if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
 		return nil, lookupDegraded, candErr
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	if candErr != nil || !matchCandidate.present() {
+		// The duration-matched record is unusable (instrumental, empty): a clean
+		// miss, so later sources still get their turn.
+		return nil, lookupHealthy, nil
+	}
+	return []lyricsCandidate{matchCandidate}, lookupHealthy, nil
 }
 
 // fetchLRCLibEndpoint performs one LRCLib HTTP call with the shared status and

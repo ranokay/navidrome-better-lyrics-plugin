@@ -32,7 +32,7 @@ const musixmatchProviderName = "Musixmatch"
 // duration drift, then fetch the richest usable payload (word richsync, line
 // subtitles, or plain lyrics).
 func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
-	token, err := p.musixmatchToken()
+	token, err := p.musixmatchToken(deadline)
 	if err != nil {
 		// Minting is best-effort; a challenge means this lookup skips Musixmatch
 		// quietly and the next lookup can try again.
@@ -73,6 +73,13 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	if err := json.Unmarshal(searchResponse.Body, &searchEnvelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode Musixmatch search response: %w", err)
 	}
+	if musixmatchTokenRejected(searchEnvelope.Message.Header) {
+		// Musixmatch sometimes reports the rejected token only in the JSON
+		// envelope; drop it so the next lookup remints instead of missing for up
+		// to ten days.
+		_ = p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		return nil, lookupHealthy, nil
+	}
 	trackID, found := pickMusixmatchTrack(searchEnvelope.Message.Body.TrackList, track)
 	if !found {
 		return nil, lookupHealthy, nil
@@ -104,7 +111,29 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	if err := json.Unmarshal(macroResponse.Body, &macroEnvelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode Musixmatch subtitles response: %w", err)
 	}
+	if musixmatchTokenRejected(macroEnvelope.Message.Header) {
+		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		return nil, lookupHealthy, nil
+	}
+	for _, macro := range macroEnvelope.Message.Body.MacroCalls {
+		// The richsync/subtitles responses can reject the token while the outer
+		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
+		if musixmatchTokenRejected(macro.Header) {
+			p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+			return nil, lookupHealthy, nil
+		}
+	}
 	return musixmatchCandidate(macroEnvelope.Message.Body.MacroCalls)
+}
+
+// musixmatchTokenRejected reports a JSON-envelope rejection of the current token:
+// expired tokens sometimes arrive only in the header (HTTP 200 outside).
+func musixmatchTokenRejected(header struct {
+	StatusCode int    `json:"status_code"`
+	Hint       string `json:"hint"`
+}) bool {
+	return header.StatusCode == 401 || header.StatusCode == 403 ||
+		strings.EqualFold(strings.TrimSpace(header.Hint), "captcha")
 }
 
 // musixmatchCandidate ranks the available payloads: richsync (word) before LRC
@@ -134,8 +163,9 @@ func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCan
 
 // musixmatchToken returns the configured admin token when present, otherwise the
 // minted-and-cached anonymous token (minting once per attempt, dropping the cache
-// entry when the API challenges it).
-func (p *lyricsProvider) musixmatchToken() (string, error) {
+// entry when the API challenges it). The caller's deadline governs the network
+// mint so a late-hop mint cannot blow the lookup budget.
+func (p *lyricsProvider) musixmatchToken(deadline time.Time) (string, error) {
 	if config := readProviderConfig(p.configLookup).MusixmatchUserToken; config != "" {
 		return config, nil
 	}
@@ -147,7 +177,7 @@ func (p *lyricsProvider) musixmatchToken() (string, error) {
 
 	nonce := randomMusixmatchNonce()
 	requestURL := fmt.Sprintf("%s/token.get?app_id=%s&user_language=en&t=%s", musixmatchEndpoint, musixmatchAppID, nonce)
-	response, err := p.musixmatchRequest("token.get", requestURL, p.now().Add(time.Minute))
+	response, err := p.musixmatchRequest("token.get", requestURL, deadline)
 	if err != nil {
 		return "", err
 	}
@@ -301,6 +331,10 @@ type musixmatchTrackEntry struct {
 }
 
 type musixmatchMacroBody struct {
+	Header struct {
+		StatusCode int    `json:"status_code"`
+		Hint       string `json:"hint"`
+	} `json:"header"`
 	Body struct {
 		RichsyncBody string          `json:"richsync_body"`
 		LyricsBody   string          `json:"lyrics_body"`

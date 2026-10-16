@@ -20,7 +20,15 @@ func createSweepQueue() error {
 
 func defaultSweepEnqueuer() func(lyrics.TrackInfo) error {
 	return func(track lyrics.TrackInfo) error {
-		payload, err := json.Marshal(sweepTaskPayload{Track: track})
+		return defaultSweepSourcesEnqueuer()(track, nil)
+	}
+}
+
+// defaultSweepSourcesEnqueuer marshals the track plus the deferred source ids
+// (nil means "walk everything enabled").
+func defaultSweepSourcesEnqueuer() func(lyrics.TrackInfo, []string) error {
+	return func(track lyrics.TrackInfo, sources []string) error {
+		payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources})
 		if err != nil {
 			return err
 		}

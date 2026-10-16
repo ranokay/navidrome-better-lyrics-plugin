@@ -36,10 +36,10 @@ func TestParseLyricifyLYL_LinesAndSyllables(t *testing.T) {
 	if len(syllables) != 1 {
 		t.Fatalf("syllable lines = %d, want 1", len(syllables))
 	}
-	if len(syllables[0].Words) != 2 {
-		t.Fatalf("syllable words = %#v, want two", syllables[0].Words)
+	if len(syllables[0].Words) != 3 {
+		t.Fatalf("syllable words = %#v, want Hel, timed space and lo after QRC whitespace retention", syllables[0].Words)
 	}
-	if syllables[0].Words[0].StartMs != 100 || syllables[0].Words[1].EndMs != 400 {
+	if syllables[0].Words[0].StartMs != 100 || syllables[0].Words[2].EndMs != 400 {
 		t.Fatalf("syllable timing = %#v", syllables[0].Words)
 	}
 }
