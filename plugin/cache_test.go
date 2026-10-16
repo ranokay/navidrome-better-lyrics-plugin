@@ -275,6 +275,7 @@ func TestLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
 		lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 		[]lyricsSource{{ID: "one"}},
 		newLyricsCandidate(lyrics.LyricsText{Text: "lyrics"}, "Unison", "plain"),
+		false,
 	)
 	if cache.sets != 0 {
 		t.Fatalf("cache writes = %d, want 0 when reserved headroom is reached", cache.sets)

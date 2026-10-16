@@ -14,6 +14,10 @@ import (
 const (
 	sweepQueueName    = "lyrics-sweep"
 	sweepMarkerPrefix = "sweep:"
+	sweepDonePrefix   = "sweep-done:"
+	// sweepDoneTTL outlives the per-source entries (24 h for synchronized
+	// results) so a completed sweep prevents pointless re-sweeps for a day.
+	sweepDoneTTL = int64(24 * time.Hour / time.Second)
 	// sweepMarkerTTL matches the negative winner TTL so a fresh miss lookup can
 	// re-trigger a sweep once its marker expires.
 	sweepMarkerTTL = int64(5 * time.Minute / time.Second)
@@ -66,6 +70,12 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 	sources := p.activeSources()
 	deadline := p.now().Add(sweepBudget)
 	cached, failed, skipped, deferred := 0, 0, 0, 0
+	implemented := 0
+	for _, source := range sources {
+		if source.Fetch != nil {
+			implemented++
+		}
+	}
 	for _, source := range sources {
 		if source.Fetch == nil {
 			continue
@@ -99,6 +109,11 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 			cached++
 		}
 	}
+	if failed == 0 && deferred == 0 && implemented > 0 {
+		if trackKey, ok := lyricsTrackKey(track); ok {
+			p.cache.SetWithTTL(sweepDonePrefix+trackKey, []byte(p.now().Format(time.RFC3339)), sweepDoneTTL)
+		}
+	}
 	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred)
 }
 
@@ -124,6 +139,9 @@ func (p *lyricsProvider) sourceInCooldown(source lyricsSource) bool {
 func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	trackKey, ok := lyricsTrackKey(track)
 	if !ok {
+		return false
+	}
+	if _, done, _ := p.cache.Get(sweepDonePrefix + trackKey); done {
 		return false
 	}
 	if _, exists, _ := p.cache.Get(sweepMarkerPrefix + trackKey); exists {

@@ -134,8 +134,9 @@ func lyricsWinnerCacheKey(track lyrics.TrackInfo, sourceOrder []string) (string,
 }
 
 type cachedLyricsEnvelope struct {
-	Quality  lyricTimingQuality       `json:"quality"`
-	Response lyrics.GetLyricsResponse `json:"response"`
+	Quality       lyricTimingQuality       `json:"quality"`
+	Response      lyrics.GetLyricsResponse `json:"response"`
+	SweepComplete bool                     `json:"sweepComplete,omitempty"`
 }
 
 // winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.
@@ -176,7 +177,13 @@ func (p *lyricsProvider) storeCandidateValue(key string, candidate lyricsCandida
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return
 	}
-	if len(value) > maxCachedLyricsEntryBytes {
+	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, ttl)
+}
+
+// storeCandidateBytes writes an already-marshaled envelope with the shared
+// per-entry cap and KV headroom guards.
+func (p *lyricsProvider) storeCandidateBytes(key string, value []byte, oversized bool, ttl int64) {
+	if oversized {
 		logCacheDebug(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), maxCachedLyricsEntryBytes))
 		return
 	}
@@ -225,30 +232,51 @@ func (p *lyricsProvider) readBestFromSourceCache(track lyrics.TrackInfo, order [
 	return best
 }
 
-func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyricsSource) (lyricsCandidate, bool) {
+func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyricsSource) (lyricsCandidate, bool, bool) {
 	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
 	if !ok {
-		return lyricsCandidate{}, false
+		return lyricsCandidate{}, false, false
 	}
-	return p.readCachedCandidate(key)
+	value, exists, err := p.cache.Get(key)
+	if err != nil || !exists {
+		return lyricsCandidate{}, false, false
+	}
+	var envelope cachedLyricsEnvelope
+	if err := json.Unmarshal(value, &envelope); err != nil {
+		logCacheDebug(fmt.Sprintf("lyrics cache entry decode failed: %v", err))
+		return lyricsCandidate{}, false, false
+	}
+	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, true, envelope.SweepComplete
 }
 
 // cacheWinner stores the selected candidate; negative lookup results live here too
 // so a second lookup for the same track with the same source order skips the walk.
-func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSource, candidate lyricsCandidate) {
+// sweepComplete records whether the producing lookup covered every implemented
+// enabled source, so cached hits know whether a sweep is still pending.
+func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSource, candidate lyricsCandidate, sweepComplete bool) {
 	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
 	if !ok {
 		return
 	}
-	p.storeCandidateValue(key, candidate, winnerCacheTTLSeconds(candidate.quality))
+	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.quality, Response: candidate.response, SweepComplete: sweepComplete})
+	if err != nil {
+		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
+		return
+	}
+	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, winnerCacheTTLSeconds(candidate.quality))
 }
 
-func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyricsSource) {
+func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyricsSource, sweepComplete bool) {
 	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
 	if !ok {
 		return
 	}
-	p.storeCandidateValue(key, lyricsCandidate{}, negativeLyricsCacheTTLSeconds)
+	value, err := json.Marshal(cachedLyricsEnvelope{SweepComplete: sweepComplete})
+	if err != nil {
+		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
+		return
+	}
+	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, negativeLyricsCacheTTLSeconds)
 }
 
 func (p *lyricsProvider) activeBetterLyricsCooldown(requestURL string) error {

@@ -24,8 +24,16 @@ func (p *lyricsProvider) sendRequest(source, requestURL string, headers map[stri
 	return p.sendRequestHelper(source, "GET", requestURL, nil, headers, deadline)
 }
 
-// postForm performs one host POST call whose body is an encoded form.
+// postForm performs one host POST call whose body is an encoded form; the
+// Content-Type is part of the wire contract (both NetEase and PetitLyrics only
+// parse the body when it is declared form-urlencoded).
 func (p *lyricsProvider) postForm(source, requestURL string, form url.Values, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	if headers["Content-Type"] == "" {
+		headers["Content-Type"] = "application/x-www-form-urlencoded"
+	}
 	return p.sendRequestHelper(source, "POST", requestURL, []byte(form.Encode()), headers, deadline)
 }
 

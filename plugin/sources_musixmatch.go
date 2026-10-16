@@ -47,13 +47,26 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
+	switch searchResponse.StatusCode {
+	case 200:
+		// pass to the envelope decode
+	case 401:
+		// The cached token went stale: drop it and try one fresh mint next lookup.
+		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		return nil, lookupHealthy, nil
+	case 404:
+		return nil, lookupHealthy, nil
+	case 429:
+		retryAfter := retryAfterDuration(searchResponse.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), retryAfter)
+		return nil, lookupDegraded, rateLimitResponseError("Musixmatch search", searchResponse, retryAfter)
+	default:
+		return nil, lookupDegraded, providerResponseError("Musixmatch search", searchResponse)
+	}
 	if searchResponse.StatusCode == 401 {
 		// The cached token went stale: drop it and try one fresh mint next lookup.
-		p.cache.SetWithTTL(musixmatchTokenKey, nil, 1)
+		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
 		return nil, lookupHealthy, nil
-	}
-	if searchResponse.StatusCode != 200 {
-		return nil, lookupDegraded, providerResponseError("Musixmatch search", searchResponse)
 	}
 
 	var searchEnvelope musixmatchEnvelope

@@ -164,7 +164,7 @@ func TestLyricifyCandidates_ISRCResolveThenFetch(t *testing.T) {
 	if len(candidates) != 1 || candidates[0].quality != timingLine {
 		t.Fatalf("candidates = %#v, want one line candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Lyricify", "lrc")
+	assertLyricsSource(t, candidates[0].response.Source, "Lyricify", "elrc")
 }
 
 func TestLyricifyCandidates_MissingIsrcIsForbidden(t *testing.T) {

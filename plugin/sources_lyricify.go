@@ -107,7 +107,7 @@ func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		return nil, lookupHealthy, nil
 	}
 	lines = applyLyricsOffset(lines, payloadEnvelope.Offset)
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Lyricify", "lrc")
+	candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Lyricify", "elrc")
 	if !candidate.present() {
 		return nil, lookupHealthy, nil
 	}
@@ -157,9 +157,11 @@ func lyricifyHeaders() map[string]string {
 
 func lyricifyAcceptGzipHeaders() map[string]string {
 	return map[string]string{
-		"Accept":          "application/json",
-		"Accept-Encoding": "gzip",
-		"User-Agent":      desktopChromeUserAgent,
+		"Accept": "application/json",
+		// Deliberately no Accept-Encoding here: the host client disables
+		// transparent decompression when the request sets it, and nothing in the
+		// module unpacks bodies, so a gzip answer would fail every decode.
+		"User-Agent": desktopChromeUserAgent,
 	}
 }
 

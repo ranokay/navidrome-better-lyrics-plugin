@@ -90,24 +90,40 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 	}
 
 	sources := p.activeSources()
-	if candidate, ok := p.readCachedWinner(track, sources); ok {
+	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
+		if candidate.present() {
+			if !sweepComplete {
+				p.maybeEnqueueSweep(track)
+			}
+			return candidate.response, nil
+		}
+		// A cached miss must not shield fresh sweep results: the background sweep
+		// may have written better candidates per source after the miss landed.
+		if best := p.readBestFromSourceCache(track, sources); best.present() {
+			p.cacheWinner(track, sources, best, false)
+			p.maybeEnqueueSweep(track)
+			return best.response, nil
+		}
+		// No per-source improvement yet: the negative winner stays authoritative
+		// for its TTL so replays do not re-walk the sources.
 		return candidate.response, nil
 	}
 	if best := p.readBestFromSourceCache(track, sources); best.present() {
-		p.cacheWinner(track, sources, best)
+		p.cacheWinner(track, sources, best, false)
+		p.maybeEnqueueSweep(track)
 		return best.response, nil
 	}
 
-	candidate, _, err := p.fetchLyrics(input)
+	candidate, _, coveredAll, err := p.fetchLyrics(input)
 	if candidate.present() {
-		p.cacheWinner(track, sources, candidate)
-		if candidate.quality < timingSyllable {
+		p.cacheWinner(track, sources, candidate, coveredAll)
+		if !coveredAll {
 			p.maybeEnqueueSweep(track)
 		}
 		return candidate.response, nil
 	}
 	if err == nil {
-		p.cacheNegativeWinner(track, sources)
+		p.cacheNegativeWinner(track, sources, coveredAll)
 		p.maybeEnqueueSweep(track)
 	}
 	return candidate.response, err
@@ -127,10 +143,10 @@ func (p *lyricsProvider) activeSources() []lyricsSource {
 // result lands. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
 // are covered by the background sweep (Task 6).
-func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandidate, lookupHealth, error) {
+func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandidate, lookupHealth, bool, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
-		return lyricsCandidate{}, lookupHealthy, nil
+		return lyricsCandidate{}, lookupHealthy, false, nil
 	}
 
 	sources := p.activeSources()
@@ -141,11 +157,18 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 		health       = lookupHealthy
 		lookupErrors []error
 		walked       int
+		walkedTotal  int
 		// coldHosts records hosts behind a global rate limit observed during this
 		// walk. Later sources on a cold host are skipped for the rest of this
 		// lookup, matching README's documented Better Lyrics shared cooldown.
 		coldHosts = map[string]bool{}
 	)
+	implementedTotal := 0
+	for _, source := range sources {
+		if source.Fetch != nil {
+			implementedTotal++
+		}
+	}
 	for _, source := range sources {
 		if walked >= stageOneImplementedSources {
 			break
@@ -176,18 +199,19 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			p.cacheSourceCandidate(track, source.ID, candidate)
 			best = preferLyricsCandidate(best, candidate)
 		}
+		walkedTotal++
 		if best.quality == timingSyllable {
-			return best, health, nil
+			return best, health, walkedTotal >= implementedTotal, nil
 		}
 	}
 
 	if best.present() {
-		return best, health, nil
+		return best, health, walkedTotal >= implementedTotal, nil
 	}
 	if len(lookupErrors) > 0 {
-		return lyricsCandidate{}, health, errors.Join(lookupErrors...)
+		return lyricsCandidate{}, health, false, errors.Join(lookupErrors...)
 	}
-	return lyricsCandidate{}, health, nil
+	return lyricsCandidate{}, health, false, nil
 }
 
 func coldHostFor(source lyricsSource, coldHosts map[string]bool) string {
