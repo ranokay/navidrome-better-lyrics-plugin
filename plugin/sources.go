@@ -60,6 +60,11 @@ var sourceFetches = map[string]func(*lyricsProvider, lyrics.TrackInfo, time.Time
 	"amll":                  fetchAMLLyricsCandidates,
 	"better-lyrics-portato": fetchPortatoLyricsCandidates,
 	"lrclib":                fetchLRCLibLyricsCandidates,
+	"netease":               fetchNetEaseLyricsCandidates,
+	"luna":                  fetchLunaLyricsCandidates,
+	"petitlyrics":           fetchPetitLyricsCandidates,
+	"apple-lyrically":       fetchLyricallyLyricsCandidates,
+	"lyricify":              fetchLyricifyLyricsCandidates,
 	"musixmatch":            fetchMusixmatchLyricsCandidates,
 	"better-lyrics-legato":  fetchKugouLyricsCandidates,
 }
