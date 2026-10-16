@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,13 +21,23 @@ type apiErrorResponse struct {
 // sendRequest performs one host HTTP call, bounding it by both the per-request
 // ceiling and the caller-provided lookup deadline.
 func (p *lyricsProvider) sendRequest(source, requestURL string, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
+	return p.sendRequestHelper(source, "GET", requestURL, nil, headers, deadline)
+}
+
+// postForm performs one host POST call whose body is an encoded form.
+func (p *lyricsProvider) postForm(source, requestURL string, form url.Values, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
+	return p.sendRequestHelper(source, "POST", requestURL, []byte(form.Encode()), headers, deadline)
+}
+
+func (p *lyricsProvider) sendRequestHelper(source, method, requestURL string, body []byte, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
 	timeout, err := p.requestTimeoutMilliseconds(deadline)
 	if err != nil {
 		return nil, err
 	}
 	response, err := p.send(host.HTTPRequest{
-		Method:    "GET",
+		Method:    method,
 		URL:       requestURL,
+		Body:      body,
 		Headers:   headers,
 		TimeoutMs: timeout,
 	})

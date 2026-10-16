@@ -1,0 +1,192 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+)
+
+const (
+	lunaSearchEndpoint = "https://api.qishui.com/luna/search/track"
+	lunaDetailEndpoint = "https://beta-luna.douyin.com/luna/h5/seo_track"
+)
+
+// fetchLunaLyricsCandidates resolves lyrics from Soda/Luna (汽水音乐): a spoofed
+// Android-style search, then a track detail whose `lyric` payload is plaintext KRC
+// (word) or LRC (line).
+func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+	searchURL, ok := lunaSearchURL(track)
+	if !ok {
+		return nil, lookupHealthy, nil
+	}
+	response, err := p.sendRequest("Luna search", searchURL, lunaSearchHeaders(), deadline)
+	if err != nil {
+		return nil, lookupDegraded, err
+	}
+	switch response.StatusCode {
+	case 200:
+		// pass to the envelope decode
+	case 404:
+		return nil, lookupHealthy, nil
+	case 429:
+		retryAfter := retryAfterDuration(response.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("luna"), retryAfter)
+		return nil, lookupDegraded, rateLimitResponseError("Luna search", response, retryAfter)
+	default:
+		return nil, lookupDegraded, providerResponseError("Luna search", response)
+	}
+
+	var search lunaSearchEnvelope
+	if err := json.Unmarshal(response.Body, &search); err != nil {
+		return nil, lookupDegraded, fmt.Errorf("decode Luna search response: %w", err)
+	}
+	trackID, found := pickLunaTrack(search.ResultGroups, track)
+	if !found {
+		return nil, lookupHealthy, nil
+	}
+
+	query := url.Values{"track_id": {strconv.FormatInt(trackID, 10)}, "device_platform": {"web"}}
+	response, err = p.sendRequest("Luna track", lunaDetailEndpoint+"?"+query.Encode(), lunaDetailHeaders(), deadline)
+	if err != nil {
+		return nil, lookupDegraded, err
+	}
+	switch response.StatusCode {
+	case 200:
+		// pass to the payload decode
+	case 404:
+		return nil, lookupHealthy, nil
+	case 429:
+		retryAfter := retryAfterDuration(response.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("luna"), retryAfter)
+		return nil, lookupDegraded, rateLimitResponseError("Luna track", response, retryAfter)
+	default:
+		return nil, lookupDegraded, providerResponseError("Luna track", response)
+	}
+
+	var detail lunaDetailEnvelope
+	if err := json.Unmarshal(response.Body, &detail); err != nil {
+		return nil, lookupDegraded, fmt.Errorf("decode Luna track response: %w", err)
+	}
+
+	content := strings.TrimSpace(detail.Lyric.Content)
+	if content == "" {
+		return nil, lookupHealthy, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(detail.Lyric.Type)) {
+	case "krc":
+		lines, parseErr := parseKFamilyLyrics(wordSyncKRC, content)
+		if parseErr == nil && len(lines) > 0 {
+			candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Soda (Luna)", "elrc")
+			if candidate.present() {
+				return []lyricsCandidate{candidate}, lookupHealthy, nil
+			}
+		}
+		return nil, lookupHealthy, nil
+	case "lrc":
+		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "lrc")
+		if candidate.present() {
+			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		}
+		return nil, lookupHealthy, nil
+	default:
+		// Unknown payload type: treat the first row's timestamps as absent.
+		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain")
+		if candidate.present() && candidate.quality > timingUnsynced {
+			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		}
+		return nil, lookupHealthy, nil
+	}
+}
+
+type lunaSearchEnvelope struct {
+	ResultGroups []lunaResultGroup `json:"result_groups"`
+}
+
+type lunaResultGroup struct {
+	Data []lunaGroupDatum `json:"data"`
+}
+
+type lunaGroupDatum struct {
+	Entity struct {
+		Track struct {
+			ID       int64 `json:"id"`
+			Duration int64 `json:"duration"` // ms
+		} `json:"track"`
+	} `json:"entity"`
+}
+
+func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (int64, bool) {
+	target := int64(float64(track.Duration)*1000.0 + 0.5)
+	for _, group := range groups {
+		for _, datum := range group.Data {
+			trackInfo := datum.Entity.Track
+			if trackInfo.ID <= 0 {
+				continue
+			}
+			if delta := trackInfo.Duration - target; delta > -2000 && delta < 2000 {
+				return trackInfo.ID, true
+			}
+		}
+	}
+	return 0, false
+}
+
+type lunaDetailEnvelope struct {
+	Lyric struct {
+		Content string `json:"content"`
+		Type    string `json:"type"`
+	} `json:"lyric"`
+}
+
+func lunaSearchURL(track lyrics.TrackInfo) (string, bool) {
+	title := strings.TrimSpace(track.Title)
+	artist := trackArtist(track)
+	if title == "" || artist == "" {
+		return "", false
+	}
+	query := url.Values{
+		"aid":          {"386088"},
+		"app_name":     {"luna"},
+		"version_code": {"100198030"},
+		"package":      {"com.luna.music"},
+		"device_id":    {randomLunaDeviceID()},
+		"iid":          {randomLunaDeviceID()},
+		"q":            {title + " " + artist},
+		"cursor":       {"0"},
+		"count":        {"20"},
+		"_rticket":     {strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)},
+	}
+	return lunaSearchEndpoint + "?" + query.Encode(), true
+}
+
+func randomLunaDeviceID() string {
+	raw := make([]byte, 10, 20)
+	_, _ = rand.Read(raw)
+	return fmt.Sprintf("%x%04x", raw, uint16(time.Now().UnixNano()))
+}
+
+func lunaSearchHeaders() map[string]string {
+	return map[string]string{
+		"Accept": "application/json",
+		// Luna's search gate expects its own Android client UA.
+		"User-Agent": "com.luna.music/100198030 (Linux; U; Android 15) -",
+	}
+}
+
+func lunaDetailHeaders() map[string]string {
+	return map[string]string{
+		"Accept": "application/json",
+		// The detail endpoint runs through the SEO H5 route; a desktop browser UA works.
+		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+	}
+}
+
+const lunaHostAllowlistNote = "Luna hosts scale their search from the qishui panel; see the README privacy section."
+
+// lunaQuery deltas keep the Math import used for duration clamps.

@@ -1,0 +1,149 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+)
+
+const neteaseEndpoint = "https://music.163.com"
+
+// fetchNetEaseLyricsCandidates resolves lyrics from NetEase Cloud Music's plain
+// (unauthenticated) JSON API: form-POST search, then a lyric fetch. The word-synced
+// YRC payload is preferred, then line LRC, then nothing (translations are skipped).
+func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+	form := url.Values{
+		"s":      {strings.TrimSpace(track.Title) + " " + trackArtist(track)},
+		"type":   {"1"},
+		"offset": {"0"},
+		"limit":  {"10"},
+	}
+	searchURL := neteaseEndpoint + "/api/cloudsearch/pc"
+	response, err := p.postForm("NetEase search", searchURL, form, neteaseHeaders(), deadline)
+	if err != nil {
+		return nil, lookupDegraded, err
+	}
+	switch response.StatusCode {
+	case 200:
+		// pass to the envelope decode
+	case 404:
+		return nil, lookupHealthy, nil
+	case 429:
+		retryAfter := retryAfterDuration(response.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("netease"), retryAfter)
+		return nil, lookupDegraded, rateLimitResponseError("NetEase search", response, retryAfter)
+	default:
+		return nil, lookupDegraded, providerResponseError("NetEase search", response)
+	}
+
+	var search neteaseSearchEnvelope
+	if err := json.Unmarshal(response.Body, &search); err != nil {
+		return nil, lookupDegraded, fmt.Errorf("decode NetEase search response: %w", err)
+	}
+	song, found := pickNetEaseSong(search.Result.Songs, track)
+	if !found {
+		return nil, lookupHealthy, nil
+	}
+
+	lyricQuery := url.Values{
+		"id": {strconv.FormatInt(song.ID, 10)},
+		"lv": {"-1"}, "kv": {"-1"}, "tv": {"-1"}, "rv": {"-1"}, "yv": {"-1"},
+	}
+	lyricURL := neteaseEndpoint + "/api/song/lyric/v1?" + lyricQuery.Encode()
+	lyricResponse, err := p.sendRequest("NetEase lyrics", lyricURL, neteaseHeaders(), deadline)
+	if err != nil {
+		return nil, lookupDegraded, err
+	}
+	switch lyricResponse.StatusCode {
+	case 200:
+		// pass to the payload decode
+	case 404:
+		return nil, lookupHealthy, nil
+	case 429:
+		retryAfter := retryAfterDuration(lyricResponse.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("netease"), retryAfter)
+		return nil, lookupDegraded, rateLimitResponseError("NetEase lyrics", lyricResponse, retryAfter)
+	default:
+		return nil, lookupDegraded, providerResponseError("NetEase lyrics", lyricResponse)
+	}
+
+	var lyricEnvelope neteaseLyricEnvelope
+	if err := json.Unmarshal(lyricResponse.Body, &lyricEnvelope); err != nil {
+		return nil, lookupDegraded, fmt.Errorf("decode NetEase lyric response: %w", err)
+	}
+
+	if yrc := strings.TrimSpace(lyricEnvelope.YRC.Lyric); yrc != "" {
+		lines, parseErr := parseKFamilyLyrics(wordSyncYRC, stripNetEaseCreditLines(yrc))
+		if parseErr == nil && len(lines) > 0 {
+			candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "NetEase", "elrc")
+			if candidate.present() {
+				return []lyricsCandidate{candidate}, lookupHealthy, nil
+			}
+		}
+	}
+	if lrc := strings.TrimSpace(lyricEnvelope.LRC.Lyric); lrc != "" {
+		candidate := newLyricsCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc")
+		if candidate.present() {
+			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		}
+	}
+	return nil, lookupHealthy, nil
+}
+
+// stripNetEaseCreditLines drops the rich-JSON credit rows NetEase mixes into an
+// otherwise vanilla LRC payload ({"t":…,"c":[…]}).
+func stripNetEaseCreditLines(text string) string {
+	var kept []string
+	for _, row := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(row), "{") {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	return strings.Join(kept, "\n")
+}
+
+type neteaseSearchEnvelope struct {
+	Result struct {
+		Songs []neteaseSong `json:"songs"`
+	} `json:"result"`
+}
+
+type neteaseSong struct {
+	ID       int64 `json:"id"`
+	Duration int64 `json:"duration"` // ms
+}
+
+func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {
+	target := int64(float64(track.Duration)*1000.0 + 0.5)
+	for _, song := range songs {
+		if song.ID <= 0 {
+			continue
+		}
+		if delta := song.Duration - target; delta < 2000 && delta > -2000 {
+			return song, true
+		}
+	}
+	return neteaseSong{}, false
+}
+
+type neteaseLyricEnvelope struct {
+	LRC neteaseLyricEntry `json:"lrc"`
+	YRC neteaseLyricEntry `json:"yrc"`
+}
+
+type neteaseLyricEntry struct {
+	Lyric string `json:"lyric"`
+}
+
+func neteaseHeaders() map[string]string {
+	return map[string]string{
+		"Accept":     "application/json",
+		"User-Agent": pluginUserAgent(),
+	}
+}
