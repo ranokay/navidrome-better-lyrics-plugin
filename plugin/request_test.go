@@ -57,7 +57,7 @@ func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	if _, present := request.Headers["X-API-Key"]; present {
 		t.Error("X-API-Key header is present, want unauthenticated request")
 	}
-	if !strings.Contains(request.Headers["User-Agent"], "NavidromeBetterLyricsPlugin/0.1.0") {
+	if !strings.Contains(request.Headers["User-Agent"], "NavidromeBetterLyricsPlugin/0.2.0") {
 		t.Errorf("User-Agent header = %q, want plugin name and version", request.Headers["User-Agent"])
 	}
 	if request.TimeoutMs != httpTimeoutMilliseconds {
