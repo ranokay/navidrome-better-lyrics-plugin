@@ -1,7 +1,7 @@
 # Better Lyrics plugin: multi-source lyrics and UI controls
 
 Design date: 2026-10-16
-Status: draft for approval
+Status: approved and implemented (Phase A)
 
 ## Intent and why
 
@@ -19,8 +19,8 @@ Better Lyrics extension for YouTube Music:
 
 1. Add these lyric sources (researched against the Morphe reference implementation and
    probed live on 2026-10-15/16):
-   - `better-lyrics` "Better Lyrics" — `api.betterlyrics.org/getLyrics` (legacy host
-     `lyrics-api.boidu.dev` also serves it). Syllable TTML. Already wired.
+   - `better-lyrics` "Better Lyrics" — `lyrics-api.boidu.dev` (`api.betterlyrics.org`
+     serves identical traffic on the newer domain). Syllable TTML. Already wired.
    - `better-lyrics-portato` "Better Lyrics Portato" — `/qq/getLyrics`. Word-timed QRC
      XML. New: convert QRC to enhanced LRC.
    - `better-lyrics-legato` "Better Lyrics Legato" — `/kugou/getLyrics`. Line LRC. Already wired.
