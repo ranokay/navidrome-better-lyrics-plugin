@@ -66,7 +66,7 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 
 			cache := newFakeLyricsCache()
 			requests := 0
-			provider := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 				if requests >= len(test.responses) {
 					t.Fatalf("unexpected request %d", requests+1)
 				}
@@ -85,7 +85,7 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			if requests != len(test.responses) {
 				t.Fatalf("GetLyrics() request count = %d, want %d", requests, len(test.responses))
 			}
-			if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, defaultSources()); ttl != test.wantTTL {
+			if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, catalogSources(defaultCatalogIDs)); ttl != test.wantTTL {
 				t.Fatalf("winner cache TTL = %d, want %d", ttl, test.wantTTL)
 			}
 		})
@@ -97,7 +97,7 @@ func TestLyricsProvider_CachesCompleteMisses(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	requests := 0
-	provider := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 404}, nil
 	}, cache, time.Now)
@@ -125,7 +125,7 @@ func TestLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
-	provider := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -143,7 +143,7 @@ func TestLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
 	assertLyricsSource(t, result.Source, "Unison", "lrc")
-	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 181}, defaultSources()); ttl != unsyncedLyricsCacheTTLSeconds {
+	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 181}, catalogSources(defaultCatalogIDs)); ttl != unsyncedLyricsCacheTTLSeconds {
 		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, unsyncedLyricsCacheTTLSeconds)
 	}
 }
@@ -153,7 +153,7 @@ func TestLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	requests := 0
-	provider := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 503}, nil
 	}, cache, time.Now)
@@ -179,7 +179,7 @@ func TestLyricsProvider_SeparatesCacheKeysByDuration(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	requestedDurations := make([]string, 0, 2)
-	provider := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -222,7 +222,7 @@ func TestLyricsProvider_FailsOpenWhenLyricCacheWriteFails(t *testing.T) {
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("kv store at quota")
 	requests := 0
-	provider := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {

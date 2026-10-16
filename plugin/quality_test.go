@@ -59,7 +59,7 @@ func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) 
 			t.Parallel()
 
 			requests := 0
-			provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests++
 				parsed, err := url.Parse(request.URL)
 				if err != nil {
@@ -127,7 +127,7 @@ func TestLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
 	t.Parallel()
 
 	requests := 0
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -152,7 +152,7 @@ func TestLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
 func TestLyricsProvider_UntimedLRCDoesNotBeatKugouLineSync(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -185,7 +185,7 @@ func TestLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testing.T) {
 		{StatusCode: 404},
 	}
 	requests := 0
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		response := responses[requests]
 		requests++
 		return response, nil

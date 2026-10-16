@@ -24,7 +24,7 @@ func TestBinimumCandidates_PreservesTTML(t *testing.T) {
 
 	search := binimumFixture(t)
 	ttml := []byte("<tt xmlns=\"http://www.w3.org/ns/ttml\" lrc:timing=\"Word\"><p begin=\"100\">word-timed row</p></tt>")
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "lrc.red/s/") {
 			return &host.HTTPResponse{StatusCode: 200, Body: ttml}, nil
 		}
@@ -56,7 +56,7 @@ func TestBinimumCandidates_PrefersDurationMatch(t *testing.T) {
 
 	search := binimumFixture(t)
 	fetches := 0
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		fetches++
 		if strings.Contains(request.URL, "lrc.red/s/GBQCP1400011") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte("<tt></tt>")}, nil
@@ -81,7 +81,7 @@ func TestBinimumCandidates_PrefersDurationMatch(t *testing.T) {
 func TestBinimumCandidates_MissesWithoutDurationMatch(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 200, Body: binimumFixture(t)}, nil
 	})
 
@@ -96,7 +96,7 @@ func TestBinimumCandidates_MissesWithoutDurationMatch(t *testing.T) {
 func TestBinimumCandidates_SearchFailures(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 404}, nil
 	})
 
@@ -109,7 +109,7 @@ func TestBinimumCandidates_SearchFailures(t *testing.T) {
 func TestBinimumCandidates_LyricsFetchFailureReturnsError(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "lrc.red/s/") {
 			return &host.HTTPResponse{StatusCode: 503, Body: []byte(`{"error":"unavailable"}`)}, nil
 		}

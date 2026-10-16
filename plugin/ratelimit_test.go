@@ -18,7 +18,7 @@ func TestLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *testin
 	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
 	cache := newFakeLyricsCache()
 	requests := make([]host.HTTPRequest, 0, 4)
-	provider := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -64,7 +64,7 @@ func TestLyricsProvider_RetriesAQueryRateLimitWithBroaderMetadata(t *testing.T) 
 	t.Parallel()
 
 	requests := make([]host.HTTPRequest, 0, 2)
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -114,7 +114,7 @@ func TestLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.T) {
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("cache unavailable")
 	requests := 0
-	provider := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -174,7 +174,7 @@ func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
 	cache := newFakeLyricsCache()
 	firstRequests := 0
-	first := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	first := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		firstRequests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -205,7 +205,7 @@ func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	}
 
 	secondRequests := 0
-	second := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	second := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		secondRequests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -233,7 +233,7 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	cache := newFakeLyricsCache()
 	firstUnisonRequests := 0
 	firstKugouRequests := 0
-	first := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	first := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -263,7 +263,7 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 
 	secondUnisonRequests := 0
 	secondKugouRequests := 0
-	second := newLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	second := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)

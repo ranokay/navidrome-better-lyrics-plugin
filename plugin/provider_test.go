@@ -105,7 +105,7 @@ func TestLyricsProvider_GetLyrics(t *testing.T) {
 			t.Parallel()
 
 			requests := 0
-			provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests++
 				parsed, err := url.Parse(request.URL)
 				if err != nil {
@@ -148,7 +148,7 @@ func TestLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	requests := 0
-	first := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	first := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{
 			StatusCode: 200,
@@ -162,7 +162,7 @@ func TestLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
 		t.Fatalf("first GetLyrics() error = %v, want nil", err)
 	}
 
-	second := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	second := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		t.Fatal("second GetLyrics() made a network request, want shared cache hit")
 		return nil, nil
 	}, cache, time.Now)

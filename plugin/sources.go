@@ -42,6 +42,9 @@ var allSources = []lyricsSource{
 
 // Fetches are attached at init rather than in the literal above so that source
 // files can consult the config reader without creating an initialization cycle.
+// Every source with an implemented Fetch MUST appear in sourceFetches — the
+// test below pins nothing but the compiler would still accept a missing entry, so
+// the coverage check lives in sources_test.go (TestAllSources_ImplementedFetches).
 func init() {
 	for i := range allSources {
 		if fn, ok := sourceFetches[allSources[i].ID]; ok {
@@ -51,18 +54,26 @@ func init() {
 }
 
 var sourceFetches = map[string]func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error){
-	"better-lyrics":        fetchBetterLyricsLyrics,
-	"unison":               fetchUnisonCandidates,
-	"better-lyrics-legato": fetchKugouLyricsCandidates,
+	"better-lyrics":         fetchBetterLyricsLyrics,
+	"unison":                fetchUnisonCandidates,
+	"binimum":               fetchBinimumLyricsCandidates,
+	"amll":                  fetchAMLLyricsCandidates,
+	"better-lyrics-portato": fetchPortatoLyricsCandidates,
+	"lrclib":                fetchLRCLibLyricsCandidates,
+	"better-lyrics-legato":  fetchKugouLyricsCandidates,
 }
 
-var sourcesByID = func() map[string]lyricsSource {
-	byID := make(map[string]lyricsSource, len(allSources))
+// catalogSource resolves a catalog entry live so callers always see the Fetch
+// wiring attached by init(); do not snapshot the catalog into a package map, or
+// the variable initialization order races ahead of init().
+func catalogSource(id string) (lyricsSource, bool) {
 	for _, source := range allSources {
-		byID[source.ID] = source
+		if source.ID == id {
+			return source, true
+		}
 	}
-	return byID
-}()
+	return lyricsSource{}, false
+}
 
 // providerConfig is the resolved runtime configuration: enabled sources in saved
 // order plus the optional secrets administrators may paste into the plugins page.
@@ -126,7 +137,7 @@ func readProviderConfig(lookup configLookup) providerConfig {
 func sourcesFromSelections(selections []sourceSelection) []lyricsSource {
 	ordered := make([]lyricsSource, 0, len(selections))
 	for _, selection := range selections {
-		source, ok := sourcesByID[selection.ID]
+		source, ok := catalogSource(selection.ID)
 		if !ok || !selection.Enabled {
 			continue
 		}

@@ -23,7 +23,7 @@ func TestAMLLCandidates_TTMLFromSearchAndFetch(t *testing.T) {
 	t.Parallel()
 
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		switch {
 		case strings.Contains(request.URL, "/v1/lyrics/search"):
@@ -63,7 +63,7 @@ func TestAMLLCandidates_TTMLFromSearchAndFetch(t *testing.T) {
 func TestAMLLCandidates_SearchMissIsClean(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[]}}`)}, nil
 	})
 
@@ -76,7 +76,7 @@ func TestAMLLCandidates_SearchMissIsClean(t *testing.T) {
 func TestAMLLCandidates_GetFailureSurfaces(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/v1/lyrics/search") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1"}]}}`)}, nil
 		}
@@ -95,7 +95,7 @@ func TestAMLLCandidates_GetFailureSurfaces(t *testing.T) {
 func TestAMLLCandidates_UnexpectedGetPayloadErrors(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/v1/lyrics/search") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1"}]}}`)}, nil
 		}

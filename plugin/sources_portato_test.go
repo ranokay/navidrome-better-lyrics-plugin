@@ -18,7 +18,7 @@ func TestPortatoCandidates_WordSyncedElrc(t *testing.T) {
 	t.Parallel()
 
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		return &host.HTTPResponse{
 			StatusCode: 200,
@@ -58,7 +58,7 @@ func TestPortatoCandidates_MissTiersThenUncertainHealth(t *testing.T) {
 	t.Parallel()
 
 	requests := 0
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 401, Body: []byte(`{"error":"API key required"}`)}, nil
 	})
@@ -82,7 +82,7 @@ func TestPortatoCandidates_MissTiersThenUncertainHealth(t *testing.T) {
 func TestPortatoCandidates_NotFoundIsClean(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 404}, nil
 	})
 
@@ -95,7 +95,7 @@ func TestPortatoCandidates_NotFoundIsClean(t *testing.T) {
 func TestPortatoCandidates_MalformedQrcErrors(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"definitely not bracketed lyrics"}`)}, nil
 	})
 

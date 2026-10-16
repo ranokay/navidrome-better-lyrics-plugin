@@ -15,7 +15,7 @@ func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	t.Parallel()
 
 	var request host.HTTPRequest
-	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		request = input
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">lyrics</tt>"}`)}, nil
 	})

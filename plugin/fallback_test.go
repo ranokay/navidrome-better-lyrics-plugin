@@ -77,7 +77,7 @@ func TestLyricsProvider_FallbackOrder(t *testing.T) {
 			}
 
 			var requests []host.HTTPRequest
-			provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests = append(requests, input)
 				if len(requests) > len(responses) {
 					t.Fatalf("unexpected request %d: %s", len(requests), input.URL)
@@ -136,7 +136,7 @@ func TestLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
 		{StatusCode: 200, Body: []byte(`{"lyrics":""}`)},
 	}
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, input)
 		return responses[len(requests)-1], nil
 	})
@@ -168,7 +168,7 @@ func TestLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainText(t *t
 		{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]kugou line","provider":"kugou"}`)},
 	}
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, input)
 		return responses[len(requests)-1], nil
 	})
@@ -199,7 +199,7 @@ func TestLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 		{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached lyrics</tt>"}`)},
 	}
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, input)
 		return responses[len(requests)-1], nil
 	})
@@ -245,7 +245,7 @@ func TestLyricsProvider_BroadensBetterLyricsWithoutDroppingDurationFirst(t *test
 	t.Parallel()
 
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -291,7 +291,7 @@ func TestLyricsProvider_BroadensUnisonMetadataInOrder(t *testing.T) {
 	t.Parallel()
 
 	var unisonRequests []host.HTTPRequest
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -340,7 +340,7 @@ func TestLyricsProvider_BroadensAfterAnEmptyTTMLHit(t *testing.T) {
 	t.Parallel()
 
 	var requests []host.HTTPRequest
-	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {

@@ -29,6 +29,8 @@ type timedLine struct {
 
 var errEmptyWordSyncInput = errors.New("no timed lyrics found in input")
 
+var errNoLRCLibPayload = errors.New("no usable LRCLib lyrics payload")
+
 // wordSyncMode selects the bracketed word-sync dialect to parse. The three
 // upstream services differ in tuple delimiter, relative/absolute timestamps, and
 // the side of the tuple the timed text sits on:

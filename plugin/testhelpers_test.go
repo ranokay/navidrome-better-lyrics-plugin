@@ -4,10 +4,39 @@ import (
 	"net/url"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
+
+// defaultCatalogIDs is the stage-one ordering the deterministic provider tests
+// walk when a test does not name a catalog.
+var defaultCatalogIDs = []string{"better-lyrics", "unison", "better-lyrics-legato"}
+
+// providerForCatalog builds a provider walking exactly the named catalog ids
+// (falling back to the classic stage-one trio) so tests stay deterministic as new
+// sources join the default config.
+func providerForCatalog(send requestSender, ids ...string) *lyricsProvider {
+	return providerForCatalogWithCache(send, newFakeLyricsCache(), time.Now, ids...)
+}
+
+// providerForCatalogWithCache is providerForCatalog with an explicit cache and
+// clock for TTL/ económico assertions.
+func providerForCatalogWithCache(send requestSender, cache lyricsCacheStore, now func() time.Time, ids ...string) *lyricsProvider {
+	if len(ids) == 0 {
+		ids = defaultCatalogIDs
+	}
+	sources := make([]lyricsSource, 0, len(ids))
+	for _, id := range ids {
+		source, ok := catalogSource(id)
+		if !ok {
+			panic("unknown source id " + id)
+		}
+		sources = append(sources, source)
+	}
+	return newLyricsProviderWithSources(send, cache, now, sources, func(lyrics.TrackInfo) error { return nil })
+}
 
 func assertRequestEndpoint(t *testing.T, request host.HTTPRequest, want string) {
 	t.Helper()
