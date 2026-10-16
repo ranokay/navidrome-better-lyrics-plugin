@@ -29,7 +29,9 @@ func TestAMLLCandidates_TTMLFromSearchAndFetch(t *testing.T) {
 		case strings.Contains(request.URL, "/v1/lyrics/search"):
 			return &host.HTTPResponse{StatusCode: 200, Body: amllFixture(t, "search.json")}, nil
 		case strings.Contains(request.URL, "/v1/lyrics/get"):
-			return &host.HTTPResponse{StatusCode: 200, Body: amllFixture(t, "get.json")}, nil
+			// The saved get.json fixture is truncated mid-element for size, so the
+			// fetch step serves a small complete TTML document here instead.
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Word\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">word</span></p></tt>"}}`)}, nil
 		default:
 			t.Fatalf("unexpected request URL: %s", request.URL)
 			return nil, nil
