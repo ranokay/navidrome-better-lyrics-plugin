@@ -88,14 +88,13 @@ func (noopLyricsCache) SetWithTTL(string, []byte, int64) error {
 	return nil
 }
 
-func newBetterLyricsProviderWithDependencies(send requestSender, cache lyricsCacheStore, now func() time.Time) *betterLyricsProvider {
+func newLyricsProviderWithDependencies(send requestSender, cache lyricsCacheStore, now func() time.Time) *lyricsProvider {
+	provider := newLyricsProviderWithDeps(send, cache, now, defaultConfigLookup(), defaultSweepEnqueuer())
 	if cache == nil {
 		cache = noopLyricsCache{}
+		provider.cache = cache
 	}
-	if now == nil {
-		now = time.Now
-	}
-	return &betterLyricsProvider{send: send, cache: cache, now: now}
+	return provider
 }
 
 func lyricsCacheKey(track lyrics.TrackInfo) (string, bool) {
@@ -111,7 +110,7 @@ func lyricsCacheKey(track lyrics.TrackInfo) (string, bool) {
 	return fmt.Sprintf("%s%x", lyricsCacheKeyPrefix, digest), true
 }
 
-func (p *betterLyricsProvider) readCachedLyrics(track lyrics.TrackInfo) (lyrics.GetLyricsResponse, bool) {
+func (p *lyricsProvider) readCachedLyrics(track lyrics.TrackInfo) (lyrics.GetLyricsResponse, bool) {
 	key, ok := lyricsCacheKey(track)
 	if !ok {
 		return lyrics.GetLyricsResponse{}, false
@@ -134,7 +133,7 @@ func (p *betterLyricsProvider) readCachedLyrics(track lyrics.TrackInfo) (lyrics.
 	return response, true
 }
 
-func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyrics.GetLyricsResponse, health lookupHealth) {
+func (p *lyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyrics.GetLyricsResponse, health lookupHealth) {
 	key, ok := lyricsCacheKey(track)
 	if !ok {
 		return
@@ -174,7 +173,7 @@ func (p *betterLyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyri
 	}
 }
 
-func (p *betterLyricsProvider) activeBetterLyricsCooldown(requestURL string) error {
+func (p *lyricsProvider) activeBetterLyricsCooldown(requestURL string) error {
 	if remaining := p.activeCooldown(betterLyricsGlobalCooldownKey); remaining > 0 {
 		return &rateLimitCooldownError{global: true, remaining: remaining}
 	}
@@ -184,14 +183,14 @@ func (p *betterLyricsProvider) activeBetterLyricsCooldown(requestURL string) err
 	return nil
 }
 
-func (p *betterLyricsProvider) activeUnisonCooldown() error {
+func (p *lyricsProvider) activeUnisonCooldown() error {
 	if remaining := p.activeCooldown(unisonGlobalCooldownKey); remaining > 0 {
 		return &providerCooldownError{provider: "unison", remaining: remaining}
 	}
 	return nil
 }
 
-func (p *betterLyricsProvider) activeCooldown(key string) time.Duration {
+func (p *lyricsProvider) activeCooldown(key string) time.Duration {
 	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
 		// A cache failure must not make the lyrics provider unavailable.
@@ -212,7 +211,7 @@ func (p *betterLyricsProvider) activeCooldown(key string) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (p *betterLyricsProvider) rememberRateLimit(response *host.HTTPResponse, requestURL string) time.Duration {
+func (p *lyricsProvider) rememberRateLimit(response *host.HTTPResponse, requestURL string) time.Duration {
 	retryAfter := retryAfterDuration(response.Headers, p.now())
 	key := rateLimitQueryKey(requestURL)
 	if globalRateLimit(response) {
@@ -222,13 +221,13 @@ func (p *betterLyricsProvider) rememberRateLimit(response *host.HTTPResponse, re
 	return retryAfter
 }
 
-func (p *betterLyricsProvider) rememberUnisonRateLimit(response *host.HTTPResponse) time.Duration {
+func (p *lyricsProvider) rememberUnisonRateLimit(response *host.HTTPResponse) time.Duration {
 	retryAfter := retryAfterDurationWithDefault(response.Headers, p.now(), defaultUnisonRateLimitCooldown)
 	p.rememberCooldown(unisonGlobalCooldownKey, retryAfter)
 	return retryAfter
 }
 
-func (p *betterLyricsProvider) rememberCooldown(key string, retryAfter time.Duration) {
+func (p *lyricsProvider) rememberCooldown(key string, retryAfter time.Duration) {
 	now := p.now()
 	deadline := now.Add(retryAfter)
 	untilUnix := deadline.Unix()

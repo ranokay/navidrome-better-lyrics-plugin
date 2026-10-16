@@ -11,7 +11,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
+func TestLyricsProvider_GetLyrics(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -30,7 +30,7 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\">timed text</tt>\n"}`)},
 			wantText:     "  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\">timed text</tt>\n",
-			wantProvider: "ttml",
+			wantProvider: "Better Lyrics",
 			wantFormat:   "ttml",
 			wantRequests: 1,
 		},
@@ -105,7 +105,7 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 			t.Parallel()
 
 			requests := 0
-			provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests++
 				parsed, err := url.Parse(request.URL)
 				if err != nil {
@@ -143,12 +143,12 @@ func TestBetterLyricsProvider_GetLyrics(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
+func TestLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
 	requests := 0
-	first := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	first := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{
 			StatusCode: 200,
@@ -162,7 +162,7 @@ func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.
 		t.Fatalf("first GetLyrics() error = %v, want nil", err)
 	}
 
-	second := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	second := newLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		t.Fatal("second GetLyrics() made a network request, want shared cache hit")
 		return nil, nil
 	}, cache, time.Now)
@@ -177,7 +177,7 @@ func TestBetterLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.
 	if len(firstResult.Lyrics) != 1 || len(secondResult.Lyrics) != 1 || secondResult.Lyrics[0].Text != firstResult.Lyrics[0].Text {
 		t.Fatalf("cached result = %#v, want %#v", secondResult, firstResult)
 	}
-	assertLyricsSource(t, secondResult.Source, "ttml", "ttml")
+	assertLyricsSource(t, secondResult.Source, "Better Lyrics", "ttml")
 	if ttl := cache.lastTTL(); ttl != positiveLyricsCacheTTLSeconds {
 		t.Fatalf("positive cache TTL = %d, want %d", ttl, positiveLyricsCacheTTLSeconds)
 	}

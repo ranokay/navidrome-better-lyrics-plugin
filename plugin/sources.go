@@ -10,18 +10,15 @@ import (
 
 type configLookup func(key string) (string, bool)
 
-// lyricsProvider is finalized by the orchestrator task; the alias keeps this file
-// compiling against the existing single-backend provider until the rename lands.
-type lyricsProvider = betterLyricsProvider
-
 // lyricsSource describes one upstream lyrics backend participating in the chain.
-// Fetch performs the lookup; it is wired per source by the tasks that implement it.
+// Fetch performs the lookup and reports per-source health alongside candidates; it is
+// wired per source by the tasks that implement it.
 type lyricsSource struct {
 	ID             string
 	Display        string
 	Hosts          []string
 	DefaultEnabled bool
-	Fetch          func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, error)
+	Fetch          func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error)
 }
 
 // allSources is the full catalog in default config order. Sourced display names match
@@ -41,6 +38,22 @@ var allSources = []lyricsSource{
 	{ID: "lrclib", Display: "LRCLib", Hosts: []string{"lrclib.net"}, DefaultEnabled: true},
 	{ID: "better-lyrics-legato", Display: "Better Lyrics Legato", Hosts: []string{"lyrics-api.boidu.dev"}, DefaultEnabled: true},
 	{ID: "lyricify", Display: "Lyricify", Hosts: []string{"api.credits.fm", "api.lyricify.app"}, DefaultEnabled: true},
+}
+
+// Fetches are attached at init rather than in the literal above so that source
+// files can consult the config reader without creating an initialization cycle.
+func init() {
+	for i := range allSources {
+		if fn, ok := sourceFetches[allSources[i].ID]; ok {
+			allSources[i].Fetch = fn
+		}
+	}
+}
+
+var sourceFetches = map[string]func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error){
+	"better-lyrics":        fetchBetterLyricsLyrics,
+	"unison":               fetchUnisonCandidates,
+	"better-lyrics-legato": fetchKugouLyricsCandidates,
 }
 
 var sourcesByID = func() map[string]lyricsSource {

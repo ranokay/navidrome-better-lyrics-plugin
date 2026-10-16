@@ -11,11 +11,11 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/types"
 )
 
-func TestBetterLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
+func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	t.Parallel()
 
 	var request host.HTTPRequest
-	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		request = input
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">lyrics</tt>"}`)}, nil
 	})
@@ -145,13 +145,13 @@ func TestLyricsRequestURL(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_UsesRemainingLookupBudgetForRequestTimeout(t *testing.T) {
+func TestLyricsProvider_UsesRemainingLookupBudgetForRequestTimeout(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 23, 7, 0, 0, 0, time.UTC)
 	current := now
-	provider := newBetterLyricsProviderWithDependencies(nil, newFakeLyricsCache(), func() time.Time { return current })
-	deadline := now.Add(lyricsLookupTimeout)
+	provider := newLyricsProviderWithDependencies(nil, newFakeLyricsCache(), func() time.Time { return current })
+	deadline := now.Add(stageOneLookupBudget)
 
 	if got, err := provider.requestTimeoutMilliseconds(deadline); err != nil || got != httpTimeoutMilliseconds {
 		t.Fatalf("initial timeout = %d, %v; want %d, nil", got, err, httpTimeoutMilliseconds)

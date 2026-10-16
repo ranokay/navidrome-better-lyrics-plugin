@@ -10,7 +10,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-func TestBetterLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) {
+func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -34,7 +34,7 @@ func TestBetterLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testi
 			betterTTML:   betterWord,
 			unisonTTML:   unisonSyllable,
 			wantTTML:     unisonSyllable,
-			wantProvider: "unison",
+			wantProvider: "Unison",
 			wantRequests: 2,
 		},
 		{
@@ -42,14 +42,14 @@ func TestBetterLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testi
 			betterTTML:   betterTie,
 			unisonTTML:   unisonTie,
 			wantTTML:     betterTie,
-			wantProvider: "ttml",
-			wantRequests: 2,
+			wantProvider: "Better Lyrics",
+			wantRequests: 3,
 		},
 		{
 			name:         "returns Better Lyrics syllables without a lower-priority request",
 			betterTTML:   betterSyllable,
 			wantTTML:     betterSyllable,
-			wantProvider: "ttml",
+			wantProvider: "Better Lyrics",
 			wantRequests: 1,
 		},
 	}
@@ -59,16 +59,18 @@ func TestBetterLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testi
 			t.Parallel()
 
 			requests := 0
-			provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests++
 				parsed, err := url.Parse(request.URL)
 				if err != nil {
 					t.Fatalf("parse request URL: %v", err)
 				}
-				switch parsed.Host {
-				case "lyrics-api.boidu.dev":
+				switch {
+				case parsed.Path == "/kugou/getLyrics":
+					return &host.HTTPResponse{StatusCode: 404}, nil
+				case parsed.Host == "lyrics-api.boidu.dev":
 					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":` + strconv.Quote(test.betterTTML) + `}`)}, nil
-				case "unison.boidu.dev":
+				case parsed.Host == "unison.boidu.dev":
 					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":` + strconv.Quote(test.unisonTTML) + `,"format":"ttml","language":"en"}}`)}, nil
 				default:
 					t.Fatalf("unexpected request URL: %s", request.URL)
@@ -121,11 +123,11 @@ func TestTTMLTimingQuality(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
+func TestLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
 	t.Parallel()
 
 	requests := 0
-	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -141,16 +143,16 @@ func TestBetterLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil because a fallback succeeded", err)
 	}
-	assertLyricsSource(t, result.Source, "unison", "lrc")
-	if requests != 2 {
-		t.Fatalf("request count = %d, want malformed Better Lyrics then Unison", requests)
+	assertLyricsSource(t, result.Source, "Unison", "lrc")
+	if requests != 3 {
+		t.Fatalf("request count = %d, want malformed Better Lyrics, Unison and Kugou", requests)
 	}
 }
 
-func TestBetterLyricsProvider_UntimedLRCDoesNotBeatKugouLineSync(t *testing.T) {
+func TestLyricsProvider_UntimedLRCDoesNotBeatKugouLineSync(t *testing.T) {
 	t.Parallel()
 
-	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -169,10 +171,10 @@ func TestBetterLyricsProvider_UntimedLRCDoesNotBeatKugouLineSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	assertLyricsSource(t, result.Source, "kugou", "lrc")
+	assertLyricsSource(t, result.Source, "Better Lyrics Legato", "lrc")
 }
 
-func TestBetterLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testing.T) {
+func TestLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testing.T) {
 	t.Parallel()
 
 	responses := []*host.HTTPResponse{
@@ -183,7 +185,7 @@ func TestBetterLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testin
 		{StatusCode: 404},
 	}
 	requests := 0
-	provider := newBetterLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		response := responses[requests]
 		requests++
 		return response, nil

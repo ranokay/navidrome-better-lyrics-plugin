@@ -9,7 +9,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
+func TestLyricsProvider_FallbackOrder(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -27,25 +27,26 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">unison rich</tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
 			wantText:         `<tt xmlns:itunes="urn:itunes" itunes:timing="Syllable">unison rich</tt>`,
 			wantLanguage:     "ko",
-			wantProvider:     "unison",
+			wantProvider:     "Unison",
 			wantFormat:       "ttml",
 			wantRequestCount: 4,
 		},
 		{
 			name:             "returns Unison LRC before trying Kugou",
 			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]unison line","format":"lrc","language":"en","syncType":"linesync"}}`)},
+			kugouResponse:    &host.HTTPResponse{StatusCode: 404},
 			wantText:         "[00:01.00]unison line",
 			wantLanguage:     "en",
-			wantProvider:     "unison",
+			wantProvider:     "Unison",
 			wantFormat:       "lrc",
-			wantRequestCount: 4,
+			wantRequestCount: 5,
 		},
 		{
 			name:             "prefers synchronized Kugou over Unison plain text",
 			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"unison plain","format":"plain","language":"en","syncType":"plain"}}`)},
 			kugouResponse:    &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]kugou line","provider":"kugou"}`)},
 			wantText:         "[00:01.00]kugou line",
-			wantProvider:     "kugou",
+			wantProvider:     "Better Lyrics Legato",
 			wantFormat:       "lrc",
 			wantRequestCount: 5,
 		},
@@ -55,7 +56,7 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			kugouResponse:    &host.HTTPResponse{StatusCode: 404},
 			wantText:         "unison plain",
 			wantLanguage:     "en",
-			wantProvider:     "unison",
+			wantProvider:     "Unison",
 			wantFormat:       "plain",
 			wantRequestCount: 5,
 		},
@@ -76,7 +77,7 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 			}
 
 			var requests []host.HTTPRequest
-			provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 				requests = append(requests, input)
 				if len(requests) > len(responses) {
 					t.Fatalf("unexpected request %d: %s", len(requests), input.URL)
@@ -126,15 +127,16 @@ func TestBetterLyricsProvider_FallbackOrder(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
+func TestLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
 	t.Parallel()
 
 	responses := []*host.HTTPResponse{
 		{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
 		{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
+		{StatusCode: 200, Body: []byte(`{"lyrics":""}`)},
 	}
 	var requests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, input)
 		return responses[len(requests)-1], nil
 	})
@@ -148,15 +150,16 @@ func TestBetterLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
 	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]community line" {
 		t.Fatalf("GetLyrics() lyrics = %#v, want Unison LRC", result.Lyrics)
 	}
-	assertLyricsSource(t, result.Source, "unison", "lrc")
-	if len(requests) != 2 {
-		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
+	assertLyricsSource(t, result.Source, "Unison", "lrc")
+	if len(requests) != 3 {
+		t.Fatalf("GetLyrics() request count = %d, want 3 (Better Lyrics, Unison, Kugou sweep)", len(requests))
 	}
 	assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
 	assertRequestEndpoint(t, requests[1], "https://unison.boidu.dev/lyrics")
+	assertRequestEndpoint(t, requests[2], "https://lyrics-api.boidu.dev/kugou/getLyrics")
 }
 
-func TestBetterLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainText(t *testing.T) {
+func TestLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainText(t *testing.T) {
 	t.Parallel()
 
 	responses := []*host.HTTPResponse{
@@ -165,7 +168,7 @@ func TestBetterLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainTex
 		{StatusCode: 200, Body: []byte(`{"lyrics":"[00:01.00]kugou line","provider":"kugou"}`)},
 	}
 	var requests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, input)
 		return responses[len(requests)-1], nil
 	})
@@ -179,7 +182,7 @@ func TestBetterLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainTex
 	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]kugou line" {
 		t.Fatalf("GetLyrics() lyrics = %#v, want Kugou LRC", result.Lyrics)
 	}
-	assertLyricsSource(t, result.Source, "kugou", "lrc")
+	assertLyricsSource(t, result.Source, "Better Lyrics Legato", "lrc")
 	if len(requests) != 3 {
 		t.Fatalf("GetLyrics() request count = %d, want 3", len(requests))
 	}
@@ -188,7 +191,7 @@ func TestBetterLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainTex
 	assertRequestEndpoint(t, requests[2], "https://lyrics-api.boidu.dev/kugou/getLyrics")
 }
 
-func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
+func TestLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 	t.Parallel()
 
 	responses := []*host.HTTPResponse{
@@ -196,7 +199,7 @@ func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 		{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached lyrics</tt>"}`)},
 	}
 	var requests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, input)
 		return responses[len(requests)-1], nil
 	})
@@ -213,7 +216,7 @@ func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 	if len(result.Lyrics) != 1 || !strings.Contains(result.Lyrics[0].Text, "cached lyrics") {
 		t.Fatalf("GetLyrics() lyrics = %#v, want cached TTML", result.Lyrics)
 	}
-	assertLyricsSource(t, result.Source, "ttml", "ttml")
+	assertLyricsSource(t, result.Source, "Better Lyrics", "ttml")
 	if len(requests) != 2 {
 		t.Fatalf("GetLyrics() request count = %d, want 2", len(requests))
 	}
@@ -238,11 +241,11 @@ func TestBetterLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_BroadensBetterLyricsWithoutDroppingDurationFirst(t *testing.T) {
+func TestLyricsProvider_BroadensBetterLyricsWithoutDroppingDurationFirst(t *testing.T) {
 	t.Parallel()
 
 	var requests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -284,11 +287,11 @@ func TestBetterLyricsProvider_BroadensBetterLyricsWithoutDroppingDurationFirst(t
 	}
 }
 
-func TestBetterLyricsProvider_BroadensUnisonMetadataInOrder(t *testing.T) {
+func TestLyricsProvider_BroadensUnisonMetadataInOrder(t *testing.T) {
 	t.Parallel()
 
 	var unisonRequests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -314,7 +317,7 @@ func TestBetterLyricsProvider_BroadensUnisonMetadataInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	assertLyricsSource(t, result.Source, "unison", "lrc")
+	assertLyricsSource(t, result.Source, "Unison", "lrc")
 	if len(unisonRequests) != 3 {
 		t.Fatalf("Unison request count = %d, want 3 metadata tiers", len(unisonRequests))
 	}
@@ -333,11 +336,11 @@ func TestBetterLyricsProvider_BroadensUnisonMetadataInOrder(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_BroadensAfterAnEmptyTTMLHit(t *testing.T) {
+func TestLyricsProvider_BroadensAfterAnEmptyTTMLHit(t *testing.T) {
 	t.Parallel()
 
 	var requests []host.HTTPRequest
-	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
