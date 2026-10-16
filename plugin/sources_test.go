@@ -20,7 +20,6 @@ func TestAllSources_ImplementedFetchesAreAttached(t *testing.T) {
 	wantUnimplemented := map[string]bool{
 		"luna-beat":       true,
 		"apple-lyrically": true,
-		"musixmatch":      true,
 		"netease":         true,
 		"luna":            true,
 		"petitlyrics":     true,
