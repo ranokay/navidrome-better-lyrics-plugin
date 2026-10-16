@@ -135,6 +135,16 @@ func sourcesFromSelections(selections []sourceSelection) []lyricsSource {
 	return ordered
 }
 
+// sourceIDs lists the catalog ids in the given order; the winner cache uses them
+// as the fingerprint input.
+func sourceIDs(sources []lyricsSource) []string {
+	ids := make([]string, 0, len(sources))
+	for _, source := range sources {
+		ids = append(ids, source.ID)
+	}
+	return ids
+}
+
 func defaultSources() []lyricsSource {
 	sources := make([]lyricsSource, 0, len(allSources))
 	for _, source := range allSources {

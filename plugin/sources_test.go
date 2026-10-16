@@ -69,14 +69,6 @@ func defaultSourceIDs() []string {
 	return ids
 }
 
-func sourceIDs(sources []lyricsSource) []string {
-	ids := make([]string, 0, len(sources))
-	for _, source := range sources {
-		ids = append(ids, source.ID)
-	}
-	return ids
-}
-
 func countIn(ids []string, id string) int {
 	count := 0
 	for _, candidate := range ids {
