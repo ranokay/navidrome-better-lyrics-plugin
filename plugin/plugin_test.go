@@ -57,9 +57,9 @@ func TestManifestAllowlistsEverySourceHost(t *testing.T) {
 	// The config schema must expose the ordered source list plus the two secrets.
 	var schema struct {
 		Properties struct {
-			Sources              json.RawMessage `json:"sources"`
-			BetterLyricsAPIKey   json.RawMessage `json:"betterLyricsApiKey"`
-			MusixmatchUserToken  json.RawMessage `json:"musixmatchUserToken"`
+			Sources             json.RawMessage `json:"sources"`
+			BetterLyricsAPIKey  json.RawMessage `json:"betterLyricsApiKey"`
+			MusixmatchUserToken json.RawMessage `json:"musixmatchUserToken"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(typedManifestConfigSchema(), &schema); err != nil {
