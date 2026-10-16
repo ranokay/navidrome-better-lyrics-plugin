@@ -15,21 +15,25 @@ import (
 )
 
 const (
-	lyricsCacheMaxSize                   = "32MB"
-	lyricsCacheMaxBytes            int64 = 32 * 1024 * 1024
-	lyricsCacheReservedBytes       int64 = 1 * 1024 * 1024
-	maxCachedLyricsEntryBytes            = 1 * 1024 * 1024
-	positiveLyricsCacheTTLSeconds        = int64(24 * time.Hour / time.Second)
-	uncertainLyricsCacheTTLSeconds       = int64(time.Hour / time.Second)
-	degradedLyricsCacheTTLSeconds        = int64(5 * time.Minute / time.Second)
-	negativeLyricsCacheTTLSeconds        = int64(5 * time.Minute / time.Second)
-	defaultRateLimitCooldown             = 30 * time.Second
-	defaultUnisonRateLimitCooldown       = 60 * time.Second
-	maxRateLimitCooldown                 = time.Hour
-	lyricsCacheKeyPrefix                 = "lyrics:v3:"
-	betterLyricsGlobalCooldownKey        = "rate-limit:better-lyrics:global:v3"
-	betterLyricsQueryCooldownKey         = "rate-limit:better-lyrics:query:v3:"
-	unisonGlobalCooldownKey              = "rate-limit:unison:global:v1"
+	lyricsCacheMaxSize              = "32MB"
+	lyricsCacheMaxBytes       int64 = 32 * 1024 * 1024
+	lyricsCacheReservedBytes  int64 = 1 * 1024 * 1024
+	maxCachedLyricsEntryBytes       = 1 * 1024 * 1024
+	// syncedLyricsCacheTTLSeconds covers synchronized winner entries and the
+	// per-source cache of synchronized results.
+	syncedLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
+	// unsyncedLyricsCacheTTLSeconds covers word/line-quality winners and the
+	// per-source cache of plain results; sources that miss can be retried soon.
+	unsyncedLyricsCacheTTLSeconds  = int64(time.Hour / time.Second)
+	negativeLyricsCacheTTLSeconds  = int64(5 * time.Minute / time.Second)
+	defaultRateLimitCooldown       = 30 * time.Second
+	defaultUnisonRateLimitCooldown = 60 * time.Second
+	maxRateLimitCooldown           = time.Hour
+	lyricsWinnerCacheKeyPrefix     = "lyrics:v4:winner:"
+	lyricsSourceCacheKeyPrefix     = "lyrics:v4:source:"
+	betterLyricsGlobalCooldownKey  = "rate-limit:better-lyrics:global:v3"
+	betterLyricsQueryCooldownKey   = "rate-limit:better-lyrics:query:v3:"
+	unisonGlobalCooldownKey        = "rate-limit:unison:global:v1"
 )
 
 type lookupHealth uint8
@@ -97,7 +101,7 @@ func newLyricsProviderWithDependencies(send requestSender, cache lyricsCacheStor
 	return provider
 }
 
-func lyricsCacheKey(track lyrics.TrackInfo) (string, bool) {
+func lyricsTrackKey(track lyrics.TrackInfo) (string, bool) {
 	title := strings.ToLower(strings.TrimSpace(track.Title))
 	artist := strings.ToLower(trackArtist(track))
 	if title == "" || artist == "" {
@@ -107,50 +111,67 @@ func lyricsCacheKey(track lyrics.TrackInfo) (string, bool) {
 	album := strings.ToLower(strings.TrimSpace(track.Album))
 	duration := int64(math.Round(float64(track.Duration)))
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d", title, artist, album, duration)))
-	return fmt.Sprintf("%s%x", lyricsCacheKeyPrefix, digest), true
+	return fmt.Sprintf("%x", digest), true
 }
 
-func (p *lyricsProvider) readCachedLyrics(track lyrics.TrackInfo) (lyrics.GetLyricsResponse, bool) {
-	key, ok := lyricsCacheKey(track)
-	if !ok {
-		return lyrics.GetLyricsResponse{}, false
+func lyricsCacheKeyForSource(track lyrics.TrackInfo, sourceID string) (string, bool) {
+	trackKey, ok := lyricsTrackKey(track)
+	if !ok || sourceID == "" {
+		return "", false
 	}
+	return fmt.Sprintf("%s%s:%s", lyricsSourceCacheKeyPrefix, sourceID, trackKey), true
+}
 
+// lyricsWinnerCacheKey fingerprints the enabled, ordered source list into the key
+// so reordering or rescaling the source set takes effect on the next lookup.
+func lyricsWinnerCacheKey(track lyrics.TrackInfo, sourceOrder []string) (string, bool) {
+	trackKey, ok := lyricsTrackKey(track)
+	if !ok || len(sourceOrder) == 0 {
+		return "", false
+	}
+	fingerprint := sha256.Sum256([]byte(strings.Join(sourceOrder, "|")))
+	return fmt.Sprintf("%s%x:%s", lyricsWinnerCacheKeyPrefix, fingerprint, trackKey), true
+}
+
+type cachedLyricsEnvelope struct {
+	Quality  lyricTimingQuality       `json:"quality"`
+	Response lyrics.GetLyricsResponse `json:"response"`
+}
+
+// winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.
+func winnerCacheTTLSeconds(quality lyricTimingQuality) int64 {
+	switch quality {
+	case timingSyllable:
+		return syncedLyricsCacheTTLSeconds
+	case timingWord, timingLine:
+		return unsyncedLyricsCacheTTLSeconds
+	default:
+		return negativeLyricsCacheTTLSeconds
+	}
+}
+
+func sourceCacheTTLSeconds(quality lyricTimingQuality) int64 {
+	if quality >= timingLine {
+		return syncedLyricsCacheTTLSeconds
+	}
+	return unsyncedLyricsCacheTTLSeconds
+}
+
+func (p *lyricsProvider) readCachedCandidate(key string) (lyricsCandidate, bool) {
 	value, exists, err := p.cache.Get(key)
-	if err != nil {
-		logCacheDebug(fmt.Sprintf("lyrics cache read failed: %v", err))
-		return lyrics.GetLyricsResponse{}, false
+	if err != nil || !exists {
+		return lyricsCandidate{}, false
 	}
-	if !exists {
-		return lyrics.GetLyricsResponse{}, false
-	}
-
-	var response lyrics.GetLyricsResponse
-	if err := json.Unmarshal(value, &response); err != nil {
+	var envelope cachedLyricsEnvelope
+	if err := json.Unmarshal(value, &envelope); err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache entry decode failed: %v", err))
-		return lyrics.GetLyricsResponse{}, false
+		return lyricsCandidate{}, false
 	}
-	return response, true
+	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, true
 }
 
-func (p *lyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyrics.GetLyricsResponse, health lookupHealth) {
-	key, ok := lyricsCacheKey(track)
-	if !ok {
-		return
-	}
-
-	ttl := positiveLyricsCacheTTLSeconds
-	if len(response.Lyrics) == 0 {
-		ttl = negativeLyricsCacheTTLSeconds
-	} else {
-		switch health {
-		case lookupDegraded:
-			ttl = degradedLyricsCacheTTLSeconds
-		case lookupUncertain:
-			ttl = uncertainLyricsCacheTTLSeconds
-		}
-	}
-	value, err := json.Marshal(response)
+func (p *lyricsProvider) storeCandidateValue(key string, candidate lyricsCandidate, ttl int64) {
+	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.quality, Response: candidate.response})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return
@@ -171,6 +192,63 @@ func (p *lyricsProvider) cacheLyrics(track lyrics.TrackInfo, response lyrics.Get
 	if err := p.cache.SetWithTTL(key, value, ttl); err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache write failed: %v", err))
 	}
+}
+
+func (p *lyricsProvider) readCachedSourceCandidate(track lyrics.TrackInfo, sourceID string) (lyricsCandidate, bool) {
+	key, ok := lyricsCacheKeyForSource(track, sourceID)
+	if !ok {
+		return lyricsCandidate{}, false
+	}
+	return p.readCachedCandidate(key)
+}
+
+func (p *lyricsProvider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string, candidate lyricsCandidate) {
+	key, ok := lyricsCacheKeyForSource(track, sourceID)
+	if !ok || !candidate.present() {
+		return
+	}
+	p.storeCandidateValue(key, candidate, sourceCacheTTLSeconds(candidate.quality))
+}
+
+// readBestFromSourceCache ranks fresh per-source results in configured order; the
+// earlier source wins timing-quality ties because preferLyricsCandidate keeps the
+// current candidate.
+func (p *lyricsProvider) readBestFromSourceCache(track lyrics.TrackInfo, order []lyricsSource) lyricsCandidate {
+	var best lyricsCandidate
+	for _, source := range order {
+		candidate, ok := p.readCachedSourceCandidate(track, source.ID)
+		if !ok {
+			continue
+		}
+		best = preferLyricsCandidate(best, candidate)
+	}
+	return best
+}
+
+func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyricsSource) (lyricsCandidate, bool) {
+	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+	if !ok {
+		return lyricsCandidate{}, false
+	}
+	return p.readCachedCandidate(key)
+}
+
+// cacheWinner stores the selected candidate; negative lookup results live here too
+// so a second lookup for the same track with the same source order skips the walk.
+func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSource, candidate lyricsCandidate) {
+	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+	if !ok {
+		return
+	}
+	p.storeCandidateValue(key, candidate, winnerCacheTTLSeconds(candidate.quality))
+}
+
+func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyricsSource) {
+	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+	if !ok {
+		return
+	}
+	p.storeCandidateValue(key, lyricsCandidate{}, negativeLyricsCacheTTLSeconds)
 }
 
 func (p *lyricsProvider) activeBetterLyricsCooldown(requestURL string) error {

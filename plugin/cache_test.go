@@ -22,7 +22,7 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 		wantTTL      int64
 	}{
 		{
-			name: "uses the positive TTL after clean misses",
+			name: "uses the hour TTL for line-synced community fallbacks",
 			responses: []*host.HTTPResponse{
 				{StatusCode: 404},
 				{StatusCode: 404},
@@ -32,10 +32,10 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			},
 			wantProvider: "Unison",
 			wantFormat:   "lrc",
-			wantTTL:      positiveLyricsCacheTTLSeconds,
+			wantTTL:      unsyncedLyricsCacheTTLSeconds,
 		},
 		{
-			name: "uses a short TTL after a Better Lyrics failure",
+			name: "uses the word-grade TTL after a Better Lyrics failure",
 			responses: []*host.HTTPResponse{
 				{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
 				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
@@ -43,10 +43,10 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			},
 			wantProvider: "Unison",
 			wantFormat:   "lrc",
-			wantTTL:      int64(5 * time.Minute / time.Second),
+			wantTTL:      unsyncedLyricsCacheTTLSeconds,
 		},
 		{
-			name: "uses a short TTL for plain text after a Kugou failure",
+			name: "uses the negative TTL for plain text after a Kugou failure",
 			responses: []*host.HTTPResponse{
 				{StatusCode: 404},
 				{StatusCode: 404},
@@ -56,7 +56,7 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			},
 			wantProvider: "Unison",
 			wantFormat:   "plain",
-			wantTTL:      int64(5 * time.Minute / time.Second),
+			wantTTL:      negativeLyricsCacheTTLSeconds,
 		},
 	}
 
@@ -143,8 +143,8 @@ func TestLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
 	assertLyricsSource(t, result.Source, "Unison", "lrc")
-	if ttl := cache.lastTTL(); ttl != uncertainLyricsCacheTTLSeconds {
-		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, uncertainLyricsCacheTTLSeconds)
+	if ttl := cache.lastTTL(); ttl != unsyncedLyricsCacheTTLSeconds {
+		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, unsyncedLyricsCacheTTLSeconds)
 	}
 }
 
@@ -271,10 +271,10 @@ func TestLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
 
 	cache := &usageAwareLyricsCache{used: lyricsCacheMaxBytes - lyricsCacheReservedBytes}
 	provider := newLyricsProviderWithDependencies(nil, cache, time.Now)
-	provider.cacheLyrics(
+	provider.cacheWinner(
 		lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-		sourcedLyricsResponse(lyrics.LyricsText{Text: "lyrics"}, "unison", "plain"),
-		lookupHealthy,
+		[]lyricsSource{{ID: "one"}},
+		newLyricsCandidate(lyrics.LyricsText{Text: "lyrics"}, "Unison", "plain"),
 	)
 	if cache.sets != 0 {
 		t.Fatalf("cache writes = %d, want 0 when reserved headroom is reached", cache.sets)

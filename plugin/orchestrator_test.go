@@ -138,8 +138,8 @@ func TestLyricsProvider_MergesHealthFromSourceStatuses(t *testing.T) {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
 	assertLyricsSource(t, result.Source, "stub", "elrc")
-	if ttl := cache.lastTTL(); ttl != uncertainLyricsCacheTTLSeconds {
-		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, uncertainLyricsCacheTTLSeconds)
+	if ttl := cache.lastTTL(); ttl != unsyncedLyricsCacheTTLSeconds {
+		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, unsyncedLyricsCacheTTLSeconds)
 	}
 }
 

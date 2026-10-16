@@ -80,31 +80,52 @@ func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, no
 // GetLyrics prefers rich TTML, then synchronized provider/community results, while
 // retaining plain text as the final fallback.
 func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
-	if cached, ok := p.readCachedLyrics(input.Track); ok {
-		return cached, nil
+	track := input.Track
+	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
+		return lyrics.GetLyricsResponse{}, nil
 	}
 
-	response, health, err := p.fetchLyrics(input)
-	if err == nil {
-		p.cacheLyrics(input.Track, response, health)
+	sources := p.activeSources()
+	if candidate, ok := p.readCachedWinner(track, sources); ok {
+		return candidate.response, nil
 	}
-	return response, err
+	if best := p.readBestFromSourceCache(track, sources); best.present() {
+		p.cacheWinner(track, sources, best)
+		return best.response, nil
+	}
+
+	candidate, _, err := p.fetchLyrics(input)
+	if candidate.present() {
+		p.cacheWinner(track, sources, candidate)
+		return candidate.response, nil
+	}
+	if err == nil {
+		p.cacheNegativeWinner(track, sources)
+	}
+	return candidate.response, err
+}
+
+// activeSources resolves the source order for this lookup: the injected test
+// catalog when present, otherwise the admin-configured enabled sources.
+func (p *lyricsProvider) activeSources() []lyricsSource {
+	if p.sources != nil {
+		return p.sources
+	}
+	return readProviderConfig(p.configLookup).Sources
 }
 
 // fetchLyrics runs the stage-one pass: the first implemented enabled sources in
 // configured order under a bounded budget, stopping early once a syllable-timed
-// result lands. Remaining sources are covered by the background sweep (Task 6).
-func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, lookupHealth, error) {
+// result lands. Each successful source result is cached per source so later
+// lookups and source reordering re-rank without refetching. Remaining sources
+// are covered by the background sweep (Task 6).
+func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandidate, lookupHealth, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
-		return lyrics.GetLyricsResponse{}, lookupHealthy, nil
+		return lyricsCandidate{}, lookupHealthy, nil
 	}
 
-	sources := p.sources
-	if sources == nil {
-		sources = readProviderConfig(p.configLookup).Sources
-	}
-
+	sources := p.activeSources()
 	deadline := p.now().Add(stageOneLookupBudget)
 
 	var (
@@ -144,20 +165,21 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyrics.GetL
 			if !candidate.present() {
 				continue
 			}
+			p.cacheSourceCandidate(track, source.ID, candidate)
 			best = preferLyricsCandidate(best, candidate)
 		}
 		if best.quality == timingSyllable {
-			return best.response, health, nil
+			return best, health, nil
 		}
 	}
 
 	if best.present() {
-		return best.response, health, nil
+		return best, health, nil
 	}
 	if len(lookupErrors) > 0 {
-		return lyrics.GetLyricsResponse{}, health, errors.Join(lookupErrors...)
+		return lyricsCandidate{}, health, errors.Join(lookupErrors...)
 	}
-	return lyrics.GetLyricsResponse{}, health, nil
+	return lyricsCandidate{}, health, nil
 }
 
 func coldHostFor(source lyricsSource, coldHosts map[string]bool) string {
@@ -183,10 +205,6 @@ func (p *lyricsProvider) requestTimeoutMilliseconds(deadline time.Time) (int32, 
 		milliseconds = 1
 	}
 	return int32(milliseconds), nil
-}
-
-func (p *lyricsProvider) betterLyricsAPIKeyConfigured() bool {
-	return readProviderConfig(p.configLookup).BetterLyricsAPIKey != ""
 }
 
 func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {
