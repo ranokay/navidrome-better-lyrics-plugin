@@ -326,7 +326,7 @@ type musixmatchBody struct {
 type musixmatchTrackEntry struct {
 	Track struct {
 		TrackID  int64 `json:"track_id"`
-		Duration int64 `json:"track_duration"`
+		Duration int64 `json:"track_length"` // seconds (live search wire name)
 	} `json:"track"`
 }
 

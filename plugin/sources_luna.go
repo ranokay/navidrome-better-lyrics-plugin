@@ -51,7 +51,7 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 		return nil, lookupHealthy, nil
 	}
 
-	query := url.Values{"track_id": {strconv.FormatInt(trackID, 10)}, "device_platform": {"web"}}
+	query := url.Values{"track_id": {trackID}, "device_platform": {"web"}}
 	response, err = p.sendRequest("Luna track", lunaDetailEndpoint+"?"+query.Encode(), lunaDetailHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
@@ -116,26 +116,44 @@ type lunaResultGroup struct {
 type lunaGroupDatum struct {
 	Entity struct {
 		Track struct {
-			ID       int64 `json:"id"`
-			Duration int64 `json:"duration"` // ms
+			ID       lunaTrackID `json:"id"`
+			Duration int64       `json:"duration"` // ms
 		} `json:"track"`
 	} `json:"entity"`
 }
 
-func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (int64, bool) {
+// lunaTrackID accepts the quoted ids the live Luna search payload ships (they
+// exceed numeric precision anyway) so string ids do not abort the decode.
+type lunaTrackID string
+
+func (id *lunaTrackID) UnmarshalJSON(data []byte) error {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	switch value := raw.(type) {
+	case string:
+		*id = lunaTrackID(strings.TrimSpace(value))
+	case float64:
+		*id = lunaTrackID(strconv.FormatInt(int64(value), 10))
+	}
+	return nil
+}
+
+func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
 	for _, group := range groups {
 		for _, datum := range group.Data {
 			trackInfo := datum.Entity.Track
-			if trackInfo.ID <= 0 {
+			if trackInfo.ID == "" {
 				continue
 			}
 			if delta := trackInfo.Duration - target; delta > -2000 && delta < 2000 {
-				return trackInfo.ID, true
+				return string(trackInfo.ID), true
 			}
 		}
 	}
-	return 0, false
+	return "", false
 }
 
 type lunaDetailEnvelope struct {

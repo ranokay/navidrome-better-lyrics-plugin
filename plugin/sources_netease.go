@@ -116,7 +116,7 @@ type neteaseSearchEnvelope struct {
 
 type neteaseSong struct {
 	ID       int64 `json:"id"`
-	Duration int64 `json:"duration"` // ms
+	Duration int64 `json:"dt"` // ms (live cloudsearch wire name)
 }
 
 func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {

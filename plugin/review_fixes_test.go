@@ -237,7 +237,7 @@ func TestMusixmatchCandidates_EnvelopeStatusDropsStaleToken(t *testing.T) {
 	}
 
 	macroBody := `{"message":{"header":{"status_code":200},"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":401}}}}}}`
-	validSearch := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_duration":10}}]}}}`
+	validSearch := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`
 	cache2 := newFakeLyricsCache()
 	provider2 := providerForCatalogWithCache(facade(validSearch, macroBody), cache2, time.Now, "musixmatch")
 	candidates, _, err = fetchMusixmatchLyricsCandidates(provider2, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}, time.Now().Add(stageOneLookupBudget))

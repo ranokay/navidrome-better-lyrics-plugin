@@ -9,7 +9,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-const neteaseSearchBody = `{"result":{"songs":[{"id":17822787,"name":"Live Forever","duration":280000}]}}`
+const neteaseSearchBody = `{"result":{"songs":[{"id":17822787,"name":"Live Forever","dt":280000}]}}`
 const neteaseLrcBody = `{"lrc":{"lyric":"{\"t\":0,\"c\":[{\"tx\":\"作词: \"},{\"tx\":\"Noel Gallagher\"}]}\n[00:11.93]Maybe\n"}, "tlyric":{}, "yrc":{}}`
 const neteaseYrcBody = `{"lrc":{"lyric":""}, "yrc":{"lyric":"[10000,3000](10200,500,0)Hey (10700,500,0)there\n"}}`
 

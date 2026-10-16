@@ -124,6 +124,10 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 	}
 	cached, failed, skipped, deferred := 0, 0, 0, 0
 	cooldownSkipped, implemented := 0, 0
+	// missed counts clean "no lyrics here" responses: real covered work that
+	// must terminate the sweep. notCovered counts fetches that succeeded but
+	// could not store anything (e.g. quota-refused writes).
+	missed, notCovered := 0, 0
 	var deferredIDs []string
 	localCold := map[string]bool{}
 	for _, source := range sources {
@@ -171,19 +175,30 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			continue
 		}
 		storedAny := false
+		hadCandidates := false
 		for _, candidate := range candidates {
 			if !candidate.present() {
 				continue
 			}
+			hadCandidates = true
 			if p.cacheSourceCandidate(track, source.ID, candidate) {
 				storedAny = true
 			}
 		}
-		if storedAny {
+		switch {
+		case storedAny:
 			cached++
+		case hadCandidates:
+			// Every write was refused (oversized/quota): this pass cannot
+			// honestly claim the source is covered.
+			notCovered++
+		default:
+			// A clean miss is covered work too: the source was fetched and
+			// genuinely has nothing (Codex: misses must terminate the sweep).
+			missed++
 		}
 	}
-	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && cached+skipped == implemented && implemented > 0 {
+	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && cached+missed+skipped == implemented && implemented > 0 {
 		key := sweepDoneMarkerKey(track, sources)
 		if p.cache.SetWithTTL(key, []byte(p.now().Format(time.RFC3339)), sweepDoneTTL) == nil {
 			// Also verify the write actually stayed (an oversized write is

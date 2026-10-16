@@ -117,12 +117,21 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 	}
 
 	sources := p.activeSources()
+	if len(sources) == 0 {
+		// Deliberate all-disabled opt-out (documented `sources: []` config):
+		// serve nothing without touching the winner cache or task queue — an
+		// empty source order creates no key and would wedge every lookup
+		// through the unschedulable sweep path (Codex).
+		return lyrics.GetLyricsResponse{}, nil
+	}
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
 		if candidate.present() {
 			if !sweepComplete {
-				// The sweep may have cached a better result after this winner was
-				// written: re-rank before serving (CodeRabbit/Codex finding).
-				if best := p.readBestFromSourceCache(track, sources); best.present() && best.quality > candidate.quality {
+				// The sweep may have cached a better result after this winner
+				// was written: re-rank before serving (CodeRabbit/Codex
+				// finding). Ties adopt the per-source preferred candidate,
+				// which respects configured order.
+				if best := p.readBestFromSourceCache(track, sources); best.present() && best.quality >= candidate.quality {
 					p.cacheWinner(track, sources, best, false)
 					candidate = best
 				}
@@ -138,7 +147,11 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 			return best.response, nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
-		// for its TTL so replays do not re-walk the sources.
+		// for its TTL so replays do not re-walk the sources — but an incomplete
+		// sweep must still be schedulable (Codex).
+		if !sweepComplete {
+			p.maybeEnqueueSweep(track)
+		}
 		return candidate.response, nil
 	}
 	if best := p.readBestFromSourceCache(track, sources); best.present() {

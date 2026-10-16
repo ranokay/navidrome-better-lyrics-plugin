@@ -15,7 +15,7 @@ func TestMusixmatchCandidates_WordRichsync(t *testing.T) {
 
 	token := "test-user-token"
 	richsync := `[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":120}]}]`
-	searchBody := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":360230953,"track_duration":234}}]}}}`
+	searchBody := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":360230953,"track_length":234}}]}}}`
 	subtitlesBody := `{"message":{"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":200},"body":{"richsync_body":` + strconv.Quote(richsync) + `}}}}}}`
 
 	minted := 0
@@ -65,7 +65,7 @@ func TestMusixmatchCandidates_ConfiguredTokenSkipsMinting(t *testing.T) {
 			t.Fatal("configured token must bypass token.get")
 			return nil, nil
 		case strings.Contains(request.URL, "/ws/1.1/track.search"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":7,"track_duration":10}}]}}}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":7,"track_length":10}}]}}}`)}, nil
 		default:
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":200},"body":{"richsync_body":` + strconv.Quote(richsync) + `}}}}}}`)}, nil
 		}
@@ -105,7 +105,7 @@ func TestMusixmatchCandidates_CaptchaDropsTokenWithoutError(t *testing.T) {
 func TestMusixmatchCandidates_LineSubtitleFallback(t *testing.T) {
 	t.Parallel()
 
-	searchBody := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_duration":10}}]}}}`
+	searchBody := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`
 	subtitlesBody := `{"message":{"body":{"macro_calls":{"track.subtitles.get":{"header":{"status_code":200},"body":{"subtitle_list":[{"subtitle_body":"[00:01.00]synced subtitle"}]}}}}}}`
 
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
