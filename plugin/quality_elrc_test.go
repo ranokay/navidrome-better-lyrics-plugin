@@ -19,7 +19,7 @@ func TestEnhancedLRCTimingGrading(t *testing.T) {
 		{name: "word marker after line timestamp", format: "elrc", text: "[00:30.00]<00:31.00>continuation", want: timingWord},
 		{name: "timestamp-less word markers do not grade", format: "elrc", text: "plain text <3 heart", want: timingUnsynced},
 		{name: "timestamp-less lrc does not grade", format: "elrc", text: "plain text", want: timingUnsynced},
-		{name: "lrc format keeps line grading", format: "lrc", text: "[00:01.00]<00:01.10>word<00:01.90>line", want: timingLine},
+		{name: "lrc content with word markers grades as word", format: "lrc", text: "[00:01.00]<00:01.10>word<00:01.90>line", want: timingWord},
 	}
 
 	for _, test := range tests {
