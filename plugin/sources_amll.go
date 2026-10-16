@@ -24,8 +24,16 @@ type amllItems struct {
 	Items []amllItem `json:"items"`
 }
 
+// amllItemID accepts both forms observed live: JSON numbers and strings.
+type amllItemID string
+
+func (i *amllItemID) UnmarshalJSON(raw []byte) error {
+	*i = amllItemID(strings.Trim(strings.TrimSpace(string(raw)), `"`))
+	return nil
+}
+
 type amllItem struct {
-	ID string `json:"id,string"`
+	ID amllItemID `json:"id"`
 }
 
 // fetchAMLLyricsCandidates resolves lyrics through the AMLL community DB:
@@ -62,7 +70,7 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 		return nil, lookupHealthy, nil
 	}
 
-	lyricsURL := fmt.Sprintf("%s/v1/lyrics/get?id=%s&format=ttml", amllEndpoint, url.QueryEscape(envelope.Data.Items[0].ID))
+	lyricsURL := fmt.Sprintf("%s/v1/lyrics/get?id=%s&format=ttml", amllEndpoint, url.QueryEscape(string(envelope.Data.Items[0].ID)))
 	lyricsResponse, err := p.sendRequest("AMLL lyrics", lyricsURL, headers, deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
