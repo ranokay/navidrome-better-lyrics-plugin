@@ -24,11 +24,10 @@ const (
 	sweepMarkerTTL = int64(5 * time.Minute / time.Second)
 )
 
-// sweepBudget bounds one sweep invocation. The task worker's own callback has
-// no declared deadline, so the sweep stays polite on its own: ~24 s keeps it
-// well under Navidrome's per-invocation comfort zone even on a full miss. It is
-// a var so tests can shrink the budget.
-var sweepBudget = 24 * time.Second
+// defaultSweepBudget bounds one sweep invocation. The task worker's own callback
+// has no declared deadline, so the sweep stays polite on its own: ~24 s keeps it
+// well under Navidrome's per-invocation comfort zone even on a full miss.
+const defaultSweepBudget = 24 * time.Second
 
 type sweepTaskPayload struct {
 	Track   lyrics.TrackInfo `json:"track"`
@@ -103,6 +102,12 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		return "ignored (incomplete track metadata)", nil, nil
 	}
 
+	budget := p.sweepBudget
+	if budget == 0 {
+		budget = defaultSweepBudget
+	}
+	deadline := p.now().Add(budget)
+
 	sources := p.activeSources()
 	if len(allowed) > 0 {
 		allowedSet := make(map[string]bool, len(allowed))
@@ -117,7 +122,6 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 		sources = filtered
 	}
-	deadline := p.now().Add(sweepBudget)
 	cached, failed, skipped, deferred := 0, 0, 0, 0
 	cooldownSkipped, implemented := 0, 0
 	var deferredIDs []string

@@ -252,17 +252,16 @@ func TestMusixmatchCandidates_EnvelopeStatusDropsStaleToken(t *testing.T) {
 func TestSweep_EnqueuesContinuationForDeferredSources(t *testing.T) {
 	t.Parallel()
 
-	savedBudget := sweepBudget
-	sweepBudget = 0
-	defer func() { sweepBudget = savedBudget }()
-
 	cache := newFakeLyricsCache()
 	sources := []lyricsSource{
 		sweepSource("one", new(int), true, nil),
 		sweepSource("two", new(int), true, nil),
 	}
 	var deferredPassed []string
+	// A negative budget defers every source deterministically (no parallel
+	// package var mutation).
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider.sweepBudget = -time.Second
 	provider.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string) error {
 		deferredPassed = ids
 		return nil

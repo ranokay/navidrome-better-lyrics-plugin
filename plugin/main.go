@@ -43,6 +43,9 @@ type lyricsProvider struct {
 	// enqueueSweepSources re-enqueues a continuation carrying only the sources a
 	// sweep had to defer when its budget ran out.
 	enqueueSweepSources func(lyrics.TrackInfo, []string) error
+	// sweepBudget overrides defaultSweepBudget (0 = default); tests shrink it to
+	// force deferrals deterministically.
+	sweepBudget time.Duration
 }
 
 var _ lyrics.Lyrics = (*lyricsProvider)(nil)
