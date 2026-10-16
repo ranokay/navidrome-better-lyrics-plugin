@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -212,6 +214,84 @@ func enhancedLRCFromTimedLines(lines []timedLine) string {
 		out.WriteByte('\n')
 	}
 	return out.String()
+}
+
+// parseRichsync flattens Musixmatch's richsync payload (a JSON array of timed
+// chunks: `ts`/`te` seconds, chunks in `l` with text `c` and millisecond `o`
+// offsets) into timed lines. Word ends are synthesized as reference clients do:
+// the next chunk's start, or `start + minDuration` when nothing bounds the chunk.
+func parseRichsync(body string) ([]timedLine, error) {
+	var chunks []richsyncChunk
+	if err := json.Unmarshal([]byte(body), &chunks); err != nil {
+		return nil, fmt.Errorf("decode richsync: %w", err)
+	}
+	var lines []timedLine
+	for _, chunk := range chunks {
+		start := int64(math.Round(chunk.TS * 1000))
+		end := int64(math.Round(chunk.TE * 1000))
+		if end < start {
+			end = start
+		}
+		line := timedLine{StartMs: start, EndMs: end, Text: chunk.Text()}
+		for k, token := range chunk.Tokens {
+			wordStart := start + token.Offset
+			wordEnd := end
+			if k+1 < len(chunk.Tokens) {
+				wordEnd = start + chunk.Tokens[k+1].Offset
+			} else {
+				// The final chunk is unbounded; reference clients synthesize a
+				// short highlight window rather than glow to the line end.
+				wordEnd = wordStart + richsyncMinimumTokenMs
+			}
+			if wordEnd < wordStart+richsyncMinimumTokenMs {
+				wordEnd = wordStart + richsyncMinimumTokenMs
+			}
+			if strings.TrimSpace(token.Text) == "" {
+				continue
+			}
+			line.Words = append(line.Words, timedWord{StartMs: wordStart, EndMs: wordEnd, Text: token.Text})
+		}
+		if strings.TrimSpace(line.Text) == "" && len(line.Words) == 0 {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return nil, errEmptyWordSyncInput
+	}
+	return lines, nil
+}
+
+type richsyncChunk struct {
+	TS     float64            `json:"ts"`
+	TE     float64            `json:"te"`
+	Tokens []richsyncWordJSON `json:"l"`
+}
+
+type richsyncWordJSON struct {
+	Text   string `json:"c"`
+	Offset int64  `json:"o"`
+}
+
+const richsyncMinimumTokenMs = int64(40)
+
+func (c *richsyncChunk) Text() string {
+	var out strings.Builder
+	for _, token := range c.Tokens {
+		out.WriteString(token.Text)
+	}
+	return out.String()
+}
+
+// parseLyricifyLYL parses Lyricify LYL/LYS files: `[startMs,durMs]text` lines with
+// optional inline `(startMs,durMs)` tokens for Apple-sourced syllable timing. The
+// dialect matches the QRC bracket family (absolute parentheses, text before each
+// tuple), so the shared parser does the work after the LYL header check.
+func parseLyricifyLYL(input string) ([]timedLine, error) {
+	if !strings.Contains(input, "[type:LyricifyLines]") {
+		return nil, errors.New("input is not a Lyricify LYL/LYS file")
+	}
+	return parseKFamilyLyrics(wordSyncQRC, input)
 }
 
 // bracketLRCStamp renders `[mm:ss.xx]`, flooring milliseconds to centiseconds.
