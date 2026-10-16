@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/icon.png" alt="Better Lyrics plugin icon" width="180"></p>
+
 # Navidrome Better Lyrics plugin
 
 A Navidrome lyrics-provider plugin that uses the public [Better Lyrics API](https://lyrics-api-docs.boidu.dev/) and [Unison community database](https://unison.boidu.dev/) when a track has no local lyrics.
