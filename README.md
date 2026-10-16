@@ -132,7 +132,10 @@ Settings → Plugins → Better Lyrics exposes:
   replacing the anonymous self-minted token when a captcha challenge appears.
 
 The plugin falls back to its built-in defaults when a config save drops or
-empties the source list; a listed-but-disabled source stays disabled.
+empties the source list; a listed-but-disabled source stays disabled. Saving the
+list with every row disabled is a deliberate opt-out: the plugin then performs no
+network fetches at all (and better-lyrics disappears from `LyricsPriority`
+behavior until it is re-enabled).
 
 See the Better Lyrics documentation for the current [authentication](https://lyrics-api-docs.boidu.dev/docs/authentication), [rate limits](https://lyrics-api-docs.boidu.dev/docs/rate-limiting), and [response format](https://lyrics-api-docs.boidu.dev/docs/response-format).
 

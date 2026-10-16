@@ -22,7 +22,7 @@ func providerForCatalog(send requestSender, ids ...string) *lyricsProvider {
 }
 
 // providerForCatalogWithCache is providerForCatalog with an explicit cache and
-// clock for TTL/ económico assertions.
+// clock for TTL and clock assertions.
 func providerForCatalogWithCache(send requestSender, cache lyricsCacheStore, now func() time.Time, ids ...string) *lyricsProvider {
 	if len(ids) == 0 {
 		ids = defaultCatalogIDs

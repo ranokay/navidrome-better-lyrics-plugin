@@ -43,18 +43,21 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		if normalizeLunaBeatTitle(candidate.Title, strings.Join(candidate.Artists, ", ")) != wanted {
 			continue
 		}
+		albumMatch := strings.TrimSpace(track.Album) != "" &&
+			strings.EqualFold(strings.TrimSpace(candidate.Album), strings.TrimSpace(track.Album))
 		if !found {
-			entry, found = candidate, true
+			entry, found, bestAlbum = candidate, true, albumMatch
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(candidate.Album), strings.TrimSpace(track.Album)) {
+		// The tiebreak is one-way: the first album-matched row stays the winner,
+		// so duplicate rows cannot dethrone it.
+		if !bestAlbum && albumMatch {
 			entry, bestAlbum = candidate, true
 		}
 	}
-	if !found || (found && strings.TrimSpace(entry.Path) == "") {
+	if !found || strings.TrimSpace(entry.Path) == "" {
 		return nil, lookupHealthy, nil
 	}
-	_ = bestAlbum
 
 	ttmlURL := strings.TrimSuffix(lunaBeatBase, "/") + "/" + entry.Path
 	response, err := p.sendRequest("LunaBeat lyrics", ttmlURL, lunaBeatHeaders(), deadline)

@@ -70,7 +70,7 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 	sources := p.activeSources()
 	deadline := p.now().Add(sweepBudget)
 	cached, failed, skipped, deferred := 0, 0, 0, 0
-	implemented := 0
+	cooldownSkipped, implemented := 0, 0
 	for _, source := range sources {
 		if source.Fetch != nil {
 			implemented++
@@ -85,6 +85,9 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 			continue
 		}
 		if cooledDown := p.sourceInCooldown(source); cooledDown {
+			// A cooled-down source is not covered by this pass, so the pass
+			// cannot be marked done; retry the sweep after the cooldown lapses.
+			cooldownSkipped++
 			skipped++
 			continue
 		}
@@ -109,7 +112,7 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 			cached++
 		}
 	}
-	if failed == 0 && deferred == 0 && implemented > 0 {
+	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && implemented > 0 {
 		if trackKey, ok := lyricsTrackKey(track); ok {
 			p.cache.SetWithTTL(sweepDonePrefix+trackKey, []byte(p.now().Format(time.RFC3339)), sweepDoneTTL)
 		}
@@ -119,13 +122,26 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 
 // sourceInCooldown reports provider-wide cooldown state for a source's own id and
 // the hosts it shares with sibling sources (families such as the Better Lyrics
-// endpoints share cooldowns by design).
+// endpoints share cooldowns by design — including the v3 keys the legacy
+// fetchers recorded before this registry existed).
 func (p *lyricsProvider) sourceInCooldown(source lyricsSource) bool {
 	if p.activeCooldown(sourceGlobalCooldownKey(source.ID)) > 0 {
 		return true
 	}
 	for _, hostName := range source.Hosts {
 		if p.activeCooldown(sourceGlobalCooldownKey(hostName)) > 0 {
+			return true
+		}
+	}
+	if sharesBetterLyricsHost(source) && p.activeCooldown(betterLyricsGlobalCooldownKey) > 0 {
+		return true
+	}
+	return false
+}
+
+func sharesBetterLyricsHost(source lyricsSource) bool {
+	for _, hostName := range source.Hosts {
+		if hostName == "lyrics-api.boidu.dev" {
 			return true
 		}
 	}
@@ -152,6 +168,9 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 		return false
 	}
 	if err := p.enqueueSweep(track); err != nil {
+		// Release the spot early with a 1-second TTL so the next lookup can retry
+		// the sweep rather than waiting out the whole dedupe window.
+		_ = p.cache.SetWithTTL(sweepMarkerPrefix+trackKey, []byte("release"), 1)
 		logCacheDebug(fmt.Sprintf("sweep enqueue failed: %v", err))
 		return false
 	}

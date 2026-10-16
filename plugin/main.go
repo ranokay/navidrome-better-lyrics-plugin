@@ -73,6 +73,23 @@ func newLyricsProviderWithDeps(send requestSender, cache lyricsCacheStore, now f
 	return &lyricsProvider{send: send, cache: cache, now: now, configLookup: lookup, enqueueSweep: enqueue}
 }
 
+// newLyricsProviderWithSourcesAt is newLyricsProviderWithSources with an
+// injectable clock (tests that pin time-dependent query parameters).
+func newLyricsProviderWithSourcesAt(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
+	if cache == nil {
+		cache = noopLyricsCache{}
+	}
+	if now == nil {
+		now = time.Now
+	}
+	provider := &lyricsProvider{send: send, cache: cache, now: now, enqueueSweep: enqueue}
+	if provider.enqueueSweep == nil {
+		provider.enqueueSweep = func(lyrics.TrackInfo) error { return nil }
+	}
+	provider.sources = sources
+	return provider
+}
+
 // newLyricsProviderWithSources bypasses the config service for source-walk tests
 // and injects stub sources directly.
 func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
@@ -177,6 +194,11 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			continue
 		}
 		if coldHostFor(source, coldHosts) != "" {
+			continue
+		}
+		if p.sourceInCooldown(source) {
+			// Cooldowns are temporary; skipping keeps the slot for the next
+			// implemented source and the sweep retries it later.
 			continue
 		}
 		walked++

@@ -21,7 +21,7 @@ const (
 // Android-style search, then a track detail whose `lyric` payload is plaintext KRC
 // (word) or LRC (line).
 func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
-	searchURL, ok := lunaSearchURL(track)
+	searchURL, ok := lunaSearchURL(track, p.now())
 	if !ok {
 		return nil, lookupHealthy, nil
 	}
@@ -144,7 +144,7 @@ type lunaDetailEnvelope struct {
 	} `json:"lyric"`
 }
 
-func lunaSearchURL(track lyrics.TrackInfo) (string, bool) {
+func lunaSearchURL(track lyrics.TrackInfo, now time.Time) (string, bool) {
 	title := strings.TrimSpace(track.Title)
 	artist := trackArtist(track)
 	if title == "" || artist == "" {
@@ -155,20 +155,20 @@ func lunaSearchURL(track lyrics.TrackInfo) (string, bool) {
 		"app_name":     {"luna"},
 		"version_code": {"100198030"},
 		"package":      {"com.luna.music"},
-		"device_id":    {randomLunaDeviceID()},
-		"iid":          {randomLunaDeviceID()},
+		"device_id":    {randomLunaDeviceID(now)},
+		"iid":          {randomLunaDeviceID(now)},
 		"q":            {title + " " + artist},
 		"cursor":       {"0"},
 		"count":        {"20"},
-		"_rticket":     {strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)},
+		"_rticket":     {strconv.FormatInt(now.UnixNano()/int64(time.Millisecond), 10)},
 	}
 	return lunaSearchEndpoint + "?" + query.Encode(), true
 }
 
-func randomLunaDeviceID() string {
+func randomLunaDeviceID(now time.Time) string {
 	raw := make([]byte, 10, 20)
 	_, _ = rand.Read(raw)
-	return fmt.Sprintf("%x%04x", raw, uint16(time.Now().UnixNano()))
+	return fmt.Sprintf("%x%04x", raw, uint16(now.UnixNano()))
 }
 
 func lunaSearchHeaders() map[string]string {
@@ -186,7 +186,5 @@ func lunaDetailHeaders() map[string]string {
 		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
 	}
 }
-
-const lunaHostAllowlistNote = "Luna hosts scale their search from the qishui panel; see the README privacy section."
 
 // lunaQuery deltas keep the Math import used for duration clamps.

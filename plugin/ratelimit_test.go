@@ -218,8 +218,10 @@ func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	}, cache, func() time.Time { return now })
 
 	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
-	if err == nil || !strings.Contains(err.Error(), "cooldown active") {
-		t.Fatalf("second GetLyrics() error = %v, want active cooldown", err)
+	// The walker now pre-gates cooled-down sources, so the shared cooldown shows
+	// up as zero requests to the better-lyrics family instead of a cooldown error.
+	if err != nil {
+		t.Fatalf("second GetLyrics() error = %v, want clean miss", err)
 	}
 	if secondRequests != 1 {
 		t.Fatalf("second request count = %d, want one Unison request", secondRequests)
@@ -279,8 +281,9 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	}, cache, func() time.Time { return now })
 
 	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
-	if err == nil || !strings.Contains(err.Error(), "unison API cooldown active") {
-		t.Fatalf("second GetLyrics() error = %v, want Unison cooldown", err)
+	// Pre-gating turns "unison API cooldown active" into "no Unison request".
+	if err != nil {
+		t.Fatalf("second GetLyrics() error = %v, want clean miss", err)
 	}
 	if secondUnisonRequests != 0 || secondKugouRequests != 1 {
 		t.Fatalf("second requests: Unison=%d Kugou=%d, want 0 and 1", secondUnisonRequests, secondKugouRequests)
