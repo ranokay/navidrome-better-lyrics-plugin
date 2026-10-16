@@ -17,18 +17,8 @@ func TestAllSources_ImplementedFetchesAreAttached(t *testing.T) {
 
 	// Sources whose Fetch is nil are only unreachable skeletons: they must be a
 	// deliberately bounded set, not silent wiring drops.
-	wantUnimplemented := map[string]bool{
-		"luna-beat": true,
-	}
 	for _, source := range allSources {
-		_, wired := sourceFetches[source.ID]
-		if wantUnimplemented[source.ID] {
-			if wired {
-				t.Fatalf("source %q is expected unimplemented, yet sourceFetches wires it", source.ID)
-			}
-			continue
-		}
-		if !wired || source.Fetch == nil {
+		if _, wired := sourceFetches[source.ID]; !wired {
 			t.Fatalf("source %q has no Fetch wiring", source.ID)
 		}
 	}
