@@ -22,7 +22,7 @@ Better Lyrics extension for YouTube Music:
    - `better-lyrics` "Better Lyrics" — `api.betterlyrics.org/getLyrics` (legacy host
      `lyrics-api.boidu.dev` also serves it). Syllable TTML. Already wired.
    - `better-lyrics-portato` "Better Lyrics Portato" — `/qq/getLyrics`. Word-timed QRC
-     XML. New: convert QRC to TTML.
+     XML. New: convert QRC to enhanced LRC.
    - `better-lyrics-legato` "Better Lyrics Legato" — `/kugou/getLyrics`. Line LRC. Already wired.
    - `unison` "Unison" — `unison.boidu.dev/lyrics`. Syllable/word/line/plain. Already wired.
    - `binimum` "BiniLyrics" — `lyrics-api.binimum.org` search (307-redirects to
@@ -41,13 +41,13 @@ Better Lyrics extension for YouTube Music:
      lookup), optional admin-pasted user token from config, `track.search`,
      `macro.subtitles.get`. Word richsync → enhanced LRC; line LRC; plain.
    - `netease` "NetEase" — `music.163.com/api/cloudsearch/pc` (form POST) then
-     `music.163.com/api/song/lyric/v1`. Word YRC → TTML; line LRC; plain. Unauthenticated
-     plain API; no eapi crypto.
+     `music.163.com/api/song/lyric/v1`. Word YRC → enhanced LRC; line LRC; plain.
+     Unauthenticated plain API; no eapi crypto.
    - `luna` "Soda (Luna)" — `api.qishui.com/luna/search/track` then
-     `beta-luna.douyin.com/luna/h5/seo_track`. Word-timed plaintext KRC → TTML.
+     `beta-luna.douyin.com/luna/h5/seo_track`. Word-timed plaintext KRC → enhanced LRC.
    - `petitlyrics` "PetitLyrics" — `p0.petitlyrics.com/api/GetPetitLyricsData.php`
-     (form POST, `clientAppId=p1110417`, `terminalType=10`). Word WSY XML → TTML; the
-     line-level LSY binary decode is best-effort and may ship word+plain only.
+     (form POST, `clientAppId=p1110417`, `terminalType=10`). Word WSY XML → enhanced
+     LRC; the line-level LSY binary decode is best-effort and may ship word+plain only.
    - `lrclib` "LRCLib" — `lrclib.net/api/get`, `/api/search` fallback. Line LRC; word
      via `lyricsFile` YAML → enhanced LRC; plain. Identifying User-Agent required;
      429/503 with `Retry-After` are expected.
@@ -82,6 +82,14 @@ Better Lyrics extension for YouTube Music:
   15 s cold-lookup budget, max 2 concurrent lyrics calls per plugin instance. HTTP hosts
   must be declared in the manifest. Output must parse with Navidrome's lyric parsers
   (TTML, LRC enhanced/plain, SRT, YAML, plain) — richer formats must be converted.
+- **The wasm module cannot fetch in parallel.** Go's wasip1 port is single-threaded:
+  goroutines interleave but every `host.HTTPSend` blocks all of them until it returns,
+  so N concurrent fetches cost the sum of their latencies, not the max. Go has no
+  wasip1 thread support and TinyGo (the threaded alternative) panics in this PDK.
+  Latency is therefore managed by splitting work between a synchronous fast pass and a
+  background task, not by fan-out.
+- The `taskqueue` permission exists (PDK `host.TaskCreateQueue` / `TaskEnqueue`) and is
+  the mechanism for work that must not block the lyrics response.
 - The KV store is capped at 32 MB with a 1 MB per-entry cap; LunaBeat's index is
   compressed under that cap.
 - Existing behavior to preserve: local sources still win via `LyricsPriority`; caching
@@ -114,10 +122,10 @@ Better Lyrics extension for YouTube Music:
   `quality.go` gains a small enhanced-LRC sniff (word markers ⇒ `timingWord`) so
   word-LRC candidates rank between line and syllable. Syllable quality stays exclusive
   to genuine TTML (today only Better Lyrics). TTML remains pass-through only.
-- **Walk is sequential.** Reuse the existing sequential walker plus expected-cost
-  skipping; no intra-lookup fan-out (wasm concurrency + test matrix not worth it).
-  Cold misses may starve tail sources; the 5-minute negative TTL re-walks them later
-  and the recommended order puts likely-winners first. Documented in the README.
+- **Sweep task is sequential; no fan-out.** Both stages walk sources one at a time
+  (the wasm host-call boundary makes goroutine fan-out pointless — see Constraints).
+  Cold misses may starve tail sources in stage 1; the stage-2 sweep guarantees they
+  are still fetched, just without blocking the first paint. Documented in the README.
 - **`betterLyricsApiKey` mechanics.** The API's own 401 body documents the mechanism:
   header `X-API-Key`. When the key is configured it is sent on Better Lyrics endpoints
   and a `401` becomes a clean miss (full TTL) instead of the cache-only "uncertain"
@@ -136,14 +144,19 @@ Better Lyrics extension for YouTube Music:
 - One shared word-sync converter module produces *enhanced LRC* from: QRC, KRC, YRC,
   Lyricify LYL/LYS, Musixmatch richsync, PetitLyrics WSY (see the settled call above).
   Reuse `quality.go` grading with the new enhanced-LRC word sniff.
-- Walking order comes from config; the config list ships in this order
-  (better-lyrics → unison → binimum → amll → luna-beat → apple-lyrically →
-  better-lyrics-portato → musixmatch → netease → luna → petitlyrics → lrclib →
-  better-lyrics-legato → lyricify) with `luna-beat` and `apple-lyrically` disabled by
-  default. The walk stops early on a syllable result; otherwise
-  it keeps the best candidate across sources under the time budget. The Better Lyrics
-  tiered-query specificity behavior is kept for the three boidu endpoints only; other
-  sources use single-query lookups (LRCLib gets a search fallback).
+- **Two-stage fetch (replaces a single walk).** Stage 1, synchronous: on a cold miss
+  the plugin fetches only the first three enabled sources in config order (stopping
+  early on a syllable result) under a tightened ~8 s budget and returns the best
+  immediately — first lyrics paint stays quick. Stage 2, background: the plugin
+  enqueues a sweep task (queue `lyrics-sweep`, `maxConcurrency` 1, deduplicated by a
+  KV in-flight marker per track) that walks every remaining enabled source
+  sequentially and caches each source's result under its own key. The per-song source
+  picker (Phase B) therefore lists only sources that actually returned lyrics, and it
+  fills in progressively; replays and source switches are instant from cache.
+- **Phase B contract requirement.** The per-song source switcher needs per-entry
+  source tags (`LyricsSource` moves from response level to each `LyricsText`) and a
+  host path that returns all source-tagged variants for a track. Until that lands the
+  plugin returns the single winner, exactly as today.
 - Cooldowns generalize the existing pattern to per-source keys with per-source default
   cooldowns and `Retry-After` handling. Cache keys gain a source dimension
   (`lyrics:v4:<source>:<track>`) so reordering enabled sources can re-rank from cache
@@ -152,7 +165,8 @@ Better Lyrics extension for YouTube Music:
   `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`,
   `apic.musixmatch.com`, `music.163.com`, `api.qishui.com`,
   `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`,
-  `api.lyricify.app`, `lrclib.net`; version bumps to 0.2.0.
+  `api.lyricify.app`, `lrclib.net`; `permissions.taskqueue` is added
+  (`maxConcurrency` 1) for the background sweep; version bumps to 0.2.0.
 - Config schema (draft-07 + uiSchema, JSONForms 2.5.2 semantics):
   - `sources`: array of `{id (enum), enabled (bool)}` rendered as a table with
     `showSortButtons: true`; read back as one JSON blob via `host.ConfigGet("sources")`.
@@ -169,7 +183,9 @@ starts there after the plugin ships; it will get its own design note):
 - Per-song source switcher: the lyrics contract currently carries one `LyricsSource`
   per response, so switching between sources needs per-entry source tags and a core
   path that resolves and returns multiple source-tagged variants. The plugin returns
-  multiple variants only once the contract can label them.
+  multiple variants only once the contract can label them. The picker lists only the
+  sources that returned lyrics for that song (sync badge per source), and the chosen
+  source is remembered per user, with the config order as the default ranking.
 - Timing offset: a client-side shift applied to parsed lyrics timings, persisted per
   user (or locally), with a stepper in the shared lyrics controls.
 - Save/download: a download control that exports the current variant as `.lrc`/`.ttml`
@@ -181,5 +197,6 @@ starts there after the plugin ships; it will get its own design note):
 - Unit tests per converter with saved fixtures (QRC, KRC, YRC, LYL, WSY, richsync,
   LRCLib lyricsfile YAML); per-source request shaping and status handling tests against
   the fake sender harness; config parsing tests incl. missing/invalid config; cooldown
-  and budget-exhaustion tests.
+  and budget-exhaustion tests; sweep-task tests (enqueue on cold miss, dedupe via the
+  in-flight marker, per-source cache writes, cooldown interaction).
 - One live smoke run per new source with a known track, recorded in the PR description.
