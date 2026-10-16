@@ -43,13 +43,14 @@ func TestLyricsProvider_WinnerTTLFollowsTimingQuality(t *testing.T) {
 			t.Parallel()
 
 			cache := newFakeLyricsCache()
-			source := stubFetchedCandidate("one", "stub", test.format, test.text)
-			provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{source}, func(lyrics.TrackInfo) error { return nil })
+			sources := []lyricsSource{stubFetchedCandidate("one", "stub", test.format, test.text)}
+			provider := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 
-			if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err != nil {
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
 				t.Fatalf("GetLyrics() error = %v, want nil", err)
 			}
-			if ttl := cache.lastTTL(); ttl != test.want {
+			if ttl := cache.winnerTTL(track, sources); ttl != test.want {
 				t.Fatalf("winner TTL = %d, want %d", ttl, test.want)
 			}
 		})

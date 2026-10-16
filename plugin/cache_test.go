@@ -85,8 +85,8 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			if requests != len(test.responses) {
 				t.Fatalf("GetLyrics() request count = %d, want %d", requests, len(test.responses))
 			}
-			if ttl := cache.lastTTL(); ttl != test.wantTTL {
-				t.Fatalf("fallback cache TTL = %d, want %d", ttl, test.wantTTL)
+			if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, defaultSources()); ttl != test.wantTTL {
+				t.Fatalf("winner cache TTL = %d, want %d", ttl, test.wantTTL)
 			}
 		})
 	}
@@ -143,7 +143,7 @@ func TestLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
 	assertLyricsSource(t, result.Source, "Unison", "lrc")
-	if ttl := cache.lastTTL(); ttl != unsyncedLyricsCacheTTLSeconds {
+	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 181}, defaultSources()); ttl != unsyncedLyricsCacheTTLSeconds {
 		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, unsyncedLyricsCacheTTLSeconds)
 	}
 }

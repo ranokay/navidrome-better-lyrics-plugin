@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
+	"github.com/navidrome/navidrome/plugins/pdk/go/lifecycle"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 )
 
 const (
@@ -45,6 +47,8 @@ var _ lyrics.Lyrics = (*lyricsProvider)(nil)
 func init() {
 	provider := newLyricsProvider(host.HTTPSend)
 	lyrics.Register(provider)
+	lifecycle.Register(provider)
+	taskworker.Register(provider)
 }
 
 func main() {}
@@ -97,10 +101,14 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 	candidate, _, err := p.fetchLyrics(input)
 	if candidate.present() {
 		p.cacheWinner(track, sources, candidate)
+		if candidate.quality < timingSyllable {
+			p.maybeEnqueueSweep(track)
+		}
 		return candidate.response, nil
 	}
 	if err == nil {
 		p.cacheNegativeWinner(track, sources)
+		p.maybeEnqueueSweep(track)
 	}
 	return candidate.response, err
 }
