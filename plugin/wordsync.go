@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"math"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // timedWord is one word with its millisecond window.
@@ -277,6 +280,110 @@ func (c *richsyncChunk) Text() string {
 		out.WriteString(token.Text)
 	}
 	return out.String()
+}
+
+// parsePetitWSY parses PetitLyrics' word-synced WSY payload (plain XML with
+// per-line and per-word millisecond windows).
+func parsePetitWSY(data []byte) ([]timedLine, error) {
+	var doc petitWSYDocument
+	if err := xml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("decode WSY: %w", err)
+	}
+	lines := make([]timedLine, 0, len(doc.Lines))
+	for _, row := range doc.Lines {
+		line := timedLine{
+			StartMs: row.FirstStart(),
+			EndMs:   row.LastEnd(),
+			Text:    row.Text,
+		}
+		for _, word := range row.Words {
+			if word.StartMs == 0 && word.EndMs == 0 {
+				continue
+			}
+			line.Words = append(line.Words, timedWord{StartMs: word.StartMs, EndMs: word.EndMs, Text: word.Text})
+		}
+		if strings.TrimSpace(line.Text) == "" && len(line.Words) == 0 {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return nil, errEmptyWordSyncInput
+	}
+	return lines, nil
+}
+
+type petitWSYDocument struct {
+	Lines []petitWSYLine `xml:"line"`
+}
+
+type petitWSYLine struct {
+	Text  string         `xml:"linestring"`
+	Words []petitWSYWord `xml:"word"`
+}
+
+type petitWSYWord struct {
+	StartMs int64  `xml:"starttime"`
+	EndMs   int64  `xml:"endtime"`
+	Text    string `xml:"wordstring"`
+}
+
+func (l petitWSYLine) FirstStart() int64 {
+	for _, word := range l.Words {
+		return word.StartMs
+	}
+	return 0
+}
+
+func (l petitWSYLine) LastEnd() int64 {
+	if len(l.Words) == 0 {
+		return 0
+	}
+	return l.Words[len(l.Words)-1].EndMs
+}
+
+// parseLRCLibLyricsFile parses LRCLib's YAML v1 lyricsfile payload (lines with
+// optional word timings) into timed lines.
+func parseLRCLibLyricsFile(data []byte) ([]timedLine, error) {
+	var doc struct {
+		Version string             `yaml:"version"`
+		Lines   []lrclibLyricsLine `yaml:"lines"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("decode lyricsfile: %w", err)
+	}
+	var lines []timedLine
+	for _, row := range doc.Lines {
+		if row.StartMs == 0 && row.EndMs == 0 && strings.TrimSpace(row.Text) == "" {
+			continue
+		}
+		line := timedLine{StartMs: row.StartMs, EndMs: row.EndMs, Text: row.Text}
+		line.Text = row.Text
+		for _, word := range row.Words {
+			if word.StartMs == 0 && (word.Text == "" || word.EndMs == 0) {
+				continue
+			}
+			line.Words = append(line.Words, timedWord{StartMs: word.StartMs, EndMs: word.EndMs, Text: word.Text})
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return nil, errEmptyWordSyncInput
+	}
+	return lines, nil
+}
+
+type lrclibLyricsLine struct {
+	StartMs int64              `yaml:"start_ms"`
+	EndMs   int64              `yaml:"end_ms"`
+	Text    string             `yaml:"text"`
+	Words   []lrclibLyricsWord `yaml:"words"`
+}
+
+type lrclibLyricsWord struct {
+	Text    string `yaml:"text"`
+	StartMs int64  `yaml:"start_ms"`
+	EndMs   int64  `yaml:"end_ms"`
 }
 
 // parseLyricifyLYL parses Lyricify LYL/LYS files: `[startMs,durMs]text` lines with
