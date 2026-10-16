@@ -1,0 +1,133 @@
+package main
+
+import (
+	"encoding/json"
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+)
+
+type configLookup func(key string) (string, bool)
+
+// lyricsProvider is finalized by the orchestrator task; the alias keeps this file
+// compiling against the existing single-backend provider until the rename lands.
+type lyricsProvider = betterLyricsProvider
+
+// lyricsSource describes one upstream lyrics backend participating in the chain.
+// Fetch performs the lookup; it is wired per source by the tasks that implement it.
+type lyricsSource struct {
+	ID             string
+	Display        string
+	Hosts          []string
+	DefaultEnabled bool
+	Fetch          func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, error)
+}
+
+// allSources is the full catalog in default config order. Sourced display names match
+// the labels users see in the Navidrome plugins page and, later, in the lyrics UI.
+var allSources = []lyricsSource{
+	{ID: "better-lyrics", Display: "Better Lyrics", Hosts: []string{"lyrics-api.boidu.dev"}, DefaultEnabled: true},
+	{ID: "unison", Display: "Unison", Hosts: []string{"unison.boidu.dev"}, DefaultEnabled: true},
+	{ID: "binimum", Display: "BiniLyrics", Hosts: []string{"lyrics-api.binimum.org", "lrc.red"}, DefaultEnabled: true},
+	{ID: "amll", Display: "AMLL", Hosts: []string{"api.amll.dev"}, DefaultEnabled: true},
+	{ID: "luna-beat", Display: "LunaBeat", Hosts: []string{"2755337087.github.io"}, DefaultEnabled: false},
+	{ID: "apple-lyrically", Display: "Apple Music (Lyrically)", Hosts: []string{"itunes.apple.com", "lyrics.paxsenix.org"}, DefaultEnabled: false},
+	{ID: "better-lyrics-portato", Display: "Better Lyrics Portato", Hosts: []string{"lyrics-api.boidu.dev"}, DefaultEnabled: true},
+	{ID: "musixmatch", Display: "Musixmatch", Hosts: []string{"apic.musixmatch.com"}, DefaultEnabled: true},
+	{ID: "netease", Display: "NetEase", Hosts: []string{"music.163.com"}, DefaultEnabled: true},
+	{ID: "luna", Display: "Soda (Luna)", Hosts: []string{"api.qishui.com", "beta-luna.douyin.com"}, DefaultEnabled: true},
+	{ID: "petitlyrics", Display: "PetitLyrics", Hosts: []string{"p0.petitlyrics.com"}, DefaultEnabled: true},
+	{ID: "lrclib", Display: "LRCLib", Hosts: []string{"lrclib.net"}, DefaultEnabled: true},
+	{ID: "better-lyrics-legato", Display: "Better Lyrics Legato", Hosts: []string{"lyrics-api.boidu.dev"}, DefaultEnabled: true},
+	{ID: "lyricify", Display: "Lyricify", Hosts: []string{"api.credits.fm", "api.lyricify.app"}, DefaultEnabled: true},
+}
+
+var sourcesByID = func() map[string]lyricsSource {
+	byID := make(map[string]lyricsSource, len(allSources))
+	for _, source := range allSources {
+		byID[source.ID] = source
+	}
+	return byID
+}()
+
+// providerConfig is the resolved runtime configuration: enabled sources in saved
+// order plus the optional secrets administrators may paste into the plugins page.
+type providerConfig struct {
+	Sources             []lyricsSource
+	BetterLyricsAPIKey  string
+	MusixmatchUserToken string
+}
+
+type sourceSelection struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+}
+
+// readProviderConfig resolves the plugin config blob. The Navidrome config service
+// hands a JSON-marshaled blob for the top-level `sources` property, so nothing here
+// can query nested properties directly.
+func readProviderConfig(lookup configLookup) providerConfig {
+	if lookup == nil {
+		lookup = func(string) (string, bool) { return "", false }
+	}
+
+	var listings []sourceSelection
+	listedIDs := make(map[string]bool)
+	if raw, exists := lookup("sources"); exists {
+		_ = json.Unmarshal([]byte(raw), &listings)
+		for _, selection := range listings {
+			listedIDs[selection.ID] = true
+		}
+	}
+
+	current := sourcesFromSelections(listings)
+	if len(current) == 0 && len(listings) == 0 {
+		current = defaultSources()
+	} else {
+		for _, source := range allSources {
+			if source.DefaultEnabled && !listedIDs[source.ID] {
+				current = append(current, source)
+			}
+		}
+	}
+
+	var apiKey, musixmatchToken string
+	if value, exists := lookup("betterLyricsApiKey"); exists && strings.TrimSpace(value) != "" {
+		apiKey = strings.TrimSpace(value)
+	}
+	if value, exists := lookup("musixmatchUserToken"); exists && strings.TrimSpace(value) != "" {
+		musixmatchToken = strings.TrimSpace(value)
+	}
+
+	return providerConfig{
+		Sources:             current,
+		BetterLyricsAPIKey:  apiKey,
+		MusixmatchUserToken: musixmatchToken,
+	}
+}
+
+// sourcesFromSelections preserves the admin-saved order, drops unknown ids, and
+// keeps only explicitly enabled entries. An empty result means the blob was
+// missing, unreadable, or enabled nothing, and the caller falls back to defaults.
+func sourcesFromSelections(selections []sourceSelection) []lyricsSource {
+	ordered := make([]lyricsSource, 0, len(selections))
+	for _, selection := range selections {
+		source, ok := sourcesByID[selection.ID]
+		if !ok || !selection.Enabled {
+			continue
+		}
+		ordered = append(ordered, source)
+	}
+	return ordered
+}
+
+func defaultSources() []lyricsSource {
+	sources := make([]lyricsSource, 0, len(allSources))
+	for _, source := range allSources {
+		if source.DefaultEnabled {
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
