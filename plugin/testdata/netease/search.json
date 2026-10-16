@@ -1,0 +1,389 @@
+{
+ "result": {
+  "songs": [
+   {
+    "no": 3,
+    "rt": "600902000002713046",
+    "copyright": 1,
+    "fee": 8,
+    "privilege": {
+     "flag": 4,
+     "code": 0,
+     "dlLevel": "none",
+     "subp": 1,
+     "fl": 0,
+     "fee": 0,
+     "dl": 0,
+     "plLevel": "none",
+     "maxBrLevel": "lossless",
+     "rightSource": 0,
+     "maxbr": 999000,
+     "id": 17822787,
+     "sp": 7,
+     "payed": 0,
+     "rscl": 0,
+     "st": -100,
+     "chargeInfoList": [
+      {
+       "rate": 128000,
+       "chargeType": 0
+      },
+      {
+       "rate": 192000,
+       "chargeType": 0
+      },
+      {
+       "rate": 320000,
+       "chargeType": 0
+      },
+      {
+       "rate": 999000,
+       "chargeType": 1
+      }
+     ],
+     "freeTrialPrivilege": {
+      "userConsumable": false,
+      "resConsumable": false,
+      "cannotListenReason": 1
+     },
+     "downloadMaxbr": 999000,
+     "downloadMaxBrLevel": "lossless",
+     "cp": 1,
+     "preSell": false,
+     "playMaxBrLevel": "lossless",
+     "cs": false,
+     "toast": false,
+     "playMaxbr": 999000,
+     "flLevel": "none",
+     "pl": 0
+    },
+    "mst": 9,
+    "pst": 0,
+    "pop": 95.0,
+    "dt": 276866,
+    "rtype": 0,
+    "s_id": 0,
+    "rtUrls": [],
+    "resourceState": true,
+    "id": 17822787,
+    "sq": {
+     "br": 1026639,
+     "fid": 0,
+     "size": 35530314,
+     "vd": -61300.0,
+     "sr": 44100
+    },
+    "st": 0,
+    "cd": "1",
+    "publishTime": 777312000000,
+    "cf": "",
+    "originCoverType": 1,
+    "h": {
+     "br": 320000,
+     "fid": 0,
+     "size": 11077007,
+     "vd": -61296.0,
+     "sr": 44100
+    },
+    "mv": 506159,
+    "al": {
+     "picUrl": "http://p2.music.126.net/rjA4r1tBvtZgQiFfRwocUA==/109951166004153718.jpg",
+     "name": "Definitely Maybe",
+     "tns": [],
+     "pic_str": "109951166004153718",
+     "id": 1638673,
+     "pic": 109951166004153718
+    },
+    "l": {
+     "br": 128000,
+     "fid": 0,
+     "size": 4430829,
+     "vd": -57239.0,
+     "sr": 44100
+    },
+    "m": {
+     "br": 192000,
+     "fid": 0,
+     "size": 6646222,
+     "vd": -58759.0,
+     "sr": 44100
+    },
+    "version": 30,
+    "cp": 7001,
+    "alia": [],
+    "djId": 0,
+    "single": 0,
+    "ar": [
+     {
+      "name": "Oasis",
+      "tns": [
+       "绿洲乐队"
+      ],
+      "alias": [],
+      "id": 98110
+     }
+    ],
+    "ftype": 0,
+    "t": 0,
+    "v": 64,
+    "name": "Live Forever",
+    "mark": 17180139520
+   },
+   {
+    "no": 3,
+    "rt": "600902000002713046",
+    "copyright": 1,
+    "fee": 0,
+    "privilege": {
+     "flag": 256,
+     "code": 0,
+     "dlLevel": "none",
+     "subp": 1,
+     "fl": 0,
+     "fee": 0,
+     "dl": 0,
+     "plLevel": "none",
+     "maxBrLevel": "exhigh",
+     "rightSource": 0,
+     "maxbr": 320000,
+     "id": 4226177,
+     "sp": 7,
+     "payed": 0,
+     "rscl": 0,
+     "st": -100,
+     "chargeInfoList": [
+      {
+       "rate": 128000,
+       "chargeType": 0
+      },
+      {
+       "rate": 192000,
+       "chargeType": 0
+      },
+      {
+       "rate": 320000,
+       "chargeType": 0
+      },
+      {
+       "rate": 999000,
+       "chargeType": 1
+      }
+     ],
+     "freeTrialPrivilege": {
+      "userConsumable": false,
+      "resConsumable": false,
+      "cannotListenReason": 1
+     },
+     "downloadMaxbr": 320000,
+     "downloadMaxBrLevel": "exhigh",
+     "cp": 1,
+     "preSell": false,
+     "playMaxBrLevel": "exhigh",
+     "cs": false,
+     "toast": false,
+     "playMaxbr": 320000,
+     "flLevel": "none",
+     "pl": 0
+    },
+    "mst": 9,
+    "pst": 0,
+    "pop": 30.0,
+    "dt": 261015,
+    "rtype": 0,
+    "s_id": 0,
+    "rtUrls": [],
+    "resourceState": true,
+    "id": 4226177,
+    "st": 0,
+    "cd": "1",
+    "publishTime": 840729600007,
+    "cf": "",
+    "originCoverType": 0,
+    "h": {
+     "br": 320000,
+     "fid": 0,
+     "size": 10441805,
+     "vd": -3717.0,
+     "sr": 44100
+    },
+    "mv": 4993,
+    "al": {
+     "picUrl": "http://p2.music.126.net/slBdpk990c76bGUVCjyFoQ==/1692148395162630.jpg",
+     "name": "MTV Unplugged",
+     "tns": [],
+     "id": 427299,
+     "pic": 1692148395162630
+    },
+    "l": {
+     "br": 128000,
+     "fid": 0,
+     "size": 4176806,
+     "vd": 545.0,
+     "sr": 44100
+    },
+    "m": {
+     "br": 192000,
+     "fid": 0,
+     "size": 6265139,
+     "vd": -1138.0,
+     "sr": 44100
+    },
+    "version": 8,
+    "cp": 5003,
+    "alia": [],
+    "djId": 0,
+    "single": 0,
+    "ar": [
+     {
+      "name": "Oasis",
+      "tns": [
+       "绿洲乐队"
+      ],
+      "alias": [],
+      "id": 98110
+     }
+    ],
+    "ftype": 0,
+    "t": 0,
+    "v": 42,
+    "name": "Live Forever (live)",
+    "mark": 262144
+   },
+   {
+    "no": 6,
+    "rt": "",
+    "copyright": 1,
+    "fee": 8,
+    "privilege": {
+     "flag": 4,
+     "code": 0,
+     "dlLevel": "none",
+     "subp": 1,
+     "fl": 0,
+     "fee": 0,
+     "dl": 0,
+     "plLevel": "none",
+     "maxBrLevel": "lossless",
+     "rightSource": 0,
+     "maxbr": 999000,
+     "id": 2056901323,
+     "sp": 7,
+     "payed": 0,
+     "rscl": 0,
+     "st": -100,
+     "chargeInfoList": [
+      {
+       "rate": 128000,
+       "chargeType": 0
+      },
+      {
+       "rate": 192000,
+       "chargeType": 0
+      },
+      {
+       "rate": 320000,
+       "chargeType": 0
+      },
+      {
+       "rate": 999000,
+       "chargeType": 1
+      }
+     ],
+     "freeTrialPrivilege": {
+      "userConsumable": false,
+      "resConsumable": false,
+      "cannotListenReason": 1
+     },
+     "downloadMaxbr": 999000,
+     "downloadMaxBrLevel": "lossless",
+     "cp": 1,
+     "preSell": false,
+     "playMaxBrLevel": "lossless",
+     "cs": false,
+     "toast": false,
+     "playMaxbr": 999000,
+     "flLevel": "none",
+     "pl": 0
+    },
+    "mst": 9,
+    "pst": 0,
+    "pop": 10.0,
+    "dt": 324618,
+    "rtype": 0,
+    "s_id": 0,
+    "rtUrls": [],
+    "resourceState": true,
+    "id": 2056901323,
+    "sq": {
+     "br": 827771,
+     "fid": 0,
+     "size": 33588709,
+     "vd": 38373.0,
+     "sr": 44100
+    },
+    "st": 0,
+    "cd": "01",
+    "publishTime": 1687276800000,
+    "cf": "",
+    "originCoverType": 0,
+    "h": {
+     "br": 320000,
+     "fid": 0,
+     "size": 12987080,
+     "vd": 49812.0,
+     "sr": 44100
+    },
+    "mv": 0,
+    "al": {
+     "picUrl": "http://p2.music.126.net/FNFKkWRe2xNrt8meLHk1Kg==/109951168686897622.jpg",
+     "name": "Oasis - Live at BBC Radio 1997 (Live)",
+     "tns": [],
+     "pic_str": "109951168686897622",
+     "id": 167903604,
+     "pic": 109951168686897622
+    },
+    "l": {
+     "br": 128000,
+     "fid": 0,
+     "size": 5194858,
+     "vd": 54000.0,
+     "sr": 44100
+    },
+    "m": {
+     "br": 192000,
+     "fid": 0,
+     "size": 7792266,
+     "vd": 52405.0,
+     "sr": 44100
+    },
+    "version": 3,
+    "cp": 456010,
+    "alia": [],
+    "djId": 0,
+    "single": 0,
+    "ar": [
+     {
+      "name": "Oasis",
+      "tns": [
+       "绿洲乐队"
+      ],
+      "alias": [],
+      "id": 98110
+     }
+    ],
+    "ftype": 0,
+    "t": 0,
+    "v": 37,
+    "name": "Live Forever (Live)",
+    "mark": 270336
+   }
+  ],
+  "songCount": 191
+ },
+ "code": 200,
+ "trp": {
+  "rules": [
+   "search_tab_song::17822787::searchAlg$isGlobalQuality$1"
+  ]
+ }
+}

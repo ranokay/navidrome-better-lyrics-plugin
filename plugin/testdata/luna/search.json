@@ -1,0 +1,683 @@
+{
+ "status_info": {
+  "log_id": "20261017035817BF48A5E97B25E830AC47",
+  "now": 1792180698,
+  "now_ts_ms": 1792180698556
+ },
+ "result_groups": [
+  {
+   "id": "tracks",
+   "next_cursor": "20",
+   "has_more": true,
+   "data": [
+    {
+     "meta": {
+      "item_type": "track"
+     },
+     "entity": {
+      "track": {
+       "id": "7425699317225293865",
+       "album": {
+        "id": "7425699317225310249",
+        "name": "liveforeverOasis",
+        "release_date": 1728748800,
+        "url_cover": {
+         "uri": "tos-cn-v-2774c002/oItKfJIgNQCFSEWyAMZCkDf5ASD2ABAIyARn5a",
+         "urls": [
+          "https://p3-luna.douyinpic.com/img/",
+          "https://p6-luna.douyinpic.com/img/"
+         ],
+         "template_prefix": "tplv-b829550vbb"
+        },
+        "url_player_bg": {
+         "uri": "tos-cn-v-2774c002/oItKfJIgNQCFSEWyAMZCkDf5ASD2ABAIyARn5a",
+         "urls": [
+          "https://p3-luna.douyinpic.com/img/",
+          "https://p6-luna.douyinpic.com/img/"
+         ],
+         "template": "background:${width}:${height}:30:90:0",
+         "template_prefix": "tplv-b829550vbb"
+        },
+        "cover_gradient_effect_color": [
+         {
+          "rgb": "2a4966"
+         },
+         {
+          "rgb": "112232"
+         }
+        ],
+        "playing_wave_color": null,
+        "paused_wave_color": null
+       },
+       "artists": [
+        {
+         "id": "7395696133375346738",
+         "name": "又山",
+         "url_avatar": {
+          "uri": "tos-cn-v-2774c002/o0QLArKEQcNADgAf4etOfQtMBBAbYGetfAIAVM",
+          "urls": [
+           "https://p3-luna.douyinpic.com/img/",
+           "https://p6-luna.douyinpic.com/img/"
+          ],
+          "template_prefix": "tplv-b829550vbb"
+         },
+         "state": {
+          "blocked_by_me": false
+         },
+         "user_info": {
+          "id": "3896269042094445",
+          "nickname": "laohuzhou413",
+          "medium_avatar_url": {
+           "uri": "aweme-avatar/aweme_default_avatar.png",
+           "urls": [
+            "https://p3.douyinpic.com/aweme/720x720/aweme-avatar/aweme_default_avatar.png.jpeg?from=3782654143",
+            "https://p26.douyinpic.com/aweme/720x720/aweme-avatar/aweme_default_avatar.png.jpeg?from=3782654143",
+            "https://p11.douyinpic.com/aweme/720x720/aweme-avatar/aweme_default_avatar.png.jpeg?from=3782654143"
+           ],
+           "need_complete_url": true
+          },
+          "thumb_avatar_url": {
+           "uri": "aweme-avatar/aweme_default_avatar.png",
+           "urls": [
+            "https://p26.douyinpic.com/aweme/100x100/aweme-avatar/aweme_default_avatar.png.jpeg?from=3782654143",
+            "https://p3.douyinpic.com/aweme/100x100/aweme-avatar/aweme_default_avatar.png.jpeg?from=3782654143",
+            "https://p11.douyinpic.com/aweme/100x100/aweme-avatar/aweme_default_avatar.png.jpeg?from=3782654143"
+           ],
+           "need_complete_url": true
+          },
+          "artist_id": "7395696133375346738",
+          "secret": false,
+          "test_tag": 0,
+          "vip_stage": "",
+          "is_vip": false,
+          "is_luna_user": true
+         },
+         "simple_display_name": "又山",
+         "user_artist_type": 2
+        }
+       ],
+       "duration": 130032,
+       "name": "liveforeverOasis",
+       "preview": {
+        "duration": 30047,
+        "vid": "v0dad6g10000cs6mdcfog65l730f9l1g",
+        "bit_rates": [
+         {
+          "br": 68717,
+          "size": 257692,
+          "quality": "medium"
+         },
+         {
+          "br": 132683,
+          "size": 497562,
+          "quality": "higher"
+         },
+         {
+          "br": 260774,
+          "size": 977903,
+          "quality": "highest"
+         }
+        ]
+       },
+       "state": {},
+       "stats": {
+        "count_collected": 4
+       },
+       "vid": "v02ad6g10000cs6m91vog65vsppuj9kg",
+       "label_info": {
+        "only_vip_download": true,
+        "quality_only_vip_can_download": [
+         "medium",
+         "higher",
+         "highest",
+         "lossless"
+        ],
+        "quality_only_vip_can_play": [
+         "lossless"
+        ],
+        "quality_map": {
+         "medium": {
+          "play_detail": {
+           "condition": "benefit_play_medium",
+           "need_vip": false,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_medium",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "higher": {
+          "play_detail": {
+           "condition": "benefit_play_higher",
+           "need_vip": false,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_higher",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "highest": {
+          "play_detail": {
+           "condition": "benefit_play_highest",
+           "need_vip": false,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_highest",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "lossless": {
+          "play_detail": {
+           "condition": "benefit_play_lossless",
+           "need_vip": true,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_lossless",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "spatial": {
+          "play_detail": {
+           "condition": "benefit_play_spatial",
+           "need_vip": true,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_spatial",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "hi_res": {
+          "play_detail": {
+           "condition": "benefit_play_hi_res",
+           "need_vip": true,
+           "need_purchase": false
+          },
+          "download_detail": null
+         }
+        }
+       },
+       "sim_id": 7425702803907020852,
+       "bit_rates": [
+        {
+         "br": 68259,
+         "size": 1109215,
+         "quality": "medium"
+        },
+        {
+         "br": 132249,
+         "size": 2149048,
+         "quality": "higher"
+        },
+        {
+         "br": 260300,
+         "size": 4229878,
+         "quality": "highest"
+        }
+       ],
+       "audition_info": {
+        "vid": "v0dad6g10000cs6mdcfog65l730f9l1g",
+        "duration_ms": 30047
+       },
+       "song_maker_team": {
+        "composers": [
+         {
+          "name": "又山"
+         }
+        ],
+        "lyricists": [
+         {
+          "name": "又山"
+         }
+        ]
+       },
+       "media_type": "track",
+       "chorus": {
+        "duration": 0,
+        "start": 52800
+       },
+       "colors": {
+        "cover_gradient_effect_color": [
+         {
+          "rgb": "2a4966"
+         },
+         {
+          "rgb": "112232"
+         }
+        ],
+        "normal_lyric_color": {
+         "rgb": "7f9ebb"
+        },
+        "playing_lyric_color": {
+         "rgb": "e5f3ff"
+        },
+        "recommend_reason_background_color": {
+         "rgb": "111f2c",
+         "alpha": "8c"
+        },
+        "featured_comment_tag_color": {
+         "rgb": "8ca7bf"
+        },
+        "background_color": {
+         "rgb": "112232"
+        },
+        "playing_wave_color": {
+         "rgb": "5481ab"
+        },
+        "paused_wave_color": {
+         "rgb": "606f7d",
+         "alpha": "bf"
+        },
+        "comment_share_additional_color": {
+         "rgb": "112232"
+        },
+        "base_colors": [
+         {
+          "rgb": "e5f3ff"
+         },
+         {
+          "rgb": "a7c9e9"
+         },
+         {
+          "rgb": "749fc6"
+         },
+         {
+          "rgb": "49749b"
+         },
+         {
+          "rgb": "2a4966"
+         },
+         {
+          "rgb": "223d56"
+         },
+         {
+          "rgb": "1a3247"
+         },
+         {
+          "rgb": "132637"
+         },
+         {
+          "rgb": "0d1a26"
+         }
+        ],
+        "non_interactive_anchor_background": {
+         "rgb": "223b53",
+         "alpha": "8c"
+        }
+       },
+       "limited_free_info": null,
+       "vocal": 1,
+       "lang_codes": [
+        "EN"
+       ],
+       "first_vocal": {
+        "duration": 52800,
+        "start": 0
+       },
+       "sharable_platforms": [
+        "link",
+        "aweme",
+        "aweme_publish",
+        "wechat_zone",
+        "wechat",
+        "weibo",
+        "qq_zone",
+        "qq"
+       ],
+       "playable_range": {
+        "duration": 17088,
+        "start": 52800
+       },
+       "sim_id_v3": 72327444482,
+       "plug_status": {
+        "can_plug": false,
+        "is_plugged": false
+       },
+       "tags": [
+        {
+         "category": {
+          "tag_id": 1,
+          "tag_name": "Genre"
+         },
+         "first_level_tag": {
+          "tag_id": 6730932201380170498,
+          "tag_name": "Pop"
+         }
+        }
+       ],
+       "nodes": [
+        {
+         "type": 2,
+         "start": 52800,
+         "duration": 0,
+         "opacity": 1
+        }
+       ],
+       "is_support_bell": true,
+       "check_context": "{\"version\":\"1792052803-6285384308272165939-bit_rates\",\"req_time\":1792180698}",
+       "karaoke": {
+        "supported": true
+       },
+       "lyric_poster": {
+        "disabled": false
+       }
+      }
+     }
+    },
+    {
+     "meta": {
+      "item_type": "track"
+     },
+     "entity": {
+      "track": {
+       "id": "7411861888710494209",
+       "album": {
+        "id": "7411861888710477825",
+        "name": "Live Forever - 2024",
+        "release_date": 1726099200,
+        "url_cover": {
+         "uri": "tos-cn-v-2774c002/oIIZYQmC28MbvbIfDBIB13FGIAABSgfkEZtALh",
+         "urls": [
+          "https://p3-luna.douyinpic.com/img/",
+          "https://p6-luna.douyinpic.com/img/"
+         ],
+         "template_prefix": "tplv-b829550vbb"
+        },
+        "url_player_bg": {
+         "uri": "tos-cn-v-2774c002/oIIZYQmC28MbvbIfDBIB13FGIAABSgfkEZtALh",
+         "urls": [
+          "https://p3-luna.douyinpic.com/img/",
+          "https://p6-luna.douyinpic.com/img/"
+         ],
+         "template": "background:${width}:${height}:30:90:0",
+         "template_prefix": "tplv-b829550vbb"
+        },
+        "cover_gradient_effect_color": [
+         {
+          "rgb": "998b7a"
+         },
+         {
+          "rgb": "716556"
+         }
+        ],
+        "playing_wave_color": null,
+        "paused_wave_color": null
+       },
+       "artists": [
+        {
+         "id": "6857186361796450305",
+         "name": "DJ OVO",
+         "url_avatar": {
+          "uri": "tos-cn-v-2774c002/owDAVNApiAzDPBwsBYYsZT8iEAurzEjzvUEAW",
+          "urls": [
+           "https://p3-luna.douyinpic.com/img/",
+           "https://p6-luna.douyinpic.com/img/"
+          ],
+          "template_prefix": "tplv-b829550vbb"
+         },
+         "state": {
+          "blocked_by_me": false
+         },
+         "simple_display_name": "DJ OVO",
+         "user_artist_type": 1
+        }
+       ],
+       "duration": 102894,
+       "name": "Live Forever - 2024",
+       "preview": {
+        "duration": 30001,
+        "start": 5568,
+        "vid": "v10ad6g50000cre42v7og65hhb2jgvi0",
+        "bit_rates": [
+         {
+          "br": 132705,
+          "size": 497647,
+          "quality": "higher"
+         }
+        ]
+       },
+       "state": {},
+       "stats": {},
+       "vid": "v10ad6g50000cre3umnog65llccjh6kg",
+       "label_info": {
+        "quality_only_vip_can_download": [
+         "highest",
+         "lossless"
+        ],
+        "quality_only_vip_can_play": [
+         "lossless"
+        ],
+        "quality_map": {
+         "hi_res": {
+          "play_detail": {
+           "condition": "benefit_play_hi_res",
+           "need_vip": true,
+           "need_purchase": false
+          },
+          "download_detail": null
+         },
+         "medium": {
+          "play_detail": {
+           "condition": "benefit_play_medium",
+           "need_vip": false,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "true",
+           "need_vip": false,
+           "need_purchase": false
+          }
+         },
+         "higher": {
+          "play_detail": {
+           "condition": "benefit_play_higher",
+           "need_vip": false,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "true",
+           "need_vip": false,
+           "need_purchase": false
+          }
+         },
+         "highest": {
+          "play_detail": {
+           "condition": "benefit_play_highest",
+           "need_vip": false,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_highest",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "lossless": {
+          "play_detail": {
+           "condition": "benefit_play_lossless",
+           "need_vip": true,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_lossless",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         },
+         "spatial": {
+          "play_detail": {
+           "condition": "benefit_play_spatial",
+           "need_vip": true,
+           "need_purchase": false
+          },
+          "download_detail": {
+           "condition": "benefit_download_spatial",
+           "need_vip": true,
+           "need_purchase": false
+          }
+         }
+        }
+       },
+       "sim_id": 7411869261041240076,
+       "bit_rates": [
+        {
+         "br": 68289,
+         "size": 878323,
+         "quality": "medium"
+        },
+        {
+         "br": 132285,
+         "size": 1701424,
+         "quality": "higher"
+        },
+        {
+         "br": 260364,
+         "size": 3348748,
+         "quality": "highest"
+        }
+       ],
+       "audition_info": {
+        "vid": "v10ad6g50000cre42v7og65hhb2jgvi0",
+        "start_time_ms": 5568,
+        "duration_ms": 30001
+       },
+       "song_maker_team": {
+        "composers": [
+         {
+          "name": "Carmem Mondek da Silva"
+         }
+        ]
+       },
+       "media_type": "track",
+       "colors": {
+        "cover_gradient_effect_color": [
+         {
+          "rgb": "998b7a"
+         },
+         {
+          "rgb": "716556"
+         }
+        ],
+        "normal_lyric_color": {
+         "rgb": "cdbfae"
+        },
+        "playing_lyric_color": {
+         "rgb": "fff3e5"
+        },
+        "recommend_reason_background_color": {
+         "rgb": "5f5549",
+         "alpha": "8c"
+        },
+        "featured_comment_tag_color": {
+         "rgb": "c2b29e"
+        },
+        "background_color": {
+         "rgb": "716556"
+        },
+        "playing_wave_color": {
+         "rgb": "b1a494"
+        },
+        "paused_wave_color": {
+         "rgb": "7f7a75",
+         "alpha": "bf"
+        },
+        "comment_share_additional_color": {
+         "rgb": "716556"
+        },
+        "base_colors": [
+         {
+          "rgb": "f7f3ed"
+         },
+         {
+          "rgb": "e2d9ce"
+         },
+         {
+          "rgb": "cbbfb1"
+         },
+         {
+          "rgb": "b2a595"
+         },
+         {
+          "rgb": "998b7a"
+         },
+         {
+          "rgb": "7c6f5f"
+         },
+         {
+          "rgb": "5d5346"
+         },
+         {
+          "rgb": "3e362d"
+         },
+         {
+          "rgb": "1e1a15"
+         }
+        ],
+        "non_interactive_anchor_background": {
+         "rgb": "7d7163",
+         "alpha": "8c"
+        }
+       },
+       "limited_free_info": null,
+       "vocal": 2,
+       "sharable_platforms": [
+        "link",
+        "aweme",
+        "aweme_publish",
+        "wechat_zone",
+        "wechat",
+        "weibo",
+        "qq_zone",
+        "qq"
+       ],
+       "playable_range": {
+        "duration": 24192,
+        "start": 5568
+       },
+       "sim_id_v3": 84309381890,
+       "plug_status": {
+        "can_plug": false,
+        "is_plugged": false
+       },
+       "tags": [
+        {
+         "category": {
+          "tag_id": 1,
+          "tag_name": "Genre"
+         },
+         "first_level_tag": {
+          "tag_id": 6730932201380252418,
+          "tag_name": "Hip Hop/Rap"
+         }
+        }
+       ],
+       "is_support_bell": true,
+       "check_context": "{\"req_time\":1792180698}",
+       "karaoke": {
+        "supported": false,
+        "disable_reason": 2
+       },
+       "lyric_poster": {
+        "disabled": false
+       }
+      }
+     }
+    }
+   ],
+   "display_view_all": false,
+   "display_title": "",
+   "description": "",
+   "bottom_desc": "",
+   "display_type": ""
+  }
+ ]
+}
