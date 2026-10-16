@@ -238,10 +238,6 @@ func parseRichsync(body string) ([]timedLine, error) {
 			wordEnd := end
 			if k+1 < len(chunk.Tokens) {
 				wordEnd = start + chunk.Tokens[k+1].Offset
-			} else {
-				// The final chunk is unbounded; reference clients synthesize a
-				// short highlight window rather than glow to the line end.
-				wordEnd = wordStart + richsyncMinimumTokenMs
 			}
 			if wordEnd < wordStart+richsyncMinimumTokenMs {
 				wordEnd = wordStart + richsyncMinimumTokenMs

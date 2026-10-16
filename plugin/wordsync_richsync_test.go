@@ -72,9 +72,10 @@ func TestParseRichsync_WordWindows(t *testing.T) {
 	if first.Words[0].Text != "He" || first.Words[0].StartMs != 12400 {
 		t.Fatalf("word 1 = %#v, want He at 12400", first.Words[0])
 	}
-	// reference implementation synthesizes short word ends; 40 ms is the floor.
-	if first.Words[1].StartMs != 12520 || first.Words[1].EndMs != 12560 {
-		t.Fatalf("word 2 = %#v, want hello at 12520..12560", first.Words[1])
+	// unbounded trailing tokens glow to the line end; the reference floor of 40 ms
+	// only raises windows that would end before they start.
+	if first.Words[1].StartMs != 12520 || first.Words[1].EndMs != 13900 {
+		t.Fatalf("word 2 = %#v, want llo at 12520..13900", first.Words[1])
 	}
 	if second := lines[1]; second.StartMs != 14000 || second.Words[0].Text != " world" || second.Words[0].EndMs != 14500 {
 		t.Fatalf("line 2 = %#v, want world window closing at the line end", second)
