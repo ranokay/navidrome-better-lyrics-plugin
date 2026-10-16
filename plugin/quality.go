@@ -20,6 +20,10 @@ const (
 
 var lrcTimestampPattern = regexp.MustCompile(`(?m)^\s*(?:\[[0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?\])+`)
 
+// enhancedWordPattern matches the inline word markers of enhanced LRC (LRCLib,
+// Karaoke effects and converted word-synced sources).
+var enhancedWordPattern = regexp.MustCompile(`<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>`)
+
 type lyricsCandidate struct {
 	response lyrics.GetLyricsResponse
 	quality  lyricTimingQuality
@@ -34,9 +38,12 @@ func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsC
 		if !valid {
 			return lyricsCandidate{}
 		}
-	case "lrc":
+	case "lrc", "elrc":
 		if lrcTimestampPattern.MatchString(text.Text) {
 			quality = timingLine
+		}
+		if enhancedWordPattern.MatchString(text.Text) {
+			quality = timingWord
 		}
 	}
 	return lyricsCandidate{
