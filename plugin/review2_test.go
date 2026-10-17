@@ -2094,13 +2094,6 @@ func TestMalformedProviderJSONStaysDegraded(t *testing.T) {
 				return health, err
 			},
 		},
-		{
-			name: "lyricify lyrics",
-			fetch: func(p *lyricsProvider) (lookupHealth, error) {
-				_, health, err := fetchLyricifyLyricsCandidates(p, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
-				return health, err
-			},
-		},
 	}
 
 	for _, tc := range cases {
@@ -2115,5 +2108,31 @@ func TestMalformedProviderJSONStaysDegraded(t *testing.T) {
 				t.Fatalf("result = (%v, %v); want a degraded decode failure", err, health)
 			}
 		})
+	}
+}
+
+func TestMalformedLYLPayloadStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	// The lyricify case must reach the LYL parser: a valid resolve (ISRC) and
+	// a valid lyrics envelope with an invalid LYL body (Greptile).
+	resolveRequests, lyricsRequests := 0, 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "credits.fm"):
+			resolveRequests++
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"isrc":"GBAHS1600463"}`)}, nil
+		default:
+			lyricsRequests++
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"text":"not a Lyricify payload at all","offset":0}`)}, nil
+		}
+	})
+
+	_, health, err := fetchLyricifyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the invalid LYL body to degrade", err, health)
+	}
+	if resolveRequests != 1 || lyricsRequests != 1 {
+		t.Fatalf("requests = %d/%d, want the resolve and lyrics hops both reached", resolveRequests, lyricsRequests)
 	}
 }
