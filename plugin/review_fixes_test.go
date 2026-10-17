@@ -99,7 +99,7 @@ func TestLRCLibCandidates_InstrumentalSearchMatchIsCleanMiss(t *testing.T) {
 		if strings.Contains(request.URL, "/api/get") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":10209922,"instrumental":true}`)}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"instrumental":true}]`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"instrumental":true,"duration":280}]`)}, nil
 	})
 
 	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{

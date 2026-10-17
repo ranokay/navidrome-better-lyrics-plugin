@@ -574,3 +574,59 @@ func TestBinimumRejectsMetadataMismatch(t *testing.T) {
 		t.Fatal("duration-only metadata match accepted an unrelated song")
 	}
 }
+
+func TestMusixmatchEnvelopeStatusesClassified(t *testing.T) {
+	t.Parallel()
+
+	facade := func(searchEnvelope, macroEnvelope string) func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			switch {
+			case strings.Contains(request.URL, "/ws/1.1/token.get"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+			case strings.Contains(request.URL, "/ws/1.1/track.search"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(searchEnvelope)}, nil
+			default:
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(macroEnvelope)}, nil
+			}
+		}
+	}
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}
+
+	t.Run("server envelope failures degrade instead of missing", func(t *testing.T) {
+		provider := newLyricsProvider(facade(`{"message":{"header":{"status_code":500}}}`, `{}`))
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want degraded on envelope 500", err, health)
+		}
+	})
+
+	t.Run("envelope 429 activates the provider cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(`{"message":{"header":{"status_code":429}}}`, `{}`), cache, time.Now, nil, nil)
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want degraded on envelope 429", err, health)
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("musixmatch")) <= 0 {
+			t.Fatal("envelope 429 activated no cooldown")
+		}
+	})
+
+	t.Run("envelope 404 and no-match stay quiet misses", func(t *testing.T) {
+		provider := newLyricsProvider(facade(`{"message":{"header":{"status_code":404}}}`, `{}`))
+		candidates, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || len(candidates) != 0 || health != lookupHealthy {
+			t.Fatalf("result = %#v/%v/%v; want clean miss on envelope 404", candidates, health, err)
+		}
+	})
+
+	t.Run("rate-limited macro payloads degrade the lookup", func(t *testing.T) {
+		provider := newLyricsProvider(facade(
+			`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`,
+			`{"message":{"header":{"status_code":200},"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":429}}}}}}`))
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a degraded lookup when a rate-limited macro spoils the pass", err, health)
+		}
+	})
+}

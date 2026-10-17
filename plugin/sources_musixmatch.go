@@ -86,6 +86,9 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		_ = p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
 		return nil, lookupHealthy, nil
 	}
+	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch track.search", searchEnvelope.Message.Header.StatusCode); err != nil {
+		return nil, health, err
+	}
 	trackID, found := pickMusixmatchTrack(searchEnvelope.Message.Body.TrackList, track)
 	if !found {
 		return nil, lookupHealthy, nil
@@ -121,6 +124,9 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
 		return nil, lookupHealthy, nil
 	}
+	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro.subtitles.get", macroEnvelope.Message.Header.StatusCode); err != nil {
+		return nil, health, err
+	}
 	for _, macro := range macroEnvelope.Message.Body.MacroCalls {
 		// The richsync/subtitles responses can reject the token while the outer
 		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
@@ -128,12 +134,32 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 			p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
 			return nil, lookupHealthy, nil
 		}
+		if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
+			return nil, health, err
+		}
 	}
 	return musixmatchCandidate(macroEnvelope.Message.Body.MacroCalls)
 }
 
 // musixmatchTokenRejected reports a JSON-envelope rejection of the current token:
 // expired tokens sometimes arrive only in the header (HTTP 200 outside).
+// musixmatchEnvelopeStatusFailure classifies a JSON header status that the HTTP
+// layer already answered 200 for. Token rejections are handled by the caller and
+// plain no-match (404) keeps the quiet miss contract; an envelope rate limit
+// activates the provider cooldown, and any other non-success status is a
+// degraded failure instead of a healthy miss (Codex/CodeRabbit).
+func (p *lyricsProvider) musixmatchEnvelopeStatusFailure(source string, status int) (lookupHealth, error) {
+	switch status {
+	case 0, 200, 201, 204, 404:
+		return lookupHealthy, nil
+	case 429:
+		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), defaultRateLimitCooldown)
+		return lookupDegraded, &providerHTTPError{source: source, status: 429, globalRateLimit: true}
+	default:
+		return lookupDegraded, &providerHTTPError{source: source, status: int32(status)}
+	}
+}
+
 func musixmatchTokenRejected(header struct {
 	StatusCode int    `json:"status_code"`
 	Hint       string `json:"hint"`
