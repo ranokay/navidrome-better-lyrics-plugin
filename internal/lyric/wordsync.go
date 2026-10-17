@@ -192,7 +192,10 @@ func collectWords(body string, mode WordSyncMode, lineStartMs, lineEndMs int64) 
 		if len(fields) >= 2 {
 			offset, errOffset := parseMillis(strings.TrimSpace(fields[0]))
 			duration, errDuration := parseMillis(strings.TrimSpace(fields[1]))
-			if errOffset == nil && errDuration == nil && duration > 0 {
+			// A zero duration is a legal tuple: NetEase's YRC marks
+			// punctuation that way, and treating it as plain text leaks the
+			// raw tuple into the rendered lyric.
+			if errOffset == nil && errDuration == nil {
 				chunks = append(chunks, flushIntro())
 				tuples = append(tuples, wordTuple{offset: offset, duration: duration})
 				i = spanEnd

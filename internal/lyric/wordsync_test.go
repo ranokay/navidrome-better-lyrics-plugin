@@ -78,6 +78,30 @@ func TestParseKFamilyLyrics_RejectsEmptyInput(t *testing.T) {
 	}
 }
 
+func TestParseKFamilyLyrics_YRCZeroDurationPunctuationToken(t *testing.T) {
+	t.Parallel()
+
+	// NetEase's YRC emits zero-duration tuples for punctuation, observed live
+	// on "The Spectre": `(10490,0,0), `. Rejecting a zero-duration tuple as
+	// "not a tuple" leaks the raw tuple text into the rendered lyric.
+	input := "[9950,1770](9950,540,0)Hello(10490,0,0), (10490,1230,0)hello"
+
+	lines, err := ParseKFamily(YRC, input)
+	if err != nil {
+		t.Fatalf("ParseKFamily() error = %v, want nil", err)
+	}
+	if len(lines) != 1 || len(lines[0].Words) != 3 {
+		t.Fatalf("words = %#v, want Hello / , / hello from the zero-duration punctuation tuple", lines)
+	}
+	if lines[0].Words[1].Text != ", " || lines[0].Words[1].StartMs != 10490 {
+		t.Fatalf("punctuation word = %#v, want the comma at 10490", lines[0].Words[1])
+	}
+	rendered := EnhancedLRC(lines)
+	if strings.Contains(rendered, "(10490,0,0)") {
+		t.Fatalf("rendered = %q, want no raw tuple text in the enhanced LRC", rendered)
+	}
+}
+
 func TestParseKFamilyLyrics_HandlesQRCEnvelopeContent(t *testing.T) {
 	t.Parallel()
 
