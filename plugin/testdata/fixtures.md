@@ -51,3 +51,7 @@ Notes that affect parser/shaper tests:
 | lrclib/get.json | live | Shape of You — `plainLyrics`, `syncedLyrics`, `lyricsfile`, `hasWordSync:false` |
 | lrclib/search.json | live | Live Forever — 20 results |
 | betterlyrics/qq.txt | live | boidu `/qq/getLyrics` JSON envelope with QRC `LyricContent` |
+
+| lyricsplus/get.json | live 2026-10 | apple-backed LyricsPlus mirror payload (`/v2/lyrics/get?...&source=apple`): `type:Word`, syllabus tokens |
+| genius/search.json + page.html | live 2026-10 | keyless `genius.com/api/search` + the matched song page slice from the first lyric container to the footer |
+| ytmusic | synthetic | minimal innertube shapes mirroring the live probes (search rows with `lengthText`, watch-next `MPLYt_` browseId, `musicDescriptionShelfRenderer` description runs); the muxer keys are public-web-client facts |

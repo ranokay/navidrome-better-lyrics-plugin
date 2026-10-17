@@ -2,7 +2,7 @@
 
 # Navidrome Better Lyrics plugin
 
-A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. Version 0.2.0 resolves tracks through fourteen configurable sources — the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, Musixmatch, NetEase, Soda (Luna), PetitLyrics, Lyricify, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
+A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. Version 0.3.0 resolves tracks through seventeen configurable sources — the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, Musixmatch, NetEase, Soda (Luna), PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
 
 The plugin does not inject or replace Navidrome's interface. It returns TTML, enhanced LRC, or plain lyrics through Navidrome's Lyrics capability, converting proprietary word-timed formats into enhanced LRC so compatible clients can render word-level highlighting.
 
@@ -114,6 +114,22 @@ Legacy is deprecated and is not queried.
 | LRCLib | line / word (`lyricsfile`) / plain | on | `lrclib.net` | public API with an identifying User-Agent and real throttling |
 | Better Lyrics Legato | line LRC | on | `lyrics-api.boidu.dev/kugou/getLyrics` | Kugou LRC via the same API |
 | Lyricify | line / word LYL | on | `api.credits.fm`, `api.lyricify.app` | unofficial mobile endpoint; throwaway random username |
+| LyricsPlus | word (KPoe→elrc) | on | `lyricsplus.binimum.org`, `lyricsplus.atomix.one` | community Apple-timing mirrors; multi-host rotation on mirror failure |
+| YouTube Music | plain | **off** | `music.youtube.com` | the official YTM lyrics tab via the public innertube client; 3-hop lookup, duration-gated video match |
+| Genius | plain | **off** | `genius.com` | keyless Genius search + plain-text lyric scrape; strict-ish metadata gate |
+
+Not carried over from the Better Lyrics extension's list:
+
+- **PaxSenix: Spotify / PaxSenix: Musixmatch** — the `lyrics.paxsenix.org`
+  backends beyond `/apple-music/lyrics` were shut down ("no longer available";
+  verified live). Spotify-word lyrics have no other keyless source, and native
+  Musixmatch (this plugin's own source) is richer than the mirror.
+- **lrc.red as a separate source** — BiniLyrics and Unison already cover the
+  same Apple-graded TTML store (BiniLyrics fetches `lrc.red/s/{isrc}.ttml`
+  directly).
+- **YouTube captions** — closed-caption tracks for music videos are spoken-ASR,
+  not lyric-timed; the extension matches them in-browser against the playing
+  video, which has no Navidrome-side equivalent at the same fidelity.
 
 Sources with word timing convert their proprietary formats into enhanced LRC so
 Navidrome's own parser keeps the word cues. `api.betterlyrics.org` and

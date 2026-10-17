@@ -38,6 +38,9 @@ var allSources = []lyricsSource{
 	{ID: "lrclib", Display: "LRCLib", Hosts: []string{"lrclib.net"}, DefaultEnabled: true},
 	{ID: "better-lyrics-legato", Display: "Better Lyrics Legato", Hosts: []string{"lyrics-api.boidu.dev"}, DefaultEnabled: true},
 	{ID: "lyricify", Display: "Lyricify", Hosts: []string{"api.credits.fm", "api.lyricify.app"}, DefaultEnabled: true},
+	{ID: "lyricsplus", Display: "LyricsPlus", Hosts: []string{"lyricsplus.binimum.org", "lyricsplus.atomix.one"}, DefaultEnabled: true},
+	{ID: "yt-music", Display: "YouTube Music", Hosts: []string{"music.youtube.com"}, DefaultEnabled: false},
+	{ID: "genius", Display: "Genius", Hosts: []string{"genius.com"}, DefaultEnabled: false},
 }
 
 // Fetches are attached at init rather than in the literal above so that source
@@ -68,6 +71,9 @@ var sourceFetches = map[string]func(*lyricsProvider, lyrics.TrackInfo, time.Time
 	"luna-beat":             fetchLunaBeatLyricsCandidates,
 	"musixmatch":            fetchMusixmatchLyricsCandidates,
 	"better-lyrics-legato":  fetchKugouLyricsCandidates,
+	"lyricsplus":            fetchLyricsPlusLyricsCandidates,
+	"yt-music":              fetchYTMusicLyricsCandidates,
+	"genius":                fetchGeniusLyricsCandidates,
 }
 
 // catalogSource resolves a catalog entry live so callers always see the Fetch

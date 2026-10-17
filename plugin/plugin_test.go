@@ -8,7 +8,7 @@ import (
 func TestPluginVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := pluginVersion(); got != "0.2.0" {
+	if got := pluginVersion(); got != "0.3.0" {
 		t.Fatalf("pluginVersion() = %q, want 0.2.0", got)
 	}
 }

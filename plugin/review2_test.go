@@ -1453,3 +1453,147 @@ func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
 		t.Fatalf("TTML fetch = %q, want the alias-matched lyrics file fetched", ttmlRequest)
 	}
 }
+
+func TestLyricsPlusCandidates_WordTimingFromLiveFixture(t *testing.T) {
+	t.Parallel()
+
+	fixture, err := os.ReadFile("testdata/lyricsplus/get.json")
+	if err != nil {
+		t.Skipf("fixture unavailable: %v", err)
+	}
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "v2/lyrics/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: fixture}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	candidates, health, err := fetchLyricsPlusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 234}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLyricsPlusLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy {
+		t.Fatalf("health = %v, want healthy", health)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one enhanced candidate", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "LyricsPlus", "elrc")
+	if candidates[0].quality != timingWord {
+		t.Fatalf("quality = %v, want the apple word timing from the syllabus", candidates[0].quality)
+	}
+
+	// The payload's provenance must read from the probe sources.
+	missProvider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+	missCandidates, missHealth, missErr := fetchLyricsPlusLyricsCandidates(missProvider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if missErr != nil || len(missCandidates) != 0 || missHealth != lookupHealthy {
+		t.Fatalf("miss = %#v/%v/%v, want a clean miss on 404", missCandidates, missHealth, missErr)
+	}
+}
+
+func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
+	t.Parallel()
+
+	// The innertube chain is 3 hops: search with duration gating, watch-next
+	// playlist extract, then the description shelf (synthetic bodies mirror
+	// the probes).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		switch {
+		case strings.Contains(request.URL, "v1/search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"rows":[
+				{"videoId":"AAAAiBz2lyThis","lengthText":{"runs":[{"text":"4:00"}]}},
+				{"videoId":"JGwWNGJdvx8","lengthText":{"runs":[{"text":"3:58"}]}}
+			]}}`)}, nil
+		case strings.Contains(request.URL, "v1/next"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"queueContextParams":{},"contents":{"rows":[{"browseId":"MPLYt_SbJhx3gEYmp","title":{"runs":[]}}]}}`)}, nil
+		case strings.Contains(request.URL, "v1/browse"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"shelf":{"musicDescriptionShelfRenderer":{"description":{"runs":[
+				{"text":"Lyrics"},
+				{"text":"The club isn't the best place"},
+				{"text":"So the bar is where I go"},
+				{"text":"Source:\u00aaa"}
+			]}}}}}`)}, nil
+		default:
+			t.Errorf("unexpected request %q", request.URL)
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+	})
+
+	candidates, health, err := fetchYTMusicLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 238}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchYTMusicLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy {
+		t.Fatalf("health = %v, want healthy", health)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one plain candidate", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "YouTube Music", "plain")
+	rendered := candidates[0].response.Lyrics[0].Text
+	if !strings.Contains(rendered, "The club isn't the best place") || strings.Contains(rendered, "Source:") {
+		t.Fatalf("rendered = %q, want the shelf body without attribution", rendered)
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want search+next+browse", requests)
+	}
+}
+
+func TestGeniusChain_ScapesMatchedSong(t *testing.T) {
+	t.Parallel()
+
+	searchFixture, err := os.ReadFile("testdata/genius/search.json")
+	if err != nil {
+		t.Skipf("fixture unavailable: %v", err)
+	}
+	pageFixture, err := os.ReadFile("testdata/genius/page.html")
+	if err != nil {
+		t.Skipf("fixture unavailable: %v", err)
+	}
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		switch {
+		case strings.Contains(request.URL, "api/search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: searchFixture}, nil
+		case strings.Contains(request.URL, "genius.com/"):
+			return &host.HTTPResponse{StatusCode: 200, Body: pageFixture}, nil
+		default:
+			t.Errorf("unexpected request %q", request.URL)
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+	})
+
+	candidates, health, err := fetchGeniusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Shape of You", Artist: "Ed Sheeran"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchGeniusLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy {
+		t.Fatalf("health = %v, want healthy", health)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one plain candidate", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "Genius", "plain")
+	text := candidates[0].response.Lyrics[0].Text
+	if !strings.Contains(text, "A club isn't the best place") {
+		t.Fatalf("text sample = %q, want the lyric body from the page containers", text[0:120])
+	}
+	if strings.Contains(text, "Contributors") || strings.Contains(text, "Read More") {
+		t.Fatalf("text = %q, want header containers dropped", text[0:120])
+	}
+
+	// A music-video hit is skipped: only songs carry the plain body.
+	excluded := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"response":{"hits":[{"type":"song","result":{"_type":"song","url":"https://genius.com/Other-artist-song-lyrics","title":"Different Title","title_with_featured":"Different Title","artist_names":"Somebody Else"}}]}}`)}, nil
+	})
+	if candidates, hitHealth, err2 := fetchGeniusLyricsCandidates(excluded, lyrics.TrackInfo{Title: "Shape of You", Artist: "Ed Sheeran"}, time.Now().Add(stageOneLookupBudget)); err2 != nil || len(candidates) != 0 || hitHealth != lookupHealthy {
+		t.Fatalf("gated = %#v/%v/%v, want a clean miss without a metadata match", candidates, hitHealth, err2)
+	}
+}
