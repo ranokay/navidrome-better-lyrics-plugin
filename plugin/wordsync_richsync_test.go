@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -119,5 +120,45 @@ func TestParseRichsyncFixtureSmoke(t *testing.T) {
 	}
 	if !strings.Contains(enhancedLRCFromTimedLines(lines[:1]), "[") {
 		t.Fatal("fixture render has no LRC stamp")
+	}
+}
+
+func TestParseRichsync_FractionalSecondOffsets(t *testing.T) {
+	t.Parallel()
+
+	// Musixmatch richsync `o` offsets are fractional seconds relative to the
+	// chunk: decrypted as ms they shift words 1000x and fractional values
+	// crashed the whole decode.
+	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":0.12}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil with fractional offsets", err)
+	}
+	first := lines[0]
+	if first.Words[1].StartMs != 12520 {
+		t.Fatalf("word 2 start = %d, want 12520 (0.12s after the line start)", first.Words[1].StartMs)
+	}
+
+	lines, err = parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":1},{"c":"llo","o":1.2}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil with integral offsets", err)
+	}
+	if lines[0].Words[1].StartMs != 13600 {
+		t.Fatalf("word 2 start = %d, want 13600 (1.2s after the line start)", lines[0].Words[1].StartMs)
+	}
+}
+
+func TestParseRichsyncKeepsWhitespaceTokens(t *testing.T) {
+	t.Parallel()
+
+	// Musixmatch can encode a space as its own richsync token; dropping it
+	// joins the surrounding words.
+	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":" ","o":0.4},{"c":"llo","o":0.45}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil", err)
+	}
+	rendered := enhancedLRCFromTimedLines(lines)
+	plain := regexp.MustCompile(`<[0-9:.]+>|\[[0-9:.]+\]`).ReplaceAllString(rendered, "")
+	if !strings.Contains(plain, "He ") || strings.Contains(plain, "Hello") {
+		t.Fatalf("plain = %q, want the standalone space token retained", plain)
 	}
 }

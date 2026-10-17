@@ -204,3 +204,277 @@ func TestLyricifyCandidates_MissingIsrcIsForbidden(t *testing.T) {
 		t.Fatalf("health = %v, want healthy (a missing ISRC is a clean miss)", health)
 	}
 }
+
+func TestNetEaseCandidates_MatchesLiveDTDuration(t *testing.T) {
+	t.Parallel()
+
+	// The live NetEase cloudsearch payload stores duration as `dt` (ms).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		switch {
+		case strings.Contains(request.URL, "cloudsearch/pc"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":17822787,"name":"Live Forever","ar":[{"name":"Oasis"}],"dt":280000}]}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lrc":{"lyric":"[00:11.93]Maybe\n"},"yrc":{}}`)}, nil
+		}
+	})
+
+	candidates, health, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{
+		Title: "Live Forever", Artist: "Oasis", Duration: 280,
+	}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchNetEaseLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy {
+		t.Fatalf("health = %v, want healthy", health)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one after the dt-field duration decode", candidates)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want search then lyric", requests)
+	}
+}
+
+func TestLunaCandidates_QuotedTrackIDs(t *testing.T) {
+	t.Parallel()
+
+	// Live Luna responses quote every track id; unmarshalling them into int64
+	// used to abort the whole search decode before any candidate selection.
+	var detailRequest string
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, lunaSearchEndpoint):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"7425699317225293865","name":"liveforeverOasis","artists":[{"name":"又山"}],"duration":130032}}}]}]}`)}, nil
+		default:
+			detailRequest = request.URL
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"[00:04.00]Beneath an empty","type":"lrc"}}`)}, nil
+		}
+	})
+
+	candidates, health, err := fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{
+		Title: "Live Forever", Artist: "Oasis", Duration: 130,
+	}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLunaLyricsCandidates() error = %v, want nil (quoted ids must not abort the decode)", err)
+	}
+	if health != lookupHealthy {
+		t.Fatalf("health = %v, want healthy", health)
+	}
+	if len(candidates) != 1 || candidates[0].quality != timingLine {
+		t.Fatalf("candidates = %#v, want one line candidate sourced from the quoted id", candidates)
+	}
+	if !strings.Contains(detailRequest, "track_id=7425699317225293865") {
+		t.Fatalf("detail request = %q, want the quoted id carried through", detailRequest)
+	}
+}
+
+func TestLunaTrackID_PreservesLargeNumericIDs(t *testing.T) {
+	t.Parallel()
+
+	var numeric lunaTrackID
+	if err := numeric.UnmarshalJSON([]byte(`7425699317225293865`)); err != nil {
+		t.Fatalf("UnmarshalJSON(numeric) error = %v, want nil", err)
+	}
+	if numeric != "7425699317225293865" {
+		t.Fatalf("numeric id = %q, want the exact digit string (no float64 rounding)", string(numeric))
+	}
+
+	var quoted lunaTrackID
+	if err := quoted.UnmarshalJSON([]byte(`"7425699317225293865"`)); err != nil {
+		t.Fatalf("UnmarshalJSON(quoted) error = %v, want nil", err)
+	}
+	if quoted != "7425699317225293865" {
+		t.Fatalf("quoted id = %q, want the stripped value", string(quoted))
+	}
+}
+
+func TestNetEaseSearchEnvelopeStatusesClassified(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}
+	t.Run("search envelope 500 degrades", func(t *testing.T) {
+		provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":500}`)}, nil
+		})
+		_, health, err := fetchNetEaseLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want degraded on envelope 500", err, health)
+		}
+	})
+
+	t.Run("search envelope 429 activates cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":429}`)}, nil
+		}, cache, time.Now, nil, nil)
+		_, _, err := fetchNetEaseLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("envelope 429 converted to a miss; want a degraded error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("netease")) <= 0 {
+			t.Fatal("envelope 429 activated no cooldown")
+		}
+	})
+
+	t.Run("search envelope 404 keeps a quiet miss", func(t *testing.T) {
+		provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":404}`)}, nil
+		})
+		_, health, err := fetchNetEaseLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health != lookupHealthy {
+			t.Fatalf("result = (%v, %v); want the 404 kept quiet", err, health)
+		}
+	})
+}
+
+func TestMalformedLYLPayloadStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	// The lyricify case must reach the LYL parser: a valid resolve (ISRC) and
+	// a valid lyrics envelope with an invalid LYL body.
+	resolveRequests, lyricsRequests := 0, 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "credits.fm"):
+			resolveRequests++
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"isrc":"GBAHS1600463"}`)}, nil
+		default:
+			lyricsRequests++
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"text":"not a Lyricify payload at all","offset":0}`)}, nil
+		}
+	})
+
+	_, health, err := fetchLyricifyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the invalid LYL body to degrade", err, health)
+	}
+	if resolveRequests != 1 || lyricsRequests != 1 {
+		t.Fatalf("requests = %d/%d, want the resolve and lyrics hops both reached", resolveRequests, lyricsRequests)
+	}
+}
+
+func TestNetEaseLyricEnvelopeFailureDegrades(t *testing.T) {
+	t.Parallel()
+
+	// The lyric envelope carries its own code: a transient failure must not
+	// fall through as cacheable coverage.
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "cloudsearch/pc"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":111,"name":"Song","ar":[{"name":"Artist"}],"dt":280000}]},"code":200}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":500}`)}, nil
+		}
+	})
+
+	_, health, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 280}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want degraded on the lyric envelope 500", err, health)
+	}
+}
+
+func TestLunaMalformedKRCDegrades(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, lunaSearchEndpoint) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"5","name":"Song","artists":[{"name":"Artist"}],"duration":240000}}}]}]}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"(definitely not a KRC payload","type":"krc"}}`)}, nil
+	})
+
+	_, health, err := fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 240}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed KRC to degrade", err, health)
+	}
+}
+
+func TestNetEaseMalformedYRCDegrades(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "cloudsearch/pc"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":111,"name":"Song","ar":[{"name":"Artist"}],"dt":240000}]},"code":200}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":200,"lrc":{"lyric":""},"yrc":{"lyric":"(not a YRC envelope at all"}}`)}, nil
+		}
+	})
+
+	_, health, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 240}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed YRC to degrade", err, health)
+	}
+}
+
+func TestLunaCandidates_UnknownTypeReturnsPlainCandidate(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api.qishui.com/luna/search/track"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":1,"name":"Live Forever","artists":[{"name":"Oasis"}],"duration":280000}}}]}]}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"[00:04.00]Beneath an empty","type":"brand-new-dialect"}}`)}, nil
+		}
+	})
+
+	candidates, _, err := fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 280}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLunaLyricsCandidates() error = %v, want nil", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want the usable payload returned as a candidate", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "Soda (Luna)", "plain")
+}
+
+func TestLyricifyCandidates_DoNotAskForGzip(t *testing.T) {
+	t.Parallel()
+
+	var lyricEncoding, lyricContentType string
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api.credits.fm/v1/resolve/track"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"isrc":"GBQCP1400011"}`)}, nil
+		default:
+			lyricEncoding = request.Headers["Accept-Encoding"]
+			lyricContentType = request.Headers["Content-Type"]
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"text":"[type:LyricifyLines]\n[1000,500]plain"}`)}, nil
+		}
+	})
+
+	if _, _, err := fetchLyricifyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget)); err != nil {
+		t.Fatalf("fetchLyricifyLyricsCandidates() error = %v, want nil", err)
+	}
+	if lyricEncoding == "gzip" {
+		t.Fatalf("Accept-Encoding = %q, want identity (the host client does not auto-decompress, so a gzip body would fail every decode)", lyricEncoding)
+	}
+	if lyricContentType != "" {
+		t.Fatalf("lyrics GET Content-Type = %q, want none for a GET", lyricContentType)
+	}
+}
+
+func TestLyricifyCandidates_WordOutputLabelsAsElrc(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api.credits.fm/v1/resolve/track"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"isrc":"GBQCP1400011"}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"text":"[type:LyricifyLines]\n[from:AppleSyllable]\n[100,400]Hel(100,200) (200,100)lo(300,100)"}`)}, nil
+		}
+	})
+
+	candidates, _, err := fetchLyricifyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLyricifyLyricsCandidates() error = %v, want nil", err)
+	}
+	if len(candidates) != 1 || candidates[0].quality != timingWord {
+		t.Fatalf("candidates = %#v, want one word candidate", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "Lyricify", "elrc")
+}

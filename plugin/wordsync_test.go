@@ -115,3 +115,66 @@ func TestParseKFamilyLyrics_HandlesLunaKRCContent(t *testing.T) {
 		t.Fatalf("first word = %#v, want Beneath at 400ms", lines[0].Words[0])
 	}
 }
+
+func TestKFamilyOffsetShiftsTimings(t *testing.T) {
+	t.Parallel()
+
+	// KRC/QRC/YRC carry a global `[offset:±ms]` tag; dropping it left every
+	// line and word window unshifted.
+	positive, err := parseKFamilyLyrics(wordSyncQRC, "[offset:500]\n[1000,400]word(0,400)\n")
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics(offset +500) error = %v, want nil", err)
+	}
+	if rendered := enhancedLRCFromTimedLines(positive); !strings.HasPrefix(rendered, "[00:01.50]<00:01.50>word") {
+		t.Fatalf("rendered = %q, want the +500ms offset folded into the stamp", rendered)
+	}
+
+	negative, err := parseKFamilyLyrics(wordSyncQRC, "[offset:-300]\n[500,400]word(0,400)\n")
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics(offset -300) error = %v, want nil", err)
+	}
+	if rendered := enhancedLRCFromTimedLines(negative); !strings.HasPrefix(rendered, "[00:00.20]<00:00.20>word") {
+		t.Fatalf("rendered = %q, want the -300ms offset folded into the stamp", rendered)
+	}
+
+	untouched, err := parseKFamilyLyrics(wordSyncQRC, "[offset:0]\n[1000,400]word(0,400)\n")
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics(offset 0) error = %v, want nil", err)
+	}
+	if rendered := enhancedLRCFromTimedLines(untouched); !strings.HasPrefix(rendered, "[00:01.00]") {
+		t.Fatalf("rendered = %q, want a zero offset to leave timings alone", rendered)
+	}
+}
+
+func TestEnhancedLRCWordlessAndWordRenderings(t *testing.T) {
+	t.Parallel()
+
+	lines := []timedLine{
+		{StartMs: 1000, EndMs: 2000, Text: "wordless", Words: nil},
+		{StartMs: 3000, EndMs: 4000, Text: "duplicated in words", Words: []timedWord{{StartMs: 3000, EndMs: 3600, Text: "dup"}}},
+	}
+	out := enhancedLRCFromTimedLines(lines)
+	if !strings.Contains(out, "[00:01.00]wordless") {
+		t.Fatalf("output = %q, want wordless text retained", out)
+	}
+	if strings.Contains(out, "duplicated in words") {
+		t.Fatalf("output = %q, want line text suppressed for word-bearing lines (no duplication)", out)
+	}
+}
+
+func TestParseKFamilyLyrics_QRCRetainsWhitespaceTokens(t *testing.T) {
+	t.Parallel()
+
+	input := "[0,2380]Shape(0,476) (476,95)of(571,190)\n"
+	lines, err := parseKFamilyLyrics(wordSyncQRC, input)
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics() error = %v, want nil", err)
+	}
+	out := enhancedLRCFromTimedLines(lines)
+	if strings.Contains(out, "Shapeof") {
+		t.Fatalf("output = %q, want the standalone space token retained", out)
+	}
+	if !strings.Contains(out, "<00:00.47> ") {
+		t.Fatalf("output = %q, want a timed space token between Shape and of", out)
+	}
+}

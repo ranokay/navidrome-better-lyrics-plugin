@@ -141,3 +141,26 @@ func TestBinimumCandidates_LyricsFetchFailureReturnsError(t *testing.T) {
 		t.Fatalf("candidates/health = %#v/%v, want no candidate and degraded health", candidates, health)
 	}
 }
+
+func TestBininumRejectsHostileLyricsURLs(t *testing.T) {
+	t.Parallel()
+
+	// Provider-supplied URLs are untrusted: a hostile search row must never
+	// be fetched through the server's HTTP client (SSRF).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "evil.example") {
+			t.Fatalf("hostile URL fetched: %s", request.URL)
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"track_name":"Song","artist_name":"Artist","duration":200,"lyricsUrl":"https://evil.example/steal.ttml"}]}`)}, nil
+	})
+
+	candidates, health, err := fetchBinimumLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss without fetching the hostile URL", candidates, health, err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the search call", requests)
+	}
+}

@@ -146,3 +146,165 @@ func TestLRCLibCandidates_PlainFallback(t *testing.T) {
 		t.Fatalf("health = %v, want healthy", health)
 	}
 }
+
+func TestLRCLibWordSeparatorsSurviveParsing(t *testing.T) {
+	t.Parallel()
+
+	// LRCLib stores spacing only in the line text; token rendering must not
+	// fuse the words into "firstline".
+	const yamlDoc = "version: '1.0'\n" +
+		"lines:\n" +
+		"- start_ms: 1000\n" +
+		"  end_ms: 2500\n" +
+		"  text: first line\n" +
+		"  words:\n" +
+		"  - text: first\n" +
+		"    start_ms: 1000\n" +
+		"    end_ms: 1500\n" +
+		"  - text: line\n" +
+		"    start_ms: 1500\n" +
+		"    end_ms: 2500\n"
+
+	lines, err := parseLRCLibLyricsFile([]byte(yamlDoc))
+	if err != nil {
+		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+	}
+	rendered := enhancedLRCFromTimedLines(lines)
+	if !strings.Contains(rendered, "<00:01.00>first <00:01.50>line") {
+		t.Fatalf("rendered = %q, want the separator restored between the word tokens", rendered)
+	}
+	if strings.Contains(rendered, "firstline") {
+		t.Fatalf("rendered = %q, fused the word tokens", rendered)
+	}
+}
+
+func TestLRCLibIgnoresMismatchedExactRecord(t *testing.T) {
+	t.Parallel()
+
+	// /api/get is fuzzy too: an unrelated usable record must not become the
+	// winner; the flow falls through to search.
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Other Song","artistName":"Other Artist","duration":280,"plainLyrics":"wrong","syncedLyrics":"[00:01.00]wrong"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 280}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss rather than the unrelated record", candidates, health, err)
+	}
+}
+
+func TestLRCLibMalformedExactRecordStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	// A malformed 200 from /api/get is a retryable provider failure, not a
+	// metadata mismatch that melts into a cached miss.
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName": oops`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	_, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want a degraded decode failure", err, health)
+	}
+}
+
+func TestLRCLibAlignmentFailureDoesNotDuplicate(t *testing.T) {
+	t.Parallel()
+
+	// A LAST token that cannot be found verbatim forfeits the remainder
+	// append: appending the untouched line after the token rendered it twice.
+	rendered := renderLRCLibFixture(t, "version: '1.0'\n"+
+		"lines:\n"+
+		"- start_ms: 1000\n"+
+		"  end_ms: 2500\n"+
+		"  text: first line\n"+
+		"  words:\n"+
+		"  - text: first\n"+
+		"    start_ms: 1000\n"+
+		"    end_ms: 1500\n"+
+		"  - text: line!\n"+
+		"    start_ms: 1500\n"+
+		"    end_ms: 2500\n")
+	if got := strings.Count(rendered, "line"); got != 1 {
+		t.Fatalf("rendered = %q, want the unaligned line rendered once (line appears %d times)", rendered, got)
+	}
+}
+
+func renderLRCLibFixture(t *testing.T, document string) string {
+	t.Helper()
+	lines, err := parseLRCLibLyricsFile([]byte(document))
+	if err != nil {
+		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+	}
+	return enhancedLRCFromTimedLines(lines)
+}
+
+func TestLRCLibMalformedLyricsFileStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","duration":200,"hasWordSync":true,"lyricsfile":"not: [valid","plainLyrics":"","syncedLyrics":""}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	_, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed lyricsfile to degrade without a fallback", err, health)
+	}
+}
+
+func TestLRCLibCandidates_ExactInstrumentalFallsBackToSearch(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":10209922,"trackName":"Live Forever","artistName":"Oasis","duration":280,"instrumental":true,"hasWordSync":false,"plainLyrics":null,"syncedLyrics":null,"lyricsfile":""}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"trackName":"Live Forever","artistName":"Oasis","instrumental":false,"hasWordSync":false,"duration":280,"plainLyrics":"plain rows","syncedLyrics":"[00:01.00]synced","lyricsfile":""}]`)}, nil
+	})
+
+	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{
+		Title: "Live Forever", Artist: "Oasis", Duration: 280,
+	}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLRCLibLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy {
+		t.Fatalf("health = %v, want healthy", health)
+	}
+	if len(candidates) != 1 || candidates[0].quality != timingLine {
+		t.Fatalf("candidates = %#v, want the search fallback line candidate", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "LRCLib", "lrc")
+	if requests != 2 {
+		t.Fatalf("requests = %d, want get then search", requests)
+	}
+}
+
+func TestLRCLibCandidates_InstrumentalSearchMatchIsCleanMiss(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":10209922,"instrumental":true}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"instrumental":true,"duration":280}]`)}, nil
+	})
+
+	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{
+		Title: "Live Forever", Artist: "Oasis", Duration: 280,
+	}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want clean miss when the only search match is instrumental", candidates, health, err)
+	}
+}

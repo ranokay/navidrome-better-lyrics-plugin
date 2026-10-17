@@ -125,3 +125,59 @@ func TestAMLLCandidates_UnexpectedGetPayloadErrors(t *testing.T) {
 		t.Fatalf("health = %v, want degraded", health)
 	}
 }
+
+func TestAMLLyricsEnvelopeStatusesClassified(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	facade := func(searchExecutor func() string) func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			switch {
+			case strings.Contains(request.URL, "amll"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(searchExecutor())}, nil
+			default:
+				return &host.HTTPResponse{StatusCode: 404}, nil
+			}
+		}
+	}
+
+	t.Run("item envelope server status degrades", func(t *testing.T) {
+		provider := newLyricsProvider(facade(func() string { return `{"status":500}` }))
+		_, health, err := fetchAMLLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want degraded on envelope 500", err, health)
+		}
+	})
+
+	t.Run("item envelope 429 activates cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(func() string { return `{"status":429}` }), cache, time.Now, nil, nil)
+		_, _, err := fetchAMLLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("envelope 429 converted to a miss; want a degraded error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("amll")) <= 0 {
+			t.Fatal("envelope 429 activated no cooldown")
+		}
+	})
+
+	t.Run("lyrics envelope server status degrades", func(t *testing.T) {
+		requests := 0
+		provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			requests++
+			switch {
+			case strings.Contains(request.URL, "v1/lyrics/search"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1","musicNames":["Song"],"artistNames":["Artist"]}]}}`)}, nil
+			case strings.Contains(request.URL, "v1/lyrics/get"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":500}`)}, nil
+			default:
+				t.Errorf("unexpected request %q", request.URL)
+				return &host.HTTPResponse{StatusCode: 404}, nil
+			}
+		})
+		_, _, err := fetchAMLLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatalf("lookup succeeded; want a degraded error when the lyrics envelope reports 500 (requests=%d)", requests)
+		}
+	})
+}

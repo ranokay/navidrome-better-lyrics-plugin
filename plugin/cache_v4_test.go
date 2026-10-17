@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
@@ -179,4 +183,156 @@ func TestLyricsProvider_PerSourceCacheSkipsOversizedResults(t *testing.T) {
 	if _, ok := provider.readCachedSourceCandidate(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, "one"); ok {
 		t.Fatal("oversized candidate was cached, want it skipped")
 	}
+}
+
+func TestGetLyrics_TieReRankRespectsConfiguredOrder(t *testing.T) {
+	t.Parallel()
+
+	// An earlier configured source failed during stage one and a later source
+	// supplied the winner; the sweep then cached an equal-quality result for
+	// the earlier source. The tie must resolve to configured order.
+	earlierFailed := true
+	earlier := lyricsSource{
+		ID: "earlier", Display: "earlier", Hosts: []string{"earlier.example.test"}, DefaultEnabled: true,
+		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+			if earlierFailed {
+				return nil, lookupDegraded, errors.New("earlier down")
+			}
+			return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]earlier line"}, "earlier", "lrc")}, lookupHealthy, nil
+		},
+	}
+	sources := []lyricsSource{
+		earlier,
+		stubFetchedCandidate("later", "later", "lrc", "[00:01.00]later line"),
+	}
+	cache := newFakeLyricsCache()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+
+	first, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("first GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, first.Source, "later", "lrc")
+
+	// The sweep caches an equal-quality candidate for the earlier source.
+	if !provider.cacheSourceCandidate(track, "earlier", newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]earlier line"}, "earlier", "lrc")) {
+		t.Fatal("expected the earlier-source candidate to be stored")
+	}
+
+	reread := newLyricsProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	reRanked, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("re-read GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, reRanked.Source, "earlier", "lrc")
+}
+
+func TestWinnerEntriesRespectCredentialChanges(t *testing.T) {
+	t.Parallel()
+
+	// A completed winner recorded without a credential must not stay served
+	// once an administrator provides one: the re-walk reaches the
+	// newly authorized source instead of the cached miss.
+	requests := 0
+	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	}, newFakeLyricsCache(), time.Now, func(key string) (string, bool) { return "", false }, nil)
+
+	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err != nil {
+		t.Fatalf("first GetLyrics() error = %v, want nil", err)
+	}
+	firstRound := requests
+
+	authorized := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "lyrics-api.boidu.dev") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Word\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">authorized line</span></p></tt>"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	}, provider.cache, time.Now, func(key string) (string, bool) {
+		if key == "betterLyricsApiKey" {
+			return "secret", true
+		}
+		return "", false
+	}, nil)
+
+	result, err := authorized.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatalf("re-authorized GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, result.Source, "Better Lyrics", "ttml")
+	if requests <= firstRound {
+		t.Fatalf("requests = %d (first round %d), want the re-authorized lookup to hit the providers again", requests, firstRound)
+	}
+}
+
+func TestCredentialSaltFallbackStaysConsistent(t *testing.T) {
+	t.Parallel()
+
+	// When the store refuses the salt write, every fingerprint in this
+	// process must share the same fallback — memoizing an unsaved random salt
+	// would split fingerprints mid-process.
+	cache := newFakeLyricsCache()
+	cache.setError = errors.New("kv read-only")
+	provider := newLyricsProviderWithDeps(nil, cache, time.Now, func(key string) (string, bool) {
+		if key == "betterLyricsApiKey" {
+			return "secret", true
+		}
+		return "", false
+	}, nil)
+
+	first := provider.lyricsCredentialsFingerprint()
+	second := provider.lyricsCredentialsFingerprint()
+	if first != second {
+		t.Fatalf("fingerprints split across calls: %q vs %q", first, second)
+	}
+}
+
+func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
+	t.Parallel()
+
+	callsTwo := 0
+	line := lyricsSource{
+		ID: "one", Display: "line", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+		Fetch: fetchFixedCandidate("stub", "lrc", "[00:01.00]line"),
+	}
+	syllable := lyricsSource{
+		ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
+		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+			callsTwo++
+			return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"}, "stub", "ttml")}, lookupHealthy, nil
+		},
+	}
+	cache := newFakeLyricsCache()
+	now := time.Unix(5000, 0)
+	sources := []lyricsSource{line, syllable}
+	walkProvider := newLyricsProviderWithSourcesAt(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })
+
+	// Cooldown-gate source two so the stage-one walk cannot cover it, keeping the
+	// winner incomplete at line quality.
+	if err := cache.SetWithTTL(sourceGlobalCooldownKey("two"), []byte(strconv.FormatInt(now.Add(time.Hour).Unix(), 10)), 3600); err != nil {
+		t.Fatalf("seed cooldown: %v", err)
+	}
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	first, err := walkProvider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("first GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, first.Source, "stub", "lrc")
+
+	// The sweep lands the syllable result for the previously skipped source.
+	walkProvider.cacheSourceCandidate(track, "two", newLyricsCandidate(
+		lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"},
+		"stub", "ttml"))
+
+	reread := newLyricsProviderWithSourcesAt(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })
+	result, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("second GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, result.Source, "stub", "ttml")
+	_ = callsTwo
 }

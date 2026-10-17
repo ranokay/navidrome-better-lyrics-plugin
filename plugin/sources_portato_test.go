@@ -107,3 +107,34 @@ func TestPortatoCandidates_MalformedQrcErrors(t *testing.T) {
 		t.Fatalf("candidates/health = %#v/%v, want degraded with no candidates", candidates, health)
 	}
 }
+
+func TestPortatoQRCEnvelopeExtraction(t *testing.T) {
+	t.Parallel()
+
+	// The QQ response wraps QRC inside an XML attribute: literal newlines let
+	// the bracket parser see the rows, but XML entities stay escaped and
+	// entity-encoded line breaks break parsing entirely.
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "qq") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<QrcInfos>\n<LyricInfo LyricCount=\"1\">\n<Lyric_1 LyricType=\"1\" LyricContent=\"[400,400]Rock &amp; Roll(0,400)\u000a[900,300]Go(0,300)\n\"/>\n</LyricInfo>\n</QrcInfos>","provider":"qq"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	candidates, health, err := fetchPortatoLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchPortatoLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v, want one candidate from the XML envelope", candidates, health)
+	}
+	rendered := candidates[0].response.Lyrics[0].Text
+	if strings.Contains(rendered, "&amp;") {
+		t.Fatalf("rendered = %q, want XML entities decoded", rendered)
+	}
+	if !strings.Contains(rendered, "Rock & Roll") || !strings.Contains(rendered, "Go") {
+		t.Fatalf("rendered = %q, want the escaped lyric text unescaped and both lines parsed", rendered)
+	}
+}

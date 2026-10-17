@@ -113,3 +113,53 @@ func TestLunaBeatCandidates_ReorderedRevisionRefetchesIndex(t *testing.T) {
 		t.Fatalf("revision-bumped fetch error = %v, want nil", err)
 	}
 }
+
+func TestLunaBeatIndexFailuresStayDegraded(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis"}
+	facade := func(manifestStatus, indexStatus int32) func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			switch {
+			case strings.Contains(request.URL, "manifest.json"):
+				if manifestStatus == 0 {
+					return &host.HTTPResponse{StatusCode: 404}, nil
+				}
+				return &host.HTTPResponse{StatusCode: manifestStatus, Body: []byte(`{"revision":"r1"}`)}, nil
+			case strings.Contains(request.URL, "songs.json"):
+				return &host.HTTPResponse{StatusCode: indexStatus, Body: []byte(`{"schemaVersion":6,"revision":"r1","songs":[]}`)}, nil
+			default:
+				t.Errorf("unexpected request %q", request.URL)
+				return &host.HTTPResponse{StatusCode: 404}, nil
+			}
+		}
+	}
+
+	t.Run("index http failure degrades", func(t *testing.T) {
+		provider := newLyricsProviderWithDeps(facade(404, 503), newFakeLyricsCache(), time.Now, nil, nil)
+		_, health, err := fetchLunaBeatLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a degraded operational failure", err, health)
+		}
+	})
+
+	t.Run("index 429 activates cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(404, 429), cache, time.Now, nil, nil)
+		_, _, err := fetchLunaBeatLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("index 429 converted to a miss; want a degraded error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("luna-beat")) <= 0 {
+			t.Fatal("index 429 activated no cooldown")
+		}
+	})
+
+	t.Run("valid index without a match stays a healthy miss", func(t *testing.T) {
+		provider := newLyricsProviderWithDeps(facade(200, 200), newFakeLyricsCache(), time.Now, nil, nil)
+		_, health, err := fetchLunaBeatLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health != lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a quiet miss with an empty valid index", err, health)
+		}
+	})
+}

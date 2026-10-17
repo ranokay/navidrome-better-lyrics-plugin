@@ -240,3 +240,35 @@ func TestLyricallyCandidates_DurationMissIsClean(t *testing.T) {
 		t.Fatalf("result = %#v/%v/%v; want clean miss", candidates, health, err)
 	}
 }
+
+func TestAppleSearch429RecordsCooldown(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 429, Headers: map[string]string{"Retry-After": "9"}}, nil
+	}, cache, time.Now, nil, nil)
+
+	_, _, err := fetchLyricallyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil {
+		t.Fatal("429 converted to a miss; want a degraded error")
+	}
+	if cooldown := provider.activeCooldown(sourceGlobalCooldownKey("apple-lyrically")); cooldown < 9*time.Second || cooldown > 10*time.Second {
+		t.Fatalf("cooldown = %v, want the Retry-After value honored", cooldown)
+	}
+}
+
+func TestPetitLyricsMalformedPayloadDegrades(t *testing.T) {
+	t.Parallel()
+
+	// Nonempty invalid base64 across every tier degrades instead of caching
+	// negative coverage.
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<?xml version="1.0"?><response><status>00000000</status><songs><song><lyricsData>!!!not-base64!!!</lyricsData></song></songs></response>`)}, nil
+	})
+
+	candidates, health, err := fetchPetitLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded || len(candidates) != 0 {
+		t.Fatalf("result = %#v/%v/%v; want a degraded malformed payload", candidates, health, err)
+	}
+}
