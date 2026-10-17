@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -1603,16 +1604,30 @@ func TestGeniusSearchEscapesQueryPunctuation(t *testing.T) {
 
 	// Song metadata reaches the query verbatim: "&", "#", and "+" in titles
 	// break or truncate the search, so every new provider must encode its
-	// query (Greptile P1).
-	requests := 0
+	// query (Greptile). The raw query must carry exactly the one encoded
+	// parameter, or the old concatenation could pass unnoticed.
+	var capturedURL string
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
-		requests++
+		capturedURL = request.URL
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"response":{"hits":[]}}`)}, nil
 	})
 
-	fetchGeniusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Love & Hate", Artist: "Artist #1"}, time.Now().Add(stageOneLookupBudget))
-	if requests == 0 {
-		t.Fatal("genius search made no request")
+	if _, _, err := fetchGeniusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Love & Hate", Artist: "Artist #1"}, time.Now().Add(stageOneLookupBudget)); err != nil {
+		t.Fatalf("fetchGeniusLyricsCandidates() error = %v, want nil", err)
+	}
+	parsed, err := url.Parse(capturedURL)
+	if err != nil {
+		t.Fatalf("parse captured URL %q: %v", capturedURL, err)
+	}
+	wantQuery := url.Values{"q": {"Love & Hate Artist #1"}}.Encode()
+	if parsed.RawQuery != wantQuery {
+		t.Fatalf("raw query = %q, want %q (exactly one encoded parameter)", parsed.RawQuery, wantQuery)
+	}
+	if parsed.Fragment != "" {
+		t.Fatalf("fragment = %q, want none: a # in the title must not truncate the URL", parsed.Fragment)
+	}
+	if got := parsed.Query().Get("q"); got != "Love & Hate Artist #1" {
+		t.Fatalf("q = %q, want the full unescaped search text", got)
 	}
 }
 
