@@ -82,10 +82,7 @@ func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) 
 			if err != nil {
 				t.Fatalf("GetLyrics() error = %v, want nil", err)
 			}
-			if len(result.Lyrics) != 1 {
-				t.Fatalf("GetLyrics() lyrics = %#v, want one result", result.Lyrics)
-			}
-			if result.Lyrics[0].Text != test.wantTTML {
+			if text, _ := winnerText(t, result); text != test.wantTTML {
 				t.Fatalf("GetLyrics() text = %q, want %q", result.Lyrics[0].Text, test.wantTTML)
 			}
 			assertLyricsSource(t, result.Source, test.wantProvider, "ttml")

@@ -94,7 +94,7 @@ func TestLyricsProvider_FallbackOrder(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetLyrics() error = %v, want nil", err)
 			}
-			if len(result.Lyrics) != 1 || result.Lyrics[0].Text != test.wantText || result.Lyrics[0].Lang != test.wantLanguage {
+			if text, language := winnerText(t, result); text != test.wantText || language != test.wantLanguage {
 				t.Fatalf("GetLyrics() lyrics = %#v, want text %q and language %q", result.Lyrics, test.wantText, test.wantLanguage)
 			}
 			assertLyricsSource(t, result.Source, test.wantProvider, test.wantFormat)
@@ -179,7 +179,7 @@ func TestLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainText(t *t
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]kugou line" {
+	if text, _ := winnerText(t, result); text != "[00:01.00]kugou line" {
 		t.Fatalf("GetLyrics() lyrics = %#v, want Kugou LRC", result.Lyrics)
 	}
 	assertLyricsSource(t, result.Source, "Better Lyrics Legato", "lrc")

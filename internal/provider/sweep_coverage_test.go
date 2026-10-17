@@ -69,7 +69,7 @@ func TestGetLyrics_NegativeWinnerDefersToFreshPerSourceResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second GetLyrics() error = %v, want nil", err)
 	}
-	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]sweep line" {
+	if text, _ := winnerText(t, result); text != "[00:01.00]sweep line" {
 		t.Fatalf("second GetLyrics() = %#v, want the fresh per-source result (Review: negative winner must not shield sweep results)", result)
 	}
 }

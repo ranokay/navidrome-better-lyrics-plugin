@@ -138,6 +138,13 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		// through the unschedulable sweep path.
 		return lyrics.GetLyricsResponse{}, nil
 	}
+
+	// respond serves the winner plus every other cached source-tagged variant,
+	// so hosts that understand per-entry sources can offer a source switcher.
+	respond := func(candidate lyric.Candidate) lyrics.GetLyricsResponse {
+		return p.responsesWithVariants(track, sources, candidate)
+	}
+
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
 		if candidate.Present() {
 			if !sweepComplete {
@@ -151,14 +158,14 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 				}
 				p.maybeEnqueueSweep(track)
 			}
-			return candidate.Response, nil
+			return respond(candidate), nil
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
 		if best := p.readBestFromSourceCache(track, sources); best.Present() {
 			p.cacheWinner(track, sources, best, false)
 			p.maybeEnqueueSweep(track)
-			return best.Response, nil
+			return respond(best), nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -166,12 +173,12 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		if !sweepComplete {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate.Response, nil
+		return respond(candidate), nil
 	}
 	if best := p.readBestFromSourceCache(track, sources); best.Present() {
 		p.cacheWinner(track, sources, best, false)
 		p.maybeEnqueueSweep(track)
-		return best.Response, nil
+		return respond(best), nil
 	}
 
 	candidate, _, coveredAll, err := p.fetchLyrics(input)
@@ -180,7 +187,7 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		if !coveredAll {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate.Response, nil
+		return respond(candidate), nil
 	}
 	if err == nil {
 		p.cacheNegativeWinner(track, sources, coveredAll)
