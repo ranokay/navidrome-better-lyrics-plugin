@@ -1,8 +1,10 @@
+<p align="center"><img src="docs/assets/icon.png" alt="Better Lyrics plugin icon" width="180"></p>
+
 # Navidrome Better Lyrics plugin
 
-A Navidrome lyrics-provider plugin that uses the public [Better Lyrics API](https://lyrics-api-docs.boidu.dev/) and [Unison community database](https://unison.boidu.dev/) when a track has no local lyrics.
+A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. Version 0.3.0 resolves tracks through seventeen configurable sources — the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, Musixmatch, NetEase, Soda (Luna), PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
 
-The plugin does not inject or replace Navidrome's interface. It returns TTML, LRC, or plain lyrics unchanged through Navidrome's Lyrics capability, so compatible clients can render the same rich timing and metadata present in provider TTML.
+The plugin does not inject or replace Navidrome's interface. It returns TTML, enhanced LRC, or plain lyrics through Navidrome's Lyrics capability, converting proprietary word-timed formats into enhanced LRC so compatible clients can render word-level highlighting.
 
 > [!NOTE]
 > **Pending upstream — [navidrome/navidrome#5733](https://github.com/navidrome/navidrome/pull/5733) (responsive lyrics sidebar).**
@@ -51,44 +53,131 @@ With the priority above, Navidrome stops at the first non-empty source. Sidecar 
 
 ## Provider behavior
 
-The plugin ranks usable results by synchronization quality:
+The plugin walks the enabled sources in configured order:
 
-1. Syllable-timed TTML.
-2. Word-timed TTML.
-3. Line-timed TTML or timestamped LRC.
-4. Unsynchronized text.
+1. **Stage one — first paint.** On a cache miss it queries the top few implemented
+   sources under an 8-second budget, stopping as soon as a syllable-timed result
+   lands, and returns the best candidate found ( Higher timing quality always wins:
+   syllable > word > line > unsynced ). Word-synced payloads from proprietary
+   formats (QRC, KRC, YRC, LYL, richsync, WSY) are converted to enhanced LRC.
+2. **Stage two — background sweep.** The same lookup enqueues a task that walks
+   *every* enabled source for the track and caches each result separately, so the
+   per-song source picker (pending [navidrome/navidrome#6033](https://github.com/navidrome/navidrome/pull/6033)) fills in progressively and returns instantly on replays.
 
-The plugin checks Better Lyrics TTML first using title, artist, album, and duration. After a `401`, `404`, an empty TTML payload, or a cached-tier `429`, it broadens the lookup without immediately discarding useful disambiguation: first title, artist, and duration without album, then title and artist only. A valid syllable-timed result returns immediately. Lower-quality TTML is compared with Unison before selection. Unison follows the same specificity-first idea on clean misses: title, artist, album, and duration; then title, artist, and duration; then title and artist. Kugou is queried only when no service has produced line-timed or better lyrics. Better Lyrics wins quality ties, followed by Unison and Kugou.
+Selection and caching rules:
 
-Provider-reported TTML must parse as complete XML before it can win the quality comparison, so malformed high-quality metadata cannot suppress a usable fallback. LRC is considered line-synchronized only when it contains timestamped lyric lines. Successful TTML, LRC, and plain text are otherwise preserved exactly as received so Navidrome can select the matching parser.
+- The winner cache keys score against a fingerprint of the enabled and ordered
+  source list, so reordering sources in Settings takes effect on the next lookup.
+  Winner TTLs follow timing quality: 24 h for syllable TTML, 1 h for word/line,
+  5 min for plain text and complete misses. Per-source results cache for 24 h
+  (synchronized) or 1 h (plain).
+- The Better Lyrics endpoints keep their specificity tiers: full
+  metadata → without album → title+artist only, with identical-URL dedup. Unison
+  follows the same broadening after clean misses. Other sources use a single
+  query scoped by a duration drift of at most two seconds. The `401` behavior is
+  cache-only ("possibly exists, but not anonymously"), and an optional API key
+  turns it into a clean miss.
+- Independent source failures don't block later sources; a global rate limit
+  observed from one endpoint pauses its sibling endpoints for the rest of that
+  lookup and for the cooldown duration. Retry-After values (capped at one hour)
+  are honored, with conservative per-source default cooldowns. Provider cooldowns
+  persist across plugin instances when the KV store is available; cache/cooldown
+  storage failures fail open rather than making lyrics unavailable.
+- Each HTTP request can run for at most six seconds; the synchronous stage runs
+  under an eight-second budget.
+- Sources that ship disabled by default (`luna-beat`, `apple-lyrically`) query
+  community mirrors with unclear distribution rights; enable them deliberately
+  in Settings → Plugins → Better Lyrics.
 
 Legacy is deprecated and is not queried.
-
-The public API is cache-first:
-
-- Cached songs do not require an API key.
-- Uncached Better Lyrics requests can return `401 Unauthorized`. Because this means that the exact query is not available to an unauthenticated cache-only lookup rather than proving that lyrics do not exist, a fallback reached through `401` is treated as uncertain and cached for one hour instead of a full day.
-- `404 Not Found` is a normal no-match result.
-- Independent provider failures do not block a later provider. If every provider misses, operational failures are returned to Navidrome for logging.
-- Clean successful results are cached in Navidrome's plugin store for 24 hours. Successful fallbacks reached through cache-only `401` responses use a one-hour TTL. Successful fallbacks reached after transport, server, parsing, or rate-limit failures and complete misses use a five-minute TTL, so preferred providers can be retried promptly. Operational failure responses themselves are never cached.
-- The persistent store is capped at 32 MB. The plugin does not cache an individual lyrics response larger than 1 MB and reserves 1 MB of store capacity for cooldown state when the host exposes storage usage, preventing ordinary lyrics entries from consuming all space required for rate-limit protection.
-- A Better Lyrics cached-tier `429 Too Many Requests` cools down only the failed query, so another song can still hit the public cache. An explicit `X-RateLimit-Type: exceeded` response starts a shared cooldown for all Better Lyrics endpoints, including Kugou. Better Lyrics honors `Retry-After` as either seconds or an HTTP date, falling back to 30 seconds when the header is absent or invalid.
-- Unison has a separate provider-wide cooldown. Its current public read limiter may return `429` without `Retry-After`; in that case the plugin waits 60 seconds before trying Unison again while Better Lyrics and Kugou remain available.
-- Provider cooldowns are persisted across plugin instances when the KV store is available. `Retry-After` is capped at one hour so a malformed or extreme upstream value cannot disable a provider indefinitely. Cache/cooldown storage failures fail open rather than making lyrics unavailable, while a rate limit observed during the current lookup is still respected for the rest of that lookup.
-- Each HTTP request can run for at most six seconds, and an entire cold lookup has a 15-second budget. Later fallbacks receive only the remaining budget. A valid syllable-timed Better Lyrics cache hit still completes after one request; broader metadata tiers are attempted only when the preceding response makes them useful.
 
 > [!NOTE]
 > **Pending upstream — [navidrome/navidrome#6032](https://github.com/navidrome/navidrome/pull/6032) (host-side request coalescing).**
 > Navidrome currently creates separate plugin calls for concurrent requests of the same track; PR #6032 coalesces them in the host. Until that change is present in the running Navidrome build, identical simultaneous cold lookups can still reach this plugin independently.
 > *When it ships:* delete this block.
 
+## Source catalogue
+
+| Source | Sync level | Default | Endpoint(s) | Notes |
+|---|---|---|---|---|
+| Better Lyrics | syllable TTML | on | `lyrics-api.boidu.dev` | cached-first public API; optional API key config |
+| Unison | syllable/word/line/plain | on | `unison.boidu.dev` | crowdsourced; attribution required |
+| BiniLyrics | word/line TTML | on | `lyrics-api.binimum.org` → `lrc.red` | Apple-shaped TTML; Navidrome parses it natively |
+| AMLL | word/line TTML | on | `api.amll.dev` | community Apple-style TTML DB |
+| LunaBeat | word TTML | **off** | `2755337087.github.io` | static community hub, unclear licensing |
+| Apple Music (Lyrically) | word elrc/TTML | **off** | `itunes.apple.com`, `lyrics.paxsenix.org` | third-party mirror with unknown longevity |
+| Better Lyrics Portato | word (QRC→elrc) | on | `lyrics-api.boidu.dev/qq/getLyrics` | QQ word sync via the same API |
+| Musixmatch | word (richsync→elrc) / line / plain | on | `apic.musixmatch.com` | the anonymous self-minted token currently answers without subtitle macros (intermittently captcha-gated); the optional user-token config unlocks the word and line tiers |
+| NetEase | word (YRC→elrc) / line | on | `music.163.com` | unauthenticated plain API; YRC only where available |
+| Soda (Luna) | word (KRC→elrc) / line | on | `api.qishui.com`, `beta-luna.douyin.com` | unofficial endpoints, client UA required |
+| PetitLyrics | word (WSY→elrc) / plain | on | `p0.petitlyrics.com` | uses the official app's client id; official client-binary decoding of the line-tier binary is not implemented |
+| LRCLib | line / word (`lyricsfile`) / plain | on | `lrclib.net` | public API with an identifying User-Agent and real throttling |
+| Better Lyrics Legato | line LRC | on | `lyrics-api.boidu.dev/kugou/getLyrics` | Kugou LRC via the same API |
+| Lyricify | line / word LYL | on | `api.credits.fm`, `api.lyricify.app` | unofficial mobile endpoint; throwaway random username |
+| LyricsPlus | word (KPoe→elrc) | on | `lyricsplus.binimum.org`, `lyricsplus.atomix.one` | community Apple-timing mirrors; multi-host rotation on mirror failure |
+| YouTube Music | plain | **off** | `music.youtube.com` | the official YTM lyrics tab via the public innertube client; 3-hop lookup, duration-gated video match |
+| Genius | plain | **off** | `genius.com` | keyless Genius search + plain-text lyric scrape; strict-ish metadata gate |
+
+Not carried over from the Better Lyrics extension's list:
+
+- **PaxSenix: Spotify / PaxSenix: Musixmatch** — the `lyrics.paxsenix.org`
+  backends beyond `/apple-music/lyrics` were shut down ("no longer available";
+  verified live). Spotify-word lyrics have no other keyless source, and native
+  Musixmatch (this plugin's own source) is richer than the mirror.
+- **lrc.red as a separate source** — BiniLyrics and Unison already cover the
+  same Apple-graded TTML store (BiniLyrics fetches `lrc.red/s/{isrc}.ttml`
+  directly).
+- **YouTube captions** — closed-caption tracks for music videos are spoken-ASR,
+  not lyric-timed; the extension matches them in-browser against the playing
+  video, which has no Navidrome-side equivalent at the same fidelity.
+
+Sources with word timing convert their proprietary formats into enhanced LRC so
+Navidrome's own parser keeps the word cues. `api.betterlyrics.org` and
+`unison.betterlyrics.org` are replacements for the older boidu.dev domains; this
+release keeps the existing hosts because both currently serve identical traffic.
+
+## Settings (navidrome plugin config)
+
+Settings → Plugins → Better Lyrics exposes:
+
+- **Lyric sources** — an ordered list with enable checkboxes; the top row wins
+  timing-quality ties. The shipped default order is the catalogue above.
+- **Better Lyrics API key** — optional; sent only as the `X-API-Key` header to
+  `lyrics-api.boidu.dev`, never logged or included in URLs.
+- **Musixmatch user token** — optional; sent only to `apic.musixmatch.com`,
+  replacing the anonymous self-minted token when a captcha challenge appears,
+  and the only credential that currently unlocks the line and word tiers.
+
+The plugin falls back to its built-in defaults when a config save drops or
+empties the source list; a listed-but-disabled source stays disabled. Saving the
+list with every row disabled is a deliberate opt-out: the plugin then performs no
+network fetches at all (and better-lyrics disappears from `LyricsPriority`
+behavior until it is re-enabled).
+
 See the Better Lyrics documentation for the current [authentication](https://lyrics-api-docs.boidu.dev/docs/authentication), [rate limits](https://lyrics-api-docs.boidu.dev/docs/rate-limiting), and [response format](https://lyrics-api-docs.boidu.dev/docs/response-format).
 
 ## Privacy and attribution
 
-Using this plugin sends song metadata, the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version> (+https://github.com/ranokay/navidrome-better-lyrics-plugin)`) to Better Lyrics and Unison; it does not send the browser's user agent. Better Lyrics receives title, artist, album, and duration on the first attempt; broader retries can omit album and then duration. Unison likewise receives title, artist, album, and duration on its first attempt and can retry without album and then duration after clean misses. The Kugou fallback endpoint (`https://lyrics-api.boidu.dev/kugou/getLyrics`) receives title, artist, the Navidrome server's IP address, and the same fixed plugin user agent. Better Lyrics says request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md) before enabling the plugin.
+Using this plugin sends song metadata (title, artist, album, duration), the Navidrome server's IP address, and a fixed plugin user agent (`NavidromeBetterLyricsPlugin/<version> (+https://github.com/ranokay/navidrome-better-lyrics-plugin)`) to **every enabled source's host**; it never forwards a client browser's user agent beyond what each provider requires:
 
-Lyrics are supplied by Better Lyrics, Unison, and their upstream contributors. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
+- `lyrics-api.boidu.dev` (Better Lyrics TTML/QQ/Kugou): title, artist, album, and duration on the first attempt; broader retries can omit album and then duration. Request logs can be retained for up to seven days and song metadata may be forwarded to third-party APIs such as LRCLib. Review its [privacy policy](https://github.com/better-lyrics/better-lyrics/blob/master/PRIVACY.md).
+- `unison.boidu.dev`: title, artist, album, and duration on the first attempt; broader retries can omit album and then duration.
+- `lrclib.net`: title, artist, album, and duration; the API asks clients to identify themselves via the User-Agent.
+- `lyrics-api.binimum.org` and `lrc.red`: title, artist, album, and duration, then the matched record's `lyricsUrl`.
+- `lyricsplus.binimum.org` and `lyricsplus.atomix.one` (LyricsPlus): title, artist, album, and duration, with mirror rotation.
+- `api.amll.dev`: title, artist, and album.
+- `apic.musixmatch.com`: title, artist, duration, plus the anonymous (or admin-configured) user token in the query string as the documented client does.
+- `music.163.com` (NetEase): title, artist, duration, and the matched song's id in the query string. Unofficial endpoints may change without notice.
+- `api.qishui.com` and `beta-luna.douyin.com` (Soda/Luna): title, artist, duration, and generated device identifiers that imitate the Android client; large search payloads are part of that API's contract.
+- `p0.petitlyrics.com`: title, artist, album, and the official app's `clientAppId`.
+- `api.credits.fm` and `api.lyricify.app`: title and artist, then a base64 ISRC and a generated throwaway username.
+- `2755337087.github.io` (LunaBeat, default off) and `itunes.apple.com` + `lyrics.paxsenix.org` (Apple via Lyrically, default off): community mirrors whose operators set their own terms.
+- `music.youtube.com` (YouTube Music, default off): title and artist in the search request, then the matched video id in the follow-up calls.
+- `genius.com` (Genius, default off): title and artist to the search endpoint, then the matched song's page.
+
+Because several providers are **unofficial endpoints scraped or reverse-engineered by other open-source apps, they can break or change without notice**. Every source is off-switchable in Settings, and local lyrics always win `LyricsPriority` before fetchers run.
+
+Lyrics are supplied by the enabled providers and their upstream contributors. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
 
 Thanks to [Better Lyrics](https://betterlyrics.org/) for making its synchronized-lyrics API available.
 

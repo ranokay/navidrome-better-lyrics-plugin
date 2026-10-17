@@ -1,0 +1,26 @@
+{
+ "message": {
+  "header": {
+   "status_code": 200,
+   "execute_time": 0.117,
+   "pid": 21,
+   "surrogate_key_list": []
+  },
+  "body": {
+   "macro_calls": {
+    "track.richsync.get": {
+     "header": null,
+     "body": null
+    },
+    "track.subtitles.get": {
+     "header": null,
+     "body": null
+    },
+    "track.lyrics.get": {
+     "header": null,
+     "body": null
+    }
+   }
+  }
+ }
+}

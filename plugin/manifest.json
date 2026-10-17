@@ -1,21 +1,199 @@
 {
-  "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.63.2/plugins/manifest-schema.json",
-  "name": "Better Lyrics",
-  "author": "Yuuta",
-  "version": "0.1.0",
-  "description": "Provides lyrics from Better Lyrics and the Unison community database",
-  "website": "https://github.com/ranokay/navidrome-better-lyrics-plugin",
-  "permissions": {
-    "http": {
-      "reason": "Fetch lyrics from Better Lyrics and the Unison community database",
-      "requiredHosts": [
-        "lyrics-api.boidu.dev",
-        "unison.boidu.dev"
-      ]
-    },
-    "kvstore": {
-      "reason": "Cache lyrics and share provider rate-limit cooldowns",
-      "maxSize": "32MB"
-    }
+ "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.63.2/plugins/manifest-schema.json",
+ "name": "Better Lyrics",
+ "author": "Yuuta",
+ "version": "0.3.0",
+ "description": "Provides lyrics from Better Lyrics, Unison, LRCLib, BiniLyrics, AMLL, Musixmatch, NetEase, Luna, PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius and curated TTML communities",
+ "website": "https://github.com/ranokay/navidrome-better-lyrics-plugin",
+ "permissions": {
+  "http": {
+   "reason": "Fetch lyrics from the enabled lyric sources",
+   "requiredHosts": [
+    "lyrics-api.boidu.dev",
+    "unison.boidu.dev",
+    "lyrics-api.binimum.org",
+    "lrc.red",
+    "api.amll.dev",
+    "2755337087.github.io",
+    "itunes.apple.com",
+    "lyrics.paxsenix.org",
+    "apic.musixmatch.com",
+    "music.163.com",
+    "api.qishui.com",
+    "beta-luna.douyin.com",
+    "p0.petitlyrics.com",
+    "api.credits.fm",
+    "api.lyricify.app",
+    "lrclib.net",
+    "lyricsplus.binimum.org",
+    "lyricsplus.atomix.one",
+    "music.youtube.com",
+    "genius.com"
+   ]
+  },
+  "kvstore": {
+   "reason": "Cache lyrics and share provider rate-limit cooldowns",
+   "maxSize": "32MB"
+  },
+  "taskqueue": {
+   "reason": "Background sweep refreshes per-source lyric caches for recently played tracks",
+   "maxConcurrency": 1
   }
+ },
+ "config": {
+  "schema": {
+   "type": "object",
+   "properties": {
+    "sources": {
+     "type": "array",
+     "title": "Lyric sources (top wins)",
+     "description": "Column 1 orders sources top-down; column 2 enables each. Removing a source lets its default state apply after the next release.",
+     "minItems": 1,
+     "items": {
+      "type": "object",
+      "properties": {
+       "id": {
+        "type": "string",
+        "title": "Source",
+        "enum": [
+         "better-lyrics",
+         "unison",
+         "binimum",
+         "amll",
+         "luna-beat",
+         "apple-lyrically",
+         "better-lyrics-portato",
+         "musixmatch",
+         "netease",
+         "luna",
+         "petitlyrics",
+         "lrclib",
+         "better-lyrics-legato",
+         "lyricify",
+         "lyricsplus",
+         "yt-music",
+         "genius"
+        ],
+        "default": "better-lyrics"
+       },
+       "enabled": {
+        "type": "boolean",
+        "title": "Enabled",
+        "default": true
+       }
+      },
+      "required": [
+       "id"
+      ]
+     },
+     "default": [
+      {
+       "id": "better-lyrics",
+       "enabled": true
+      },
+      {
+       "id": "unison",
+       "enabled": true
+      },
+      {
+       "id": "binimum",
+       "enabled": true
+      },
+      {
+       "id": "amll",
+       "enabled": true
+      },
+      {
+       "id": "luna-beat",
+       "enabled": false
+      },
+      {
+       "id": "apple-lyrically",
+       "enabled": false
+      },
+      {
+       "id": "better-lyrics-portato",
+       "enabled": true
+      },
+      {
+       "id": "musixmatch",
+       "enabled": true
+      },
+      {
+       "id": "netease",
+       "enabled": true
+      },
+      {
+       "id": "luna",
+       "enabled": true
+      },
+      {
+       "id": "petitlyrics",
+       "enabled": true
+      },
+      {
+       "id": "lrclib",
+       "enabled": true
+      },
+      {
+       "id": "better-lyrics-legato",
+       "enabled": true
+      },
+      {
+       "id": "lyricify",
+       "enabled": true
+      },
+      {
+       "id": "lyricsplus",
+       "enabled": true
+      },
+      {
+       "id": "yt-music",
+       "enabled": false
+      },
+      {
+       "id": "genius",
+       "enabled": false
+      }
+     ]
+    },
+    "betterLyricsApiKey": {
+     "type": "string",
+     "title": "Better Lyrics API key (optional)",
+     "description": "Sent as the X-API-Key header to lyrics-api.boidu.dev only; never logged"
+    },
+    "musixmatchUserToken": {
+     "type": "string",
+     "title": "Musixmatch user token (optional)",
+     "description": "Alternative to the self-minted anonymous token; sent to apic.musixmatch.com only"
+    }
+   }
+  },
+  "uiSchema": {
+   "type": "VerticalLayout",
+   "elements": [
+    {
+     "type": "Control",
+     "scope": "#/properties/sources",
+     "options": {
+      "showSortButtons": true
+     }
+    },
+    {
+     "type": "Control",
+     "scope": "#/properties/betterLyricsApiKey",
+     "options": {
+      "format": "password"
+     }
+    },
+    {
+     "type": "Control",
+     "scope": "#/properties/musixmatchUserToken",
+     "options": {
+      "format": "password"
+     }
+    }
+   ]
+  }
+ }
 }

@@ -20,12 +20,21 @@ const (
 
 var lrcTimestampPattern = regexp.MustCompile(`(?m)^\s*(?:\[[0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?\])+`)
 
+// enhancedWordPattern matches the inline word markers of enhanced LRC (LRCLib,
+// Karaoke effects and converted word-synced sources).
+var enhancedWordPattern = regexp.MustCompile(`<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>`)
+
 type lyricsCandidate struct {
 	response lyrics.GetLyricsResponse
 	quality  lyricTimingQuality
 }
 
 func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsCandidate {
+	if !lyricsTextHasContent(text.Text, format) {
+		// A well-formed but empty or metadata-only payload (e.g. `<tt></tt>`)
+		// must not become a present candidate that outranks usable fallbacks.
+		return lyricsCandidate{}
+	}
 	quality := timingUnsynced
 	switch format {
 	case "ttml":
@@ -34,15 +43,83 @@ func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsC
 		if !valid {
 			return lyricsCandidate{}
 		}
-	case "lrc":
+	case "lrc", "elrc":
 		if lrcTimestampPattern.MatchString(text.Text) {
 			quality = timingLine
+		}
+		if enhancedWordPattern.MatchString(text.Text) {
+			quality = timingWord
 		}
 	}
 	return lyricsCandidate{
 		response: sourcedLyricsResponse(text, provider, format),
 		quality:  quality,
 	}
+}
+
+// lyricsTextHasContent reports whether a payload carries servable lyric text:
+// tags and timing stamps alone do not count.
+func lyricsTextHasContent(value, format string) bool {
+	if format == "ttml" {
+		// Only text inside lyric-bearing nodes counts: metadata/head text in
+		// an otherwise empty body must not pass. Documents
+		// without a <body> fall back to any character data so bare lyric
+		// roots keep working.
+		decoder := xml.NewDecoder(strings.NewReader(value))
+		anyText, bodyText, sawBody := false, false, false
+		inBody := false
+		for {
+			token, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			switch typed := token.(type) {
+			case xml.StartElement:
+				if strings.EqualFold(typed.Name.Local, "body") {
+					sawBody, inBody = true, true
+				}
+			case xml.EndElement:
+				if strings.EqualFold(typed.Name.Local, "body") {
+					inBody = false
+				}
+			case xml.CharData:
+				if strings.TrimSpace(string(typed)) == "" {
+					continue
+				}
+				anyText = true
+				if inBody {
+					bodyText = true
+				}
+			}
+		}
+		if sawBody {
+			return bodyText
+		}
+		return anyText
+	}
+	text := lrcTimestampPattern.ReplaceAllString(value, " ")
+	text = enhancedWordPattern.ReplaceAllString(text, " ")
+	return strings.TrimSpace(text) != ""
+}
+
+// emptyLyricsDocument reports a payload with no lyric content that is still
+// structurally well-formed (e.g. `<tt></tt>`): such documents are clean
+// misses, whereas malformed XML degrades. TTML well-formedness is checked
+// structurally; other formats treat parsed-but-contentless as empty.
+func emptyLyricsDocument(value, format string) bool {
+	if lyricsTextHasContent(value, format) {
+		return false
+	}
+	if format == "ttml" {
+		return xml.Unmarshal([]byte(value), new(xmlNode)) == nil
+	}
+	return true
+}
+
+// xmlNode is a permissive document root for the well-formedness check.
+type xmlNode struct {
+	XMLName  xml.Name
+	Children []xmlNode `xml:",any"`
 }
 
 func (candidate lyricsCandidate) present() bool {

@@ -12,13 +12,13 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-func TestBetterLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *testing.T) {
+func TestLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
 	cache := newFakeLyricsCache()
 	requests := make([]host.HTTPRequest, 0, 4)
-	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -60,11 +60,11 @@ func TestBetterLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *
 	}
 }
 
-func TestBetterLyricsProvider_RetriesAQueryRateLimitWithBroaderMetadata(t *testing.T) {
+func TestLyricsProvider_RetriesAQueryRateLimitWithBroaderMetadata(t *testing.T) {
 	t.Parallel()
 
 	requests := make([]host.HTTPRequest, 0, 2)
-	provider := newBetterLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests = append(requests, request)
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -108,13 +108,13 @@ func TestBetterLyricsProvider_RetriesAQueryRateLimitWithBroaderMetadata(t *testi
 	}
 }
 
-func TestBetterLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.T) {
+func TestLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("cache unavailable")
 	requests := 0
-	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -142,13 +142,13 @@ func TestBetterLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.
 	}
 }
 
-func TestBetterLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) {
+func TestLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 23, 6, 0, 0, int(900*time.Millisecond), time.UTC)
 	currentTime := now
 	cache := newFakeLyricsCache()
-	provider := newBetterLyricsProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
+	provider := newLyricsProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
 	const requestURL = "https://lyrics-api.boidu.dev/getLyrics?s=Song&a=Artist"
 	provider.rememberRateLimit(&host.HTTPResponse{
 		Headers: map[string]string{"Retry-After": "1", "X-RateLimit-Type": "exceeded"},
@@ -168,13 +168,13 @@ func TestBetterLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) 
 	}
 }
 
-func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
+func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
 	cache := newFakeLyricsCache()
 	firstRequests := 0
-	first := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	first := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		firstRequests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -200,12 +200,12 @@ func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing
 	if firstRequests != 2 {
 		t.Fatalf("first request count = %d, want Better Lyrics then Unison with Kugou suppressed", firstRequests)
 	}
-	if ttl := cache.lastTTL(); ttl != 12 {
+	if ttl := cache.ttlsForKey[betterLyricsGlobalCooldownKey]; ttl != 12 {
 		t.Fatalf("cooldown TTL = %d, want Retry-After value 12", ttl)
 	}
 
 	secondRequests := 0
-	second := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	second := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		secondRequests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -218,22 +218,24 @@ func TestBetterLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing
 	}, cache, func() time.Time { return now })
 
 	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
-	if err == nil || !strings.Contains(err.Error(), "cooldown active") {
-		t.Fatalf("second GetLyrics() error = %v, want active cooldown", err)
+	// The walker now pre-gates cooled-down sources, so the shared cooldown shows
+	// up as zero requests to the better-lyrics family instead of a cooldown error.
+	if err != nil {
+		t.Fatalf("second GetLyrics() error = %v, want clean miss", err)
 	}
 	if secondRequests != 1 {
 		t.Fatalf("second request count = %d, want one Unison request", secondRequests)
 	}
 }
 
-func TestBetterLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
+func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 23, 7, 0, 0, 0, time.UTC)
 	cache := newFakeLyricsCache()
 	firstUnisonRequests := 0
 	firstKugouRequests := 0
-	first := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	first := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -257,13 +259,19 @@ func TestBetterLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	if firstUnisonRequests != 1 || firstKugouRequests != 1 {
 		t.Fatalf("first requests: Unison=%d Kugou=%d, want 1 each", firstUnisonRequests, firstKugouRequests)
 	}
-	if ttl := cache.lastTTL(); ttl != int64(defaultUnisonRateLimitCooldown/time.Second) {
-		t.Fatalf("Unison cooldown TTL = %d, want %d", ttl, int64(defaultUnisonRateLimitCooldown/time.Second))
+	cooldownTTL := int64(0)
+	for _, recorded := range cache.ttls {
+		if recorded == int64(defaultUnisonRateLimitCooldown/time.Second) {
+			cooldownTTL = recorded
+		}
+	}
+	if cooldownTTL == 0 {
+		t.Fatalf("Unison cooldown TTL taints = %v, want %d", cache.ttls, int64(defaultUnisonRateLimitCooldown/time.Second))
 	}
 
 	secondUnisonRequests := 0
 	secondKugouRequests := 0
-	second := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	second := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -279,8 +287,9 @@ func TestBetterLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	}, cache, func() time.Time { return now })
 
 	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
-	if err == nil || !strings.Contains(err.Error(), "unison API cooldown active") {
-		t.Fatalf("second GetLyrics() error = %v, want Unison cooldown", err)
+	// Pre-gating turns "unison API cooldown active" into "no Unison request".
+	if err != nil {
+		t.Fatalf("second GetLyrics() error = %v, want clean miss", err)
 	}
 	if secondUnisonRequests != 0 || secondKugouRequests != 1 {
 		t.Fatalf("second requests: Unison=%d Kugou=%d, want 0 and 1", secondUnisonRequests, secondKugouRequests)

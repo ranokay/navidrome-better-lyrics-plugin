@@ -1,0 +1,982 @@
+{
+ "schemaVersion": 2,
+ "revision": "b73735071788b59303d7",
+ "generatedAt": "2026-09-20T10:05:12.000Z",
+ "songs": [
+  {
+   "id": "e57f168dfe4491bc",
+   "title": "(......醉鬼阿Q) (feat. 孙燕姿)",
+   "artists": [
+    "吴青峰"
+   ],
+   "album": "马拉美的星期二",
+   "albums": [
+    "马拉美的星期二"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1646586588"
+    ]
+   },
+   "path": "lyrics/e5/e57f168dfe4491bc.ttml",
+   "sha256": "febfee158c029cad3ba40ddce385444ed33c2a4dcc2e43fdb0088afa0ff6c2e8"
+  },
+  {
+   "id": "9e4e4403ab4f2262",
+   "title": "(......醉鬼阿Q) [feat. 孙燕姿]",
+   "artists": [
+    "吴青峰"
+   ],
+   "album": "(......醉鬼阿Q) [feat. 孙燕姿]",
+   "albums": [
+    "(......醉鬼阿Q) [feat. 孙燕姿]",
+    "(......醉鬼阿Q) [feat. 孙燕姿] - Single"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1642448491"
+    ]
+   },
+   "path": "lyrics/9e/9e4e4403ab4f2262.ttml",
+   "sha256": "c25f565fa5c7edeb1c58029354c6c02c20575f02aabf3fff6a74ce742ab5ebff"
+  },
+  {
+   "id": "f45272b49300744f",
+   "title": "《梦的烛衣》(《大梦归离》影视剧情殇曲)",
+   "artists": [
+    "张碧晨"
+   ],
+   "album": "《大梦归离》影视原声带",
+   "albums": [
+    "《大梦归离》影视原声带"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1777757234"
+    ]
+   },
+   "path": "lyrics/f4/f45272b49300744f.ttml",
+   "sha256": "1371a9691b71ed5ea40bdcf53eaeb88d0a997f7bbd28da161cefc3eeca8b1dd0"
+  },
+  {
+   "id": "9dd2aa2193467e37",
+   "title": "《无心生大梦》(《大梦归离》影视剧燃斗曲)",
+   "artists": [
+    "刘宇宁"
+   ],
+   "album": "《无心生大梦》(《大梦归离》影视剧燃斗曲) - Single",
+   "albums": [
+    "《无心生大梦》(《大梦归离》影视剧燃斗曲) - Single",
+    "《无心生大梦》(《大梦归离》影视剧燃斗曲)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1777012212"
+    ]
+   },
+   "path": "lyrics/9d/9dd2aa2193467e37.ttml",
+   "sha256": "17fa2f804f4049303b754875215831c64455bc106206640517e5a4f09f289c65"
+  },
+  {
+   "id": "468b501592947c38",
+   "title": "100",
+   "artists": [
+    "TizzyT",
+    "Tizzy T"
+   ],
+   "album": "黑怕盲盒Vol.1示爱系列",
+   "albums": [
+    "黑怕盲盒Vol.1示爱系列",
+    "黑怕盲盒Vol.1示爱系列 - EP"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "qqMusicId": [
+     "001moUqw3UB8Z0"
+    ],
+    "ncmMusicId": [
+     "1983456716"
+    ],
+    "appleMusicId": [
+     "1654094792"
+    ]
+   },
+   "path": "lyrics/46/468b501592947c38.ttml",
+   "sha256": "0085e9c6206090d636a37a2ec082f1ea13f6d8f7c2292148544b7521c08ac960"
+  },
+  {
+   "id": "2660bed0151af4c0",
+   "title": "11",
+   "artists": [
+    "队长",
+    "黄礼格",
+    "Young Captain"
+   ],
+   "album": "11",
+   "albums": [
+    "11",
+    "11 - Single"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "aliases": [
+    "11 (feat. 黃禮格)"
+   ],
+   "sourceIds": {
+    "qqMusicId": [
+     "0012g3Et1iFQCC"
+    ],
+    "ncmMusicId": [
+     "1907766514"
+    ],
+    "appleMusicId": [
+     "1604377833"
+    ],
+    "isrc": [
+     "CNZ632101126"
+    ]
+   },
+   "path": "lyrics/26/2660bed0151af4c0.ttml",
+   "sha256": "bc06cde1d2b510bb0febdedb80491877f3a56707da24cf58c2a23ede45480906"
+  },
+  {
+   "id": "9b0936d2d1a65a8f",
+   "title": "11",
+   "artists": [
+    "邓紫棋"
+   ],
+   "album": "T.I.M.E. - EP",
+   "albums": [
+    "T.I.M.E. - EP",
+    "T.I.M.E."
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1717034375"
+    ]
+   },
+   "path": "lyrics/9b/9b0936d2d1a65a8f.ttml",
+   "sha256": "0648101009aa26f16592644896136f897e2f42377bc447e059c1e1a9cf58516e"
+  },
+  {
+   "id": "2bb3f82e36d8be28",
+   "title": "1234567",
+   "artists": [
+    "陈绮贞"
+   ],
+   "album": "吉他手",
+   "albums": [
+    "吉他手"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "152198022"
+    ]
+   },
+   "path": "lyrics/2b/2bb3f82e36d8be28.ttml",
+   "sha256": "40b2fb5950b19bb46ccefb1f5066b8ab53e7697fb031db255f6d6003c2005001"
+  },
+  {
+   "id": "b6bb4037ffbd4b21",
+   "title": "1234567",
+   "artists": [
+    "方大同"
+   ],
+   "album": "橙月",
+   "albums": [
+    "橙月"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "313404806"
+    ]
+   },
+   "path": "lyrics/b6/b6bb4037ffbd4b21.ttml",
+   "sha256": "356a6d67c72166c0ad3f25d3e2a9c9f6408408e7dee4163e4c0330521a0add49"
+  },
+  {
+   "id": "8d2b2711d35820a6",
+   "title": "15岁的那年",
+   "artists": [
+    "王杰"
+   ],
+   "album": "无题",
+   "albums": [
+    "无题"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1709044228"
+    ]
+   },
+   "path": "lyrics/8d/8d2b2711d35820a6.ttml",
+   "sha256": "32098405ca3082f1f87547ed5ccb7400ddfa182aaf524d92c1f3f7ed83b77c53"
+  },
+  {
+   "id": "0685a7255d67488b",
+   "title": "180度",
+   "artists": [
+    "孙燕姿"
+   ],
+   "album": "是时候",
+   "albums": [
+    "是时候"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1442430993"
+    ]
+   },
+   "path": "lyrics/06/0685a7255d67488b.ttml",
+   "sha256": "a03235d0a68e9b14493a84dcb7b1533030d0925040a464e15b293504a39462d2"
+  },
+  {
+   "id": "189a8f682baff8a2",
+   "title": "199玫瑰",
+   "artists": [
+    "伍佰",
+    "China Blue"
+   ],
+   "album": "199玫瑰",
+   "albums": [
+    "199玫瑰",
+    "199玫瑰 - Single"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "151377244"
+    ]
+   },
+   "path": "lyrics/18/189a8f682baff8a2.ttml",
+   "sha256": "634b878a74402b1b217c5b510a41b9ab957fc05b54ff6c748d711b08cdb9c1c1"
+  },
+  {
+   "id": "9c10b2eef47e4beb",
+   "title": "2:10",
+   "artists": [
+    "李玖哲"
+   ],
+   "album": "2:10 - Single",
+   "albums": [
+    "2:10 - Single",
+    "2:10"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1834307355"
+    ]
+   },
+   "path": "lyrics/9c/9c10b2eef47e4beb.ttml",
+   "sha256": "42993da2102a929658d75f579007d45207e72a8407c4e13cf56c8a0631d6ea3a"
+  },
+  {
+   "id": "8275b647372305b9",
+   "title": "21克博物馆",
+   "artists": [
+    "门尼",
+    "門尼",
+    "Menny"
+   ],
+   "album": "门尼Ⅲ：贵族",
+   "albums": [
+    "门尼Ⅲ：贵族",
+    "門尼Ⅲ:貴族",
+    "门尼Ⅲ:贵族"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "aliases": [
+    "21克博物馆（Full of Empty）",
+    "21克博物館 (Full Of Empty)",
+    "21克博物馆 (Full Of Empty)"
+   ],
+   "sourceIds": {
+    "qqMusicId": [
+     "000Z1ewm22zo68"
+    ],
+    "ncmMusicId": [
+     "3346456319"
+    ],
+    "appleMusicId": [
+     "1889323924"
+    ],
+    "isrc": [
+     "FR10S2681383"
+    ]
+   },
+   "path": "lyrics/82/8275b647372305b9.ttml",
+   "sha256": "700240bad3e7a3bd1469731805bac5f14d145cce2a56842db5cd6abf01b42a76"
+  },
+  {
+   "id": "f0995641791ed1e9",
+   "title": "4ever in U",
+   "artists": [
+    "单依纯"
+   ],
+   "album": "4ever in U - Single",
+   "albums": [
+    "4ever in U - Single",
+    "4ever in U"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1771288303"
+    ]
+   },
+   "path": "lyrics/f0/f0995641791ed1e9.ttml",
+   "sha256": "0507a8f0a674737c9f3209ca2f048019cb15a4877a287635c7a377bcb0356f25"
+  },
+  {
+   "id": "46e7016ca220c849",
+   "title": "7千3百多天",
+   "artists": [
+    "林俊杰"
+   ],
+   "album": "重拾_快乐",
+   "albums": [
+    "重拾_快乐"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1682458105"
+    ]
+   },
+   "path": "lyrics/46/46e7016ca220c849.ttml",
+   "sha256": "3a98d0a97938ffbe51f2acbae11cf877c2b1b8e69ad71ce75cf30f50f5c9c258"
+  },
+  {
+   "id": "4d200625bcaf3099",
+   "title": "7千3百多天 (JJ林俊杰《JJ20世界巡回演唱会》主题曲)",
+   "artists": [
+    "林俊杰"
+   ],
+   "album": "7千3百多天 (JJ林俊杰《JJ20世界巡回演唱会》主题曲) - Single",
+   "albums": [
+    "7千3百多天 (JJ林俊杰《JJ20世界巡回演唱会》主题曲) - Single",
+    "7千3百多天 (JJ林俊杰《JJ20世界巡回演唱会》主题曲)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1651771401"
+    ]
+   },
+   "path": "lyrics/4d/4d200625bcaf3099.ttml",
+   "sha256": "a76209c6fd3d1b171a6a5a3373ed69d8ac5bcdbf34dd8b35d4339f31713d5a64"
+  },
+  {
+   "id": "8bb2b36fc29a4d8d",
+   "title": "920",
+   "artists": [
+    "小宇 宋念宇",
+    "A-Lin"
+   ],
+   "album": "幸福了 然后呢",
+   "albums": [
+    "幸福了 然后呢"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "797355642"
+    ]
+   },
+   "path": "lyrics/8b/8bb2b36fc29a4d8d.ttml",
+   "sha256": "56ae39bca646df9d438d1d62812c722b49641579fd4c48e44ad94796eacb5921"
+  },
+  {
+   "id": "ff365f8f137786ef",
+   "title": "920",
+   "artists": [
+    "A-Lin"
+   ],
+   "album": "幸福了 然后呢 (庆功版)",
+   "albums": [
+    "幸福了 然后呢 (庆功版)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "852859277"
+    ]
+   },
+   "path": "lyrics/ff/ff365f8f137786ef.ttml",
+   "sha256": "397b9f15f9b40d5b1d26fc921931d6d75938c2ce7022086a11da05d399747462"
+  },
+  {
+   "id": "65da2c6499037c1e",
+   "title": "阿刁",
+   "artists": [
+    "赵雷",
+    "趙雷",
+    "Lei Zhao"
+   ],
+   "album": "无法长大",
+   "albums": [
+    "无法长大",
+    "無法長大"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "qqMusicId": [
+     "003fV3uf1b2Lba"
+    ],
+    "ncmMusicId": [
+     "447925059"
+    ],
+    "appleMusicId": [
+     "1722409910"
+    ],
+    "isrc": [
+     "CNZ882302242"
+    ]
+   },
+   "path": "lyrics/65/65da2c6499037c1e.ttml",
+   "sha256": "b53cdd29f523157f0e8fdca000e54641e823b9f3acf6ce378a63e17102e311e0"
+  },
+  {
+   "id": "e4a7658493582a9e",
+   "title": "阿刁 (Live)",
+   "artists": [
+    "张韶涵"
+   ],
+   "album": "歌手2018 第2期",
+   "albums": [
+    "歌手2018 第2期",
+    "歌手第二季 第2期",
+    "歌手2018 (第二期 Live)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "qqMusicId": [
+     "001KxARP2Ij3hH"
+    ],
+    "ncmMusicId": [
+     "531786028"
+    ],
+    "appleMusicId": [
+     "1709689970"
+    ]
+   },
+   "path": "lyrics/e4/e4a7658493582a9e.ttml",
+   "sha256": "d847008e05c45d80356f155dbd7c45ee0b410862cb41291fcad073bcf5bd1453"
+  },
+  {
+   "id": "5b43a34bf2131431",
+   "title": "阿拉斯加海湾",
+   "artists": [
+    "蓝心羽"
+   ],
+   "album": "阿拉斯加海湾",
+   "albums": [
+    "阿拉斯加海湾"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "qqMusicId": [
+     "002FHVgG4btehE"
+    ]
+   },
+   "path": "lyrics/5b/5b43a34bf2131431.ttml",
+   "sha256": "a6588d43766fe9c77f55976010da048c349029bbf680889e59d36e042ef4b225"
+  },
+  {
+   "id": "4f596d53dd7b7da9",
+   "title": "阿牛",
+   "artists": [
+    "陈奕迅"
+   ],
+   "album": "U 87",
+   "albums": [
+    "U 87"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": true,
+   "sourceIds": {
+    "appleMusicId": [
+     "1443375157"
+    ]
+   },
+   "path": "lyrics/4f/4f596d53dd7b7da9.ttml",
+   "sha256": "882778271fbc481e8face14026da35b9fce382f26b06ba9e03d9303d624f9f55"
+  },
+  {
+   "id": "e72b84b942944f07",
+   "title": "阿司匹林",
+   "artists": [
+    "王以太"
+   ],
+   "album": "演.说.家",
+   "albums": [
+    "演.说.家"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1751788692"
+    ]
+   },
+   "path": "lyrics/e7/e72b84b942944f07.ttml",
+   "sha256": "1bdda8aa8d7f0603ff4501d18ec571a10ade5c7c791bbde6d4a440033a542656"
+  },
+  {
+   "id": "b2526262a160a768",
+   "title": "啊我忘了带伞",
+   "artists": [
+    "告五人"
+   ],
+   "album": "带你飞",
+   "albums": [
+    "带你飞"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1670343375"
+    ]
+   },
+   "path": "lyrics/b2/b2526262a160a768.ttml",
+   "sha256": "ee5c5e9b0dfb8ac0a55c86caadf7f83d57c8b9f5639b0aaa70345f528995b9e9"
+  },
+  {
+   "id": "9273de958ed798bf",
+   "title": "哀人",
+   "artists": [
+    "门尼"
+   ],
+   "album": "门尼",
+   "albums": [
+    "门尼",
+    "门尼 (MONEY)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "aliases": [
+    "哀人 (i)"
+   ],
+   "sourceIds": {
+    "qqMusicId": [
+     "000rUVoS3uzVSj"
+    ],
+    "ncmMusicId": [
+     "2082326624"
+    ],
+    "appleMusicId": [
+     "1706801066"
+    ]
+   },
+   "path": "lyrics/92/9273de958ed798bf.ttml",
+   "sha256": "01d86c769a7e845b5114bc149ac7e9585be667c00e78d4ff7ca0bf55173847e7"
+  },
+  {
+   "id": "e9bfb152aeb6d3c8",
+   "title": "哀人 (i) (Live)",
+   "artists": [
+    "汪苏泷",
+    "门尼"
+   ],
+   "album": "有歌2024 第8期",
+   "albums": [
+    "有歌2024 第8期"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "aliases": [
+    "哀人(i) (Live版)"
+   ],
+   "sourceIds": {
+    "qqMusicId": [
+     "002NHwGz2ugrS2"
+    ],
+    "ncmMusicId": [
+     "2650828555"
+    ]
+   },
+   "path": "lyrics/e9/e9bfb152aeb6d3c8.ttml",
+   "sha256": "dc5ae3f2dba64dd73e66ca52ab2b7649dac99d4c241efba17ec83e6eea4ba097"
+  },
+  {
+   "id": "0d38d7f0ea96b91b",
+   "title": "哀人i (Live)",
+   "artists": [
+    "余文乐",
+    "艾热AIR",
+    "王以太",
+    "艾热 AIR",
+    "Shawn Yue",
+    "AIR",
+    "Yitai Wang"
+   ],
+   "album": "披荆斩棘2026  一公",
+   "albums": [
+    "披荆斩棘2026  一公",
+    "《披荆斩棘2026》一公",
+    "披荆斩棘2026 (第2期 Live)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "qqMusicId": [
+     "000t0bMC1Iirsa"
+    ],
+    "ncmMusicId": [
+     "3424357533"
+    ],
+    "appleMusicId": [
+     "6804734032"
+    ],
+    "isrc": [
+     "FRX452696350"
+    ]
+   },
+   "path": "lyrics/0d/0d38d7f0ea96b91b.ttml",
+   "sha256": "5ffb65d878c1b17ce3e7743d1083c84b2d2f08211a4a14c82dd2fe206a29ef65"
+  },
+  {
+   "id": "4c61422be92e19d3",
+   "title": "爱",
+   "artists": [
+    "莫文蔚"
+   ],
+   "album": "爱",
+   "albums": [
+    "爱",
+    "爱 - Single"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "466421865"
+    ]
+   },
+   "path": "lyrics/4c/4c61422be92e19d3.ttml",
+   "sha256": "0fe6bf340afd6b48a8c33773d70754c813d0f19bf666eaf81e9ca482d08975e9"
+  },
+  {
+   "id": "ddf2a3285cdf77df",
+   "title": "爱",
+   "artists": [
+    "莫文蔚"
+   ],
+   "album": "超级金曲精选",
+   "albums": [
+    "超级金曲精选"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "458326527"
+    ]
+   },
+   "path": "lyrics/dd/ddf2a3285cdf77df.ttml",
+   "sha256": "06c978c3348ae995d8a2f9b456409c07016f418dbb7dd6332a578863d8707747"
+  },
+  {
+   "id": "4b2296a6779955e6",
+   "title": "爱 请问怎麼走",
+   "artists": [
+    "A-Lin"
+   ],
+   "album": "爱 请问怎么走 - Single",
+   "albums": [
+    "爱 请问怎么走 - Single",
+    "爱 请问怎么走"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "803632734"
+    ]
+   },
+   "path": "lyrics/4b/4b2296a6779955e6.ttml",
+   "sha256": "4f1d932eba5bc17592968cb2207f89d6e7b612904a6fc273014d5f8bcdb27584"
+  },
+  {
+   "id": "1cb85a39b2bb911a",
+   "title": "爱, 很简单",
+   "artists": [
+    "陶喆"
+   ],
+   "album": "陶喆同名专辑",
+   "albums": [
+    "陶喆同名专辑"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1416149931"
+    ]
+   },
+   "path": "lyrics/1c/1cb85a39b2bb911a.ttml",
+   "sha256": "e749c1f84f2fdbd55b095f70059b534ef9f1acf6a6f9704c5c7b1469e16da255"
+  },
+  {
+   "id": "a71797574fbc56d8",
+   "title": "爱, 很简单",
+   "artists": [
+    "陶喆"
+   ],
+   "album": "爱, 很简单",
+   "albums": [
+    "爱, 很简单",
+    "爱, 很简单 - Single"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1372032311"
+    ]
+   },
+   "path": "lyrics/a7/a71797574fbc56d8.ttml",
+   "sha256": "6166203f70e622221fa3ce81c6b1e80b462c941ea14fadc03e757eb5c6a9ccba"
+  },
+  {
+   "id": "cd9b8210552a1a3a",
+   "title": "爱，存在 (Live)",
+   "artists": [
+    "姚晓棠",
+    "A-Lin"
+   ],
+   "album": "天赐的声音第六季 第9期",
+   "albums": [
+    "天赐的声音第六季 第9期",
+    "天赐的声音第六季 第9期 (Live)"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "aliases": [
+    "爱, 存在 (Live)"
+   ],
+   "sourceIds": {
+    "qqMusicId": [
+     "002eWhDS3zGHzC"
+    ],
+    "appleMusicId": [
+     "1824717452"
+    ]
+   },
+   "path": "lyrics/cd/cd9b8210552a1a3a.ttml",
+   "sha256": "01e2afec88571d985f0edff7f56c2c89475f975460a2bb987f11541f92df22e4"
+  },
+  {
+   "id": "f911ecae02cc474c",
+   "title": "爱爱爱",
+   "artists": [
+    "方大同"
+   ],
+   "album": "爱爱爱",
+   "albums": [
+    "爱爱爱"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "220365871"
+    ]
+   },
+   "path": "lyrics/f9/f911ecae02cc474c.ttml",
+   "sha256": "4dc8f970924dc8924745cf45024168fc7742a4385c03827f566b2d1809736986"
+  },
+  {
+   "id": "4f198b71465f5e02",
+   "title": "爱不会绝迹",
+   "artists": [
+    "林俊杰"
+   ],
+   "album": "100天",
+   "albums": [
+    "100天"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1071517713"
+    ]
+   },
+   "path": "lyrics/4f/4f198b71465f5e02.ttml",
+   "sha256": "5b25a797dc8c640d0e7c561aafea5314dd3270ef1f6e3e20ef0afcec79d3209f"
+  },
+  {
+   "id": "6daf2a4c8d9323b7",
+   "title": "爱错",
+   "artists": [
+    "王力宏"
+   ],
+   "album": "心中的日月",
+   "albums": [
+    "心中的日月"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1134344911"
+    ]
+   },
+   "path": "lyrics/6d/6daf2a4c8d9323b7.ttml",
+   "sha256": "2627a86af8d01831643a7cf81754e6e4723ef3303550a8cfa614b4d9677317ef"
+  },
+  {
+   "id": "aacd8184c295163d",
+   "title": "爱错",
+   "artists": [
+    "王力宏"
+   ],
+   "album": "爱错",
+   "albums": [
+    "爱错",
+    "爱错 - Single"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "1429430104"
+    ]
+   },
+   "path": "lyrics/aa/aacd8184c295163d.ttml",
+   "sha256": "2690888b4854f48d9af531a017669a6f44d23c1e98be19cac9af2609bf6868fd"
+  },
+  {
+   "id": "264969dddb0e75fa",
+   "title": "爱错 (live)",
+   "artists": [
+    "黄丽玲",
+    "王赫野",
+    "A-Lin",
+    "Wang Heye"
+   ],
+   "album": "声生不息·华流季 第2期",
+   "albums": [
+    "声生不息·华流季 第2期",
+    "声生不息·华流季 (第2期 Live) - EP",
+    "声生不息·华流季第2期 (Live) - EP"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "aliases": [
+    "爱错 (Live)"
+   ],
+   "sourceIds": {
+    "qqMusicId": [
+     "001w6NXY4BPcSe"
+    ],
+    "ncmMusicId": [
+     "3322655244"
+    ],
+    "appleMusicId": [
+     "1856820575",
+     "1872934247"
+    ],
+    "isrc": [
+     "DGA072592918",
+     "CN2DY2601115"
+    ]
+   },
+   "path": "lyrics/26/264969dddb0e75fa.ttml",
+   "sha256": "96e6f46ecc4ca31e33abef23e51d9ff948cb8e066126003907de1508d9c641da"
+  },
+  {
+   "id": "9636f91246bd37ab",
+   "title": "爱错 (Live)",
+   "artists": [
+    "王力宏"
+   ],
+   "album": "2008 Sony Ericsson MUSIC-MAN 世界巡回演唱会",
+   "albums": [
+    "2008 Sony Ericsson MUSIC-MAN 世界巡回演唱会"
+   ],
+   "language": "zh-Hans",
+   "hasTranslation": false,
+   "hasTransliteration": false,
+   "sourceIds": {
+    "appleMusicId": [
+     "333298888"
+    ]
+   },
+   "path": "lyrics/96/9636f91246bd37ab.ttml",
+   "sha256": "0d686346bea02228f22ecf2d3c8125d7625e6f69d06b66a573a29aa4d964a135"
+  }
+ ]
+}

@@ -1,29 +1,28 @@
 package main
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
+	"github.com/navidrome/navidrome/plugins/pdk/go/lifecycle"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 )
 
 const (
-	apiEndpoint              = "https://lyrics-api.boidu.dev/getLyrics"
-	kugouEndpoint            = "https://lyrics-api.boidu.dev/kugou/getLyrics"
-	unisonEndpoint           = "https://unison.boidu.dev/lyrics"
-	httpTimeoutMilliseconds  = int32(6_000)
-	lyricsLookupTimeout      = 15 * time.Second
-	pluginRepository         = "https://github.com/ranokay/navidrome-better-lyrics-plugin"
-	maximumAPIErrorRunes     = 160
-	betterLyricsProviderName = "ttml"
+	httpTimeoutMilliseconds = int32(6_000)
+	pluginRepository        = "https://github.com/ranokay/navidrome-better-lyrics-plugin"
+	// stageOneImplementedSources bounds the synchronous part of a cold lookup:
+	// the first sources with an implemented fetch run here, and the background
+	// sweep covers the rest without blocking the response.
+	stageOneImplementedSources = 3
+	stageOneLookupBudget       = 8 * time.Second
 )
 
 var errLyricsLookupBudgetExhausted = errors.New("lyrics lookup time budget exhausted")
@@ -33,343 +32,269 @@ var manifestJSON []byte
 
 type requestSender func(host.HTTPRequest) (*host.HTTPResponse, error)
 
-type betterLyricsProvider struct {
-	send  requestSender
-	cache lyricsCacheStore
-	now   func() time.Time
+// lyricsProvider resolves lyrics across all enabled sources.
+type lyricsProvider struct {
+	send         requestSender
+	cache        lyricsCacheStore
+	now          func() time.Time
+	configLookup configLookup
+	enqueueSweep func(lyrics.TrackInfo) error
+	// sources overrides the config-derived catalog for tests; nil means prod walks
+	// whatever the admin configured.
+	sources []lyricsSource
+	// enqueueSweepSources re-enqueues a continuation carrying only the sources a
+	// sweep had to defer when its budget ran out.
+	enqueueSweepSources func(lyrics.TrackInfo, []string) error
+	// sweepBudget overrides defaultSweepBudget (0 = default); tests shrink it to
+	// force deferrals deterministically.
+	sweepBudget time.Duration
+	// credentialSaltBytes memoizes the per-installation HMAC salt for this
+	// process so stores whose reads fail do not remint on every fingerprint.
+	credentialSaltBytes []byte
 }
 
-type apiResponse struct {
-	TTML string `json:"ttml"`
-}
-
-type providerAPIResponse struct {
-	Lyrics string `json:"lyrics"`
-}
-
-type unisonAPIResponse struct {
-	Success bool               `json:"success"`
-	Data    *unisonLyricsEntry `json:"data"`
-}
-
-type unisonLyricsEntry struct {
-	Lyrics   string `json:"lyrics"`
-	Format   string `json:"format"`
-	Language string `json:"language"`
-}
-
-type apiErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-}
-
-var _ lyrics.Lyrics = (*betterLyricsProvider)(nil)
+var _ lyrics.Lyrics = (*lyricsProvider)(nil)
 
 func init() {
-	lyrics.Register(newBetterLyricsProvider(host.HTTPSend))
+	provider := newLyricsProvider(host.HTTPSend)
+	lyrics.Register(provider)
+	lifecycle.Register(provider)
+	taskworker.Register(provider)
 }
 
 func main() {}
 
-func newBetterLyricsProvider(send requestSender) *betterLyricsProvider {
-	return newBetterLyricsProviderWithDependencies(send, defaultLyricsCache(), time.Now)
+func newLyricsProvider(send requestSender) *lyricsProvider {
+	return newLyricsProviderWithDeps(send, defaultLyricsCache(), time.Now, defaultConfigLookup(), defaultSweepEnqueuer())
 }
 
-// GetLyrics prefers rich TTML, then synchronized community/provider results,
-// while retaining Unison plain text as the final fallback.
-func (p *betterLyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
-	if cached, ok := p.readCachedLyrics(input.Track); ok {
-		return cached, nil
+func newLyricsProviderWithDeps(send requestSender, cache lyricsCacheStore, now func() time.Time, lookup configLookup, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
+	if cache == nil {
+		cache = noopLyricsCache{}
+	}
+	if now == nil {
+		now = time.Now
+	}
+	if lookup == nil {
+		lookup = func(string) (string, bool) { return "", false }
+	}
+	if enqueue == nil {
+		enqueue = func(lyrics.TrackInfo) error { return nil }
+	}
+	provider := &lyricsProvider{send: send, cache: cache, now: now, configLookup: lookup, enqueueSweep: enqueue}
+	if provider.enqueueSweepSources == nil {
+		provider.enqueueSweepSources = defaultSweepSourcesEnqueuer()
+	}
+	return provider
+}
+
+// GetLyrics prefers rich TTML, then synchronized provider/community results, while
+// retaining plain text as the final fallback.
+func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
+	track := input.Track
+	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
+		return lyrics.GetLyricsResponse{}, nil
 	}
 
-	response, health, err := p.fetchLyrics(input)
+	sources := p.activeSources()
+	if len(sources) == 0 {
+		// Deliberate all-disabled opt-out (documented `sources: []` config):
+		// serve nothing without touching the winner cache or task queue — an
+		// empty source order creates no key and would wedge every lookup
+		// through the unschedulable sweep path.
+		return lyrics.GetLyricsResponse{}, nil
+	}
+	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
+		if candidate.present() {
+			if !sweepComplete {
+				// The sweep may have cached a better result after this winner
+				// was written: re-rank before serving.
+				// Ties adopt the per-source preferred candidate,
+				// which respects configured order.
+				if best := p.readBestFromSourceCache(track, sources); best.present() && best.quality >= candidate.quality {
+					p.cacheWinner(track, sources, best, false)
+					candidate = best
+				}
+				p.maybeEnqueueSweep(track)
+			}
+			return candidate.response, nil
+		}
+		// A cached miss must not shield fresh sweep results: the background sweep
+		// may have written better candidates per source after the miss landed.
+		if best := p.readBestFromSourceCache(track, sources); best.present() {
+			p.cacheWinner(track, sources, best, false)
+			p.maybeEnqueueSweep(track)
+			return best.response, nil
+		}
+		// No per-source improvement yet: the negative winner stays authoritative
+		// for its TTL so replays do not re-walk the sources — but an incomplete
+		// sweep must still be schedulable.
+		if !sweepComplete {
+			p.maybeEnqueueSweep(track)
+		}
+		return candidate.response, nil
+	}
+	if best := p.readBestFromSourceCache(track, sources); best.present() {
+		p.cacheWinner(track, sources, best, false)
+		p.maybeEnqueueSweep(track)
+		return best.response, nil
+	}
+
+	candidate, _, coveredAll, err := p.fetchLyrics(input)
+	if candidate.present() {
+		p.cacheWinner(track, sources, candidate, coveredAll)
+		if !coveredAll {
+			p.maybeEnqueueSweep(track)
+		}
+		return candidate.response, nil
+	}
 	if err == nil {
-		p.cacheLyrics(input.Track, response, health)
+		p.cacheNegativeWinner(track, sources, coveredAll)
+		if !coveredAll {
+			// A fully covered negative pass needs no sweep: every implemented
+			// source already answered inside stage one.
+			p.maybeEnqueueSweep(track)
+		}
+	} else {
+		// Retain the error, but an incomplete walk must still reach the tail:
+		// schedule the sweep so the returned error is the only failure the
+		// request exposes.
+		p.maybeEnqueueSweep(track)
 	}
-	return response, err
+	return candidate.response, err
 }
 
-func (p *betterLyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, lookupHealth, error) {
-	fullURL, ok := lyricsRequestURL(input.Track)
-	if !ok {
-		return lyrics.GetLyricsResponse{}, lookupHealthy, nil
+// activeSources resolves the source order for this lookup: the injected test
+// catalog when present, otherwise the admin-configured enabled sources.
+func (p *lyricsProvider) activeSources() []lyricsSource {
+	if p.sources != nil {
+		return p.sources
+	}
+	return readProviderConfig(p.configLookup).Sources
+}
+
+// fetchLyrics runs the stage-one pass: the first implemented enabled sources in
+// configured order under a bounded budget, stopping early once a syllable-timed
+// result lands. Each successful source result is cached per source so later
+// lookups and source reordering re-rank without refetching. Remaining sources
+// are covered by the background sweep (Task 6).
+func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandidate, lookupHealth, bool, error) {
+	track := input.Track
+	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
+		return lyricsCandidate{}, lookupHealthy, false, nil
 	}
 
-	headers := map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
+	sources := p.activeSources()
+	deadline := p.now().Add(stageOneLookupBudget)
 
-	if p.send == nil {
-		return lyrics.GetLyricsResponse{}, lookupDegraded, fmt.Errorf("better lyrics request sender is not configured")
-	}
-
-	deadline := p.now().Add(lyricsLookupTimeout)
-	var lookupErrors []error
-	health := lookupHealthy
-	betterLyricsGlobalCooldownReported := false
-	var best lyricsCandidate
-
-	betterURLs := uniqueRequestURLs(
-		fullURL,
-		mustRequestURL(lyricsRequestURLWithoutAlbum(input.Track)),
-		mustRequestURL(lyricsRequestURLWithoutOptionalMetadata(input.Track)),
+	var (
+		best         lyricsCandidate
+		health       = lookupHealthy
+		lookupErrors []error
+		walked       int
+		walkedTotal  int
+		// coldHosts records hosts behind a global rate limit observed during this
+		// walk. Later sources on a cold host are skipped for the rest of this
+		// lookup, matching README's documented Better Lyrics shared cooldown.
+		coldHosts = map[string]bool{}
 	)
-	retryBroader := true
-	for i, requestURL := range betterURLs {
-		if i > 0 && !retryBroader {
+	implementedTotal := 0
+	for _, source := range sources {
+		if source.Fetch != nil {
+			implementedTotal++
+		}
+	}
+	for _, source := range sources {
+		if walked >= stageOneImplementedSources {
 			break
 		}
-		text, retry, uncertain, err := p.fetchBetterLyricsTTML(requestURL, headers, deadline)
-		retryBroader = retry
-		if uncertain {
-			health = health.merge(lookupUncertain)
+		if source.Fetch == nil {
+			continue
 		}
+		// A per-source entry (positive or persisted miss) already covers this
+		// source for its TTL: refetching here would re-query providers every
+		// negative-winner cycle. Cached positives are served by the
+		// re-rank above the walk.
+		if _, ok := p.readCachedSourceCoverage(track, source.ID); ok {
+			continue
+		}
+		if coldHostFor(source, coldHosts) != "" {
+			continue
+		}
+		if p.sourceInCooldown(source) {
+			// Cooldowns are temporary; skipping keeps the slot for the next
+			// implemented source and the sweep retries it later.
+			continue
+		}
+		walked++
+		candidates, sourceHealth, err := source.Fetch(p, track, deadline)
+		health = health.merge(sourceHealth)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
 			health = health.merge(lookupDegraded)
-			betterLyricsGlobalCooldownReported = betterLyricsGlobalCooldownReported || isGlobalRateLimitError(err)
+			if isGlobalRateLimitError(err) {
+				for _, hostName := range source.Hosts {
+					coldHosts[hostName] = true
+				}
+			}
 			continue
 		}
-		if text == "" {
-			continue
+		foundCandidate := false
+		for _, candidate := range candidates {
+			if !candidate.present() {
+				continue
+			}
+			foundCandidate = true
+			p.cacheSourceCandidate(track, source.ID, candidate)
+			best = preferLyricsCandidate(best, candidate)
 		}
-
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, betterLyricsProviderName, "ttml")
-		if !candidate.present() {
-			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics API returned malformed TTML"))
-			health = health.merge(lookupDegraded)
-			continue
+		coveredThisSource := true
+		if !foundCandidate {
+			switch sourceHealth {
+			case lookupHealthy, lookupUncertain:
+				// Healthy clean misses and anonymous cache-only misses are
+				// bounded coverage: persist them so the sweep and later
+				// lookups skip the refetch. The miss keys
+				// carry the credential fingerprint, so a configured key or
+				// token re-authorizes them immediately.
+				p.cacheSourceMiss(track, source.ID)
+			case lookupTemporarilySkipped:
+				// Token rejects are not covered work: the next lookup remints
+				// and retries, and the pass must not report complete
+				// foreground coverage or suppress the sweep.
+				health = health.merge(sourceHealth)
+				coveredThisSource = false
+			}
 		}
-		best = preferLyricsCandidate(best, candidate)
+		if coveredThisSource {
+			walkedTotal++
+		}
 		if best.quality == timingSyllable {
-			return best.response, health, nil
-		}
-	}
-
-	unisonURLs := uniqueRequestURLs(
-		mustRequestURL(unisonRequestURLWithFullMetadata(input.Track)),
-		mustRequestURL(unisonRequestURL(input.Track)),
-		mustRequestURL(unisonRequestURLWithoutOptionalMetadata(input.Track)),
-	)
-	retryBroader = true
-	for i, requestURL := range unisonURLs {
-		if i > 0 && !retryBroader {
-			break
-		}
-		unisonLyrics, unisonFormat, retry, err := p.fetchUnisonLyrics(requestURL, headers, deadline)
-		retryBroader = retry
-		if err != nil {
-			lookupErrors = append(lookupErrors, err)
-			health = health.merge(lookupDegraded)
-			continue
-		}
-		if unisonLyrics.Text == "" {
-			continue
-		}
-
-		candidate := newLyricsCandidate(unisonLyrics, "unison", unisonFormat)
-		if !candidate.present() {
-			lookupErrors = append(lookupErrors, fmt.Errorf("unison API returned malformed %s lyrics", strings.ToUpper(unisonFormat)))
-			health = health.merge(lookupDegraded)
-			continue
-		}
-		best = preferLyricsCandidate(best, candidate)
-		if best.quality == timingSyllable {
-			return best.response, health, nil
-		}
-	}
-
-	if (!best.present() || best.quality < timingLine) && !betterLyricsGlobalCooldownReported {
-		kugouURL, _ := kugouRequestURL(input.Track)
-		kugouLyrics, err := p.fetchKugouLyrics(kugouURL, headers, deadline)
-		if err != nil {
-			lookupErrors = append(lookupErrors, err)
-			health = health.merge(lookupDegraded)
-		} else if kugouLyrics.Text != "" {
-			best = preferLyricsCandidate(best, newLyricsCandidate(kugouLyrics, "kugou", "lrc"))
+			return best, health, walkedTotal >= implementedTotal, nil
 		}
 	}
 
 	if best.present() {
-		return best.response, health, nil
+		return best, health, walkedTotal >= implementedTotal, nil
 	}
 	if len(lookupErrors) > 0 {
-		return lyrics.GetLyricsResponse{}, health, errors.Join(lookupErrors...)
+		return lyricsCandidate{}, health, false, errors.Join(lookupErrors...)
 	}
-	return lyrics.GetLyricsResponse{}, health, nil
+	// A clean all-miss walk with full coverage is real: the negative winner
+	// must record that no sweep needs re-walking the same misses.
+	return lyricsCandidate{}, health, walkedTotal >= implementedTotal, nil
 }
 
-func uniqueRequestURLs(urls ...string) []string {
-	seen := make(map[string]struct{}, len(urls))
-	result := make([]string, 0, len(urls))
-	for _, requestURL := range urls {
-		if requestURL == "" {
-			continue
+func coldHostFor(source lyricsSource, coldHosts map[string]bool) string {
+	for _, hostName := range source.Hosts {
+		if coldHosts[hostName] {
+			return hostName
 		}
-		if _, exists := seen[requestURL]; exists {
-			continue
-		}
-		seen[requestURL] = struct{}{}
-		result = append(result, requestURL)
 	}
-	return result
+	return ""
 }
 
-func mustRequestURL(requestURL string, ok bool) string {
-	if !ok {
-		return ""
-	}
-	return requestURL
-}
-
-func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {
-	return lyrics.GetLyricsResponse{
-		Lyrics: []lyrics.LyricsText{text},
-		Source: &lyrics.LyricsSource{
-			Provider: provider,
-			Format:   format,
-		},
-	}
-}
-
-func (p *betterLyricsProvider) fetchBetterLyricsTTML(requestURL string, headers map[string]string, deadline time.Time) (string, bool, bool, error) {
-	if cooldownErr := p.activeBetterLyricsCooldown(requestURL); cooldownErr != nil {
-		return "", !isGlobalRateLimitError(cooldownErr), false, cooldownErr
-	}
-	timeout, err := p.requestTimeoutMilliseconds(deadline)
-	if err != nil {
-		return "", false, false, err
-	}
-	response, err := p.send(host.HTTPRequest{
-		Method:    "GET",
-		URL:       requestURL,
-		Headers:   headers,
-		TimeoutMs: timeout,
-	})
-	if err != nil {
-		return "", false, false, fmt.Errorf("request Better Lyrics API: %w", err)
-	}
-	if response == nil {
-		return "", false, false, fmt.Errorf("better lyrics API returned no response")
-	}
-
-	switch response.StatusCode {
-	case 200:
-		var payload apiResponse
-		if err := json.Unmarshal(response.Body, &payload); err != nil {
-			return "", false, false, fmt.Errorf("decode Better Lyrics API response: %w", err)
-		}
-		if strings.TrimSpace(payload.TTML) == "" {
-			// An empty TTML payload is a clean miss for this query, so broader
-			// metadata tiers may still find a usable cached entry.
-			return "", true, false, nil
-		}
-		return payload.TTML, false, false, nil
-	case 401:
-		return "", true, true, nil
-	case 404:
-		return "", true, false, nil
-	case 429:
-		retryAfter := p.rememberRateLimit(response, requestURL)
-		return "", !globalRateLimit(response), false, rateLimitResponseError("better lyrics API", response, retryAfter)
-	default:
-		return "", false, false, apiResponseError(response)
-	}
-}
-
-func (p *betterLyricsProvider) fetchUnisonLyrics(requestURL string, headers map[string]string, deadline time.Time) (lyrics.LyricsText, string, bool, error) {
-	if cooldownErr := p.activeUnisonCooldown(); cooldownErr != nil {
-		return lyrics.LyricsText{}, "", false, cooldownErr
-	}
-	response, err := p.sendRequest("Unison API", requestURL, headers, deadline)
-	if err != nil {
-		return lyrics.LyricsText{}, "", false, err
-	}
-
-	switch response.StatusCode {
-	case 200:
-		var payload unisonAPIResponse
-		if err := json.Unmarshal(response.Body, &payload); err != nil {
-			return lyrics.LyricsText{}, "", false, fmt.Errorf("decode Unison API response: %w", err)
-		}
-		if !payload.Success || payload.Data == nil {
-			return lyrics.LyricsText{}, "", false, fmt.Errorf("decode Unison API response: missing successful lyrics data")
-		}
-		if strings.TrimSpace(payload.Data.Lyrics) == "" {
-			return lyrics.LyricsText{}, "", true, nil
-		}
-
-		format := strings.ToLower(strings.TrimSpace(payload.Data.Format))
-		switch format {
-		case "ttml", "lrc", "plain":
-			return lyrics.LyricsText{
-				Lang: strings.TrimSpace(payload.Data.Language),
-				Text: payload.Data.Lyrics,
-			}, format, false, nil
-		default:
-			return lyrics.LyricsText{}, "", false, fmt.Errorf("unsupported Unison lyrics format %q", payload.Data.Format)
-		}
-	case 404:
-		return lyrics.LyricsText{}, "", true, nil
-	case 429:
-		retryAfter := p.rememberUnisonRateLimit(response)
-		return lyrics.LyricsText{}, "", false, providerRateLimitResponseError("Unison API", response, retryAfter)
-	default:
-		return lyrics.LyricsText{}, "", false, providerResponseError("Unison API", response)
-	}
-}
-
-func (p *betterLyricsProvider) fetchKugouLyrics(requestURL string, headers map[string]string, deadline time.Time) (lyrics.LyricsText, error) {
-	if cooldownErr := p.activeBetterLyricsCooldown(requestURL); cooldownErr != nil {
-		return lyrics.LyricsText{}, cooldownErr
-	}
-	response, err := p.sendRequest("Better Lyrics Kugou API", requestURL, headers, deadline)
-	if err != nil {
-		return lyrics.LyricsText{}, err
-	}
-
-	switch response.StatusCode {
-	case 200:
-		var payload providerAPIResponse
-		if err := json.Unmarshal(response.Body, &payload); err != nil {
-			return lyrics.LyricsText{}, fmt.Errorf("decode Better Lyrics Kugou API response: %w", err)
-		}
-		if strings.TrimSpace(payload.Lyrics) == "" {
-			return lyrics.LyricsText{}, nil
-		}
-		return lyrics.LyricsText{Text: payload.Lyrics}, nil
-	case 401, 404:
-		return lyrics.LyricsText{}, nil
-	case 429:
-		retryAfter := p.rememberRateLimit(response, requestURL)
-		return lyrics.LyricsText{}, rateLimitResponseError("Better Lyrics Kugou API", response, retryAfter)
-	default:
-		return lyrics.LyricsText{}, providerResponseError("Better Lyrics Kugou API", response)
-	}
-}
-
-func (p *betterLyricsProvider) sendRequest(source, requestURL string, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
-	timeout, err := p.requestTimeoutMilliseconds(deadline)
-	if err != nil {
-		return nil, err
-	}
-	response, err := p.send(host.HTTPRequest{
-		Method:    "GET",
-		URL:       requestURL,
-		Headers:   headers,
-		TimeoutMs: timeout,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", source, err)
-	}
-	if response == nil {
-		return nil, fmt.Errorf("%s returned no response", source)
-	}
-	return response, nil
-}
-
-func (p *betterLyricsProvider) requestTimeoutMilliseconds(deadline time.Time) (int32, error) {
+func (p *lyricsProvider) requestTimeoutMilliseconds(deadline time.Time) (int32, error) {
 	remaining := deadline.Sub(p.now())
 	if remaining <= 0 {
 		return 0, errLyricsLookupBudgetExhausted
@@ -385,171 +310,31 @@ func (p *betterLyricsProvider) requestTimeoutMilliseconds(deadline time.Time) (i
 	return int32(milliseconds), nil
 }
 
-func lyricsRequestURL(track lyrics.TrackInfo) (string, bool) {
-	return buildBetterLyricsProviderRequestURLWithMetadata(apiEndpoint, track, true, true)
-}
-
-func lyricsRequestURLWithoutAlbum(track lyrics.TrackInfo) (string, bool) {
-	return buildBetterLyricsProviderRequestURLWithMetadata(apiEndpoint, track, false, true)
-}
-
-func lyricsRequestURLWithoutOptionalMetadata(track lyrics.TrackInfo) (string, bool) {
-	return buildBetterLyricsProviderRequestURLWithMetadata(apiEndpoint, track, false, false)
-}
-
-func kugouRequestURL(track lyrics.TrackInfo) (string, bool) {
-	return buildBetterLyricsProviderRequestURLWithMetadata(kugouEndpoint, track, false, false)
-}
-
-func buildBetterLyricsRequestURL(track lyrics.TrackInfo, includeOptionalMetadata bool) (string, bool) {
-	return buildBetterLyricsProviderRequestURL(apiEndpoint, track, includeOptionalMetadata)
-}
-
-func buildBetterLyricsProviderRequestURL(endpoint string, track lyrics.TrackInfo, includeOptionalMetadata bool) (string, bool) {
-	return buildBetterLyricsProviderRequestURLWithMetadata(endpoint, track, includeOptionalMetadata, includeOptionalMetadata)
-}
-
-func buildBetterLyricsProviderRequestURLWithMetadata(endpoint string, track lyrics.TrackInfo, includeAlbum, includeDuration bool) (string, bool) {
-	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
-	if title == "" || artist == "" {
-		return "", false
+func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {
+	return lyrics.GetLyricsResponse{
+		Lyrics: []lyrics.LyricsText{text},
+		Source: &lyrics.LyricsSource{
+			Provider: provider,
+			Format:   format,
+		},
 	}
-
-	query := url.Values{
-		"a": {artist},
-		"s": {title},
-	}
-	if includeAlbum {
-		if album := strings.TrimSpace(track.Album); album != "" {
-			query.Set("al", album)
-		}
-	}
-	if includeDuration {
-		if duration := int64(math.Round(float64(track.Duration))); duration > 0 {
-			query.Set("d", strconv.FormatInt(duration, 10))
-		}
-	}
-
-	return endpoint + "?" + query.Encode(), true
 }
 
-// unisonRequestURL preserves the pre-existing duration-only query shape. The
-// provider first tries unisonRequestURLWithFullMetadata, then this broader form.
-func unisonRequestURL(track lyrics.TrackInfo) (string, bool) {
-	return buildUnisonRequestURL(track, false, true)
+// defaultHeaders is the plugin's common header set. The identifying User-Agent
+// is required by providers that throttle unidentified clients (LRCLib).
+func defaultHeaders() map[string]string {
+	return map[string]string{
+		"Accept":     "application/json",
+		"User-Agent": pluginUserAgent(),
+	}
 }
 
-func unisonRequestURLWithFullMetadata(track lyrics.TrackInfo) (string, bool) {
-	return buildUnisonRequestURL(track, true, true)
-}
-
-func unisonRequestURLWithoutOptionalMetadata(track lyrics.TrackInfo) (string, bool) {
-	return buildUnisonRequestURL(track, false, false)
-}
-
-func buildUnisonRequestURL(track lyrics.TrackInfo, includeAlbum, includeDuration bool) (string, bool) {
-	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
-	if title == "" || artist == "" {
-		return "", false
-	}
-
-	query := url.Values{
-		"artist": {artist},
-		"song":   {title},
-	}
-	if includeAlbum {
-		if album := strings.TrimSpace(track.Album); album != "" {
-			query.Set("album", album)
-		}
-	}
-	if includeDuration {
-		if duration := int64(math.Round(float64(track.Duration))); duration > 0 {
-			query.Set("duration", strconv.FormatInt(duration, 10))
-		}
-	}
-	return unisonEndpoint + "?" + query.Encode(), true
-}
-
-func trackArtist(track lyrics.TrackInfo) string {
-	if artist := strings.TrimSpace(track.Artist); artist != "" {
-		return artist
-	}
-
-	artists := make([]string, 0, len(track.Artists))
-	for _, artist := range track.Artists {
-		if name := strings.TrimSpace(artist.Name); name != "" {
-			artists = append(artists, name)
-		}
-	}
-	return strings.Join(artists, ", ")
-}
-
-func apiResponseError(response *host.HTTPResponse) error {
-	return providerResponseError("better lyrics API", response)
-}
-
-type providerHTTPError struct {
-	source            string
-	status            int32
-	detail            string
-	retryAfterSeconds int64
-	globalRateLimit   bool
-}
-
-func (e *providerHTTPError) Error() string {
-	detail := ""
-	if e.detail != "" {
-		detail = ": " + e.detail
-	}
-	retry := ""
-	if e.retryAfterSeconds > 0 {
-		retry = fmt.Sprintf("; retry after %ds", e.retryAfterSeconds)
-	}
-	return fmt.Sprintf("%s returned HTTP %d%s%s", e.source, e.status, detail, retry)
-}
-
-func providerResponseError(source string, response *host.HTTPResponse) error {
-	var payload apiErrorResponse
-	_ = json.Unmarshal(response.Body, &payload)
-
-	detail := strings.TrimSpace(payload.Error)
-	if detail == "" {
-		detail = strings.TrimSpace(payload.Message)
-	}
-	detailRunes := []rune(detail)
-	if len(detailRunes) > maximumAPIErrorRunes {
-		detail = string(detailRunes[:maximumAPIErrorRunes]) + "…"
-	}
-	return &providerHTTPError{source: source, status: response.StatusCode, detail: detail}
-}
-
-func rateLimitResponseError(source string, response *host.HTTPResponse, retryAfter time.Duration) error {
-	err := providerRateLimitResponseError(source, response, retryAfter)
-	responseErr, ok := err.(*providerHTTPError)
-	if ok {
-		responseErr.globalRateLimit = globalRateLimit(response)
-	}
-	return err
-}
-
-func providerRateLimitResponseError(source string, response *host.HTTPResponse, retryAfter time.Duration) error {
-	err := providerResponseError(source, response)
-	responseErr, ok := err.(*providerHTTPError)
-	if ok {
-		responseErr.retryAfterSeconds = durationSecondsCeil(retryAfter)
-	}
-	return err
-}
-
-func isGlobalRateLimitError(err error) bool {
-	var responseErr *providerHTTPError
-	if errors.As(err, &responseErr) {
-		return responseErr.status == 429 && responseErr.globalRateLimit
-	}
-	var cooldownErr *rateLimitCooldownError
-	return errors.As(err, &cooldownErr) && cooldownErr.global
+// randomHex returns n cryptographically random bytes as hex text; sources use
+// it for request nonces and imitation client identifiers.
+func randomHex(n int) string {
+	raw := make([]byte, n)
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
 }
 
 func pluginUserAgent() string {

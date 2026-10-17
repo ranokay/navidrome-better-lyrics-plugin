@@ -11,7 +11,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-func TestBetterLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
+func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -22,29 +22,31 @@ func TestBetterLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testin
 		wantTTL      int64
 	}{
 		{
-			name: "uses the positive TTL after clean misses",
+			name: "uses the hour TTL for line-synced community fallbacks",
 			responses: []*host.HTTPResponse{
 				{StatusCode: 404},
 				{StatusCode: 404},
 				{StatusCode: 404},
 				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
+				{StatusCode: 404},
 			},
-			wantProvider: "unison",
+			wantProvider: "Unison",
 			wantFormat:   "lrc",
-			wantTTL:      positiveLyricsCacheTTLSeconds,
+			wantTTL:      unsyncedLyricsCacheTTLSeconds,
 		},
 		{
-			name: "uses a short TTL after a Better Lyrics failure",
+			name: "uses the word-grade TTL after a Better Lyrics failure",
 			responses: []*host.HTTPResponse{
 				{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
 				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
+				{StatusCode: 404},
 			},
-			wantProvider: "unison",
+			wantProvider: "Unison",
 			wantFormat:   "lrc",
-			wantTTL:      int64(5 * time.Minute / time.Second),
+			wantTTL:      unsyncedLyricsCacheTTLSeconds,
 		},
 		{
-			name: "uses a short TTL for plain text after a Kugou failure",
+			name: "uses the negative TTL for plain text after a Kugou failure",
 			responses: []*host.HTTPResponse{
 				{StatusCode: 404},
 				{StatusCode: 404},
@@ -52,9 +54,9 @@ func TestBetterLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testin
 				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"community plain","format":"plain","language":"en"}}`)},
 				{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
 			},
-			wantProvider: "unison",
+			wantProvider: "Unison",
 			wantFormat:   "plain",
-			wantTTL:      int64(5 * time.Minute / time.Second),
+			wantTTL:      negativeLyricsCacheTTLSeconds,
 		},
 	}
 
@@ -64,7 +66,7 @@ func TestBetterLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testin
 
 			cache := newFakeLyricsCache()
 			requests := 0
-			provider := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			provider := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 				if requests >= len(test.responses) {
 					t.Fatalf("unexpected request %d", requests+1)
 				}
@@ -83,19 +85,19 @@ func TestBetterLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testin
 			if requests != len(test.responses) {
 				t.Fatalf("GetLyrics() request count = %d, want %d", requests, len(test.responses))
 			}
-			if ttl := cache.lastTTL(); ttl != test.wantTTL {
-				t.Fatalf("fallback cache TTL = %d, want %d", ttl, test.wantTTL)
+			if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, catalogSources(defaultCatalogIDs)); ttl != test.wantTTL {
+				t.Fatalf("winner cache TTL = %d, want %d", ttl, test.wantTTL)
 			}
 		})
 	}
 }
 
-func TestBetterLyricsProvider_CachesCompleteMisses(t *testing.T) {
+func TestLyricsProvider_CachesCompleteMisses(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
 	requests := 0
-	provider := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 404}, nil
 	}, cache, time.Now)
@@ -119,11 +121,11 @@ func TestBetterLyricsProvider_CachesCompleteMisses(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
+func TestLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
-	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -140,18 +142,18 @@ func TestBetterLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	assertLyricsSource(t, result.Source, "unison", "lrc")
-	if ttl := cache.lastTTL(); ttl != uncertainLyricsCacheTTLSeconds {
-		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, uncertainLyricsCacheTTLSeconds)
+	assertLyricsSource(t, result.Source, "Unison", "lrc")
+	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 181}, catalogSources(defaultCatalogIDs)); ttl != unsyncedLyricsCacheTTLSeconds {
+		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, unsyncedLyricsCacheTTLSeconds)
 	}
 }
 
-func TestBetterLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
+func TestLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
 	requests := 0
-	provider := newBetterLyricsProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 503}, nil
 	}, cache, time.Now)
@@ -167,17 +169,21 @@ func TestBetterLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
 	if requests != 6 {
 		t.Fatalf("network request count = %d, want both three-provider lookups", requests)
 	}
-	if ttl := cache.lastTTL(); ttl != 0 {
-		t.Fatalf("cache TTL = %d, want no cached operational failure", ttl)
+	// Every KV write in the failure path is the sweep marker ("sweep:");
+	// entries under the winner/source namespaces would mean a cached failure.
+	for key := range cache.values {
+		if strings.HasPrefix(key, lyricsWinnerCacheKeyPrefix) || strings.HasPrefix(key, lyricsSourceCacheKeyPrefix) {
+			t.Fatalf("cache keys written = %v, want no cached operational failure", cache.values)
+		}
 	}
 }
 
-func TestBetterLyricsProvider_SeparatesCacheKeysByDuration(t *testing.T) {
+func TestLyricsProvider_SeparatesCacheKeysByDuration(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
 	requestedDurations := make([]string, 0, 2)
-	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
 			t.Fatalf("parse request URL: %v", err)
@@ -214,13 +220,13 @@ func TestBetterLyricsProvider_SeparatesCacheKeysByDuration(t *testing.T) {
 	}
 }
 
-func TestBetterLyricsProvider_FailsOpenWhenLyricCacheWriteFails(t *testing.T) {
+func TestLyricsProvider_FailsOpenWhenLyricCacheWriteFails(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("kv store at quota")
 	requests := 0
-	provider := newBetterLyricsProviderWithDependencies(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		parsed, err := url.Parse(request.URL)
 		if err != nil {
@@ -264,17 +270,22 @@ func (c *usageAwareLyricsCache) SetWithTTL(string, []byte, int64) error {
 }
 func (c *usageAwareLyricsCache) StorageUsed() (int64, error) { return c.used, nil }
 
-func TestBetterLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
+func TestLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
 	t.Parallel()
 
 	cache := &usageAwareLyricsCache{used: lyricsCacheMaxBytes - lyricsCacheReservedBytes}
-	provider := newBetterLyricsProviderWithDependencies(nil, cache, time.Now)
-	provider.cacheLyrics(
+	provider := newLyricsProviderWithDependencies(nil, cache, time.Now)
+	// Mint the credential salt first: it is installation metadata, not
+	// lyrics data, and the headroom rule governs lyric writes only.
+	_ = provider.lyricsCredentialsFingerprint()
+	before := cache.sets
+	provider.cacheWinner(
 		lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-		sourcedLyricsResponse(lyrics.LyricsText{Text: "lyrics"}, "unison", "plain"),
-		lookupHealthy,
+		[]lyricsSource{{ID: "one"}},
+		newLyricsCandidate(lyrics.LyricsText{Text: "lyrics"}, "Unison", "plain"),
+		false,
 	)
-	if cache.sets != 0 {
-		t.Fatalf("cache writes = %d, want 0 when reserved headroom is reached", cache.sets)
+	if written := cache.sets - before; written != 0 {
+		t.Fatalf("cache writes = %d, want 0 when reserved headroom is reached", written)
 	}
 }

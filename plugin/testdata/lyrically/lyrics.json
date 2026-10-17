@@ -1,0 +1,253 @@
+{
+ "type": "Syllable",
+ "metadata": {
+  "songwriters": [
+   "Edward Christopher Sheeran",
+   "John McDaid",
+   "Kandi L. Burruss",
+   "Kevin Jerome Briggs",
+   "Steve Mac",
+   "Tameka D. Cottle",
+   "Michael Ebenazer Kwadjo Omari Owuo Junior"
+  ],
+  "language": "en",
+  "leadingSilence": null,
+  "lyricOffset": 0.046
+ },
+ "content": [
+  {
+   "timestamp": 9731,
+   "endtime": 12105,
+   "duration": 2374,
+   "structure": "Verse",
+   "text": [
+    {
+     "text": "The",
+     "timestamp": 9731,
+     "endtime": 9927,
+     "duration": 196,
+     "part": false
+    },
+    {
+     "text": "club",
+     "timestamp": 9927,
+     "endtime": 10284,
+     "duration": 357,
+     "part": false
+    },
+    {
+     "text": "isn't",
+     "timestamp": 10284,
+     "endtime": 10570,
+     "duration": 286,
+     "part": false
+    },
+    {
+     "text": "the",
+     "timestamp": 10570,
+     "endtime": 10721,
+     "duration": 151,
+     "part": false
+    },
+    {
+     "text": "best",
+     "timestamp": 10721,
+     "endtime": 10996,
+     "duration": 275,
+     "part": false
+    },
+    {
+     "text": "place",
+     "timestamp": 10996,
+     "endtime": 11355,
+     "duration": 359,
+     "part": false
+    },
+    {
+     "text": "to",
+     "timestamp": 11355,
+     "endtime": 11473,
+     "duration": 118,
+     "part": false
+    },
+    {
+     "text": "find",
+     "timestamp": 11473,
+     "endtime": 11726,
+     "duration": 253,
+     "part": false
+    },
+    {
+     "text": "a",
+     "timestamp": 11726,
+     "endtime": 11826,
+     "duration": 100,
+     "part": false
+    },
+    {
+     "text": "lover",
+     "timestamp": 11826,
+     "endtime": 12105,
+     "duration": 279,
+     "part": false
+    }
+   ],
+   "background": false,
+   "backgroundText": [],
+   "oppositeTurn": false,
+   "agent": "v1",
+   "key": "L1",
+   "sectionBegin": 9731,
+   "sectionEnd": 29942
+  },
+  {
+   "timestamp": 12105,
+   "endtime": 14063,
+   "duration": 1958,
+   "structure": "Verse",
+   "text": [
+    {
+     "text": "So",
+     "timestamp": 12105,
+     "endtime": 12310,
+     "duration": 205,
+     "part": false
+    },
+    {
+     "text": "the",
+     "timestamp": 12310,
+     "endtime": 12428,
+     "duration": 118,
+     "part": false
+    },
+    {
+     "text": "bar",
+     "timestamp": 12428,
+     "endtime": 12810,
+     "duration": 382,
+     "part": false
+    },
+    {
+     "text": "is",
+     "timestamp": 12810,
+     "endtime": 13024,
+     "duration": 214,
+     "part": false
+    },
+    {
+     "text": "where",
+     "timestamp": 13024,
+     "endtime": 13259,
+     "duration": 235,
+     "part": false
+    },
+    {
+     "text": "I",
+     "timestamp": 13259,
+     "endtime": 13460,
+     "duration": 201,
+     "part": false
+    },
+    {
+     "text": "go",
+     "timestamp": 13464,
+     "endtime": 14063,
+     "duration": 599,
+     "part": false
+    }
+   ],
+   "background": false,
+   "backgroundText": [],
+   "oppositeTurn": false,
+   "agent": "v1",
+   "key": "L2",
+   "sectionBegin": 9731,
+   "sectionEnd": 29942
+  },
+  {
+   "timestamp": 14915,
+   "endtime": 17088,
+   "duration": 2173,
+   "structure": "Verse",
+   "text": [
+    {
+     "text": "Me",
+     "timestamp": 14915,
+     "endtime": 15132,
+     "duration": 217,
+     "part": false
+    },
+    {
+     "text": "and",
+     "timestamp": 15132,
+     "endtime": 15232,
+     "duration": 100,
+     "part": false
+    },
+    {
+     "text": "my",
+     "timestamp": 15232,
+     "endtime": 15371,
+     "duration": 139,
+     "part": false
+    },
+    {
+     "text": "friends",
+     "timestamp": 15371,
+     "endtime": 15739,
+     "duration": 368,
+     "part": false
+    },
+    {
+     "text": "at",
+     "timestamp": 15739,
+     "endtime": 15922,
+     "duration": 183,
+     "part": false
+    },
+    {
+     "text": "the",
+     "timestamp": 15922,
+     "endtime": 16102,
+     "duration": 180,
+     "part": false
+    },
+    {
+     "text": "table",
+     "timestamp": 16102,
+     "endtime": 16470,
+     "duration": 368,
+     "part": false
+    },
+    {
+     "text": "doing",
+     "timestamp": 16470,
+     "endtime": 16738,
+     "duration": 268,
+     "part": false
+    },
+    {
+     "text": "shots",
+     "timestamp": 16738,
+     "endtime": 17088,
+     "duration": 350,
+     "part": false
+    }
+   ],
+   "background": false,
+   "backgroundText": [],
+   "oppositeTurn": false,
+   "agent": "v1",
+   "key": "L3",
+   "sectionBegin": 9731,
+   "sectionEnd": 29942
+  }
+ ],
+ "lrc": "[by:Generated using Lyrically API]\n[00:09.731]The club isn't the best place to find a lover\n[00:12.105]So the bar is where I go\n[00:14.915]Me and my friends at the table doing shots\n[00:17.088]Drinking fast and then we talk slow\n[00:19.533]And you come over and start up a conversation with just me\n[00:22.315]And trust me I'll give it a chance now\n[00:24.665]Take my hand, stop\n[00:25.702]Put Van the Man on the jukebox\n[00:27.282]And then we start to dance\n[00:28.845]And now I'm singin' like\n[00:29.942]Girl, you know I want your love\n[00:32.374]Your love was handmade for somebody like me\n[00:35.511]Come on now, follow my lead\n[00:37.367]I may be crazy, don't mind me\n[00:39.516]Say, \"Boy, let's not talk too much\n[00:42.379]Grab on my waist and put that body on me\n[00:45.437]Come on now, follow my lead\n[00:47.122]Come, come on now, follow my lead\"\n[00:48.973]Mm-mm-mmm\n[00:50.776]I'm in love with the shape of you\n[00:53.131]We push and pull like a magnet do\n[00:55.673]Although my heart is falling too\n[00:58.305]I'm in love with your body\n[01:00.641]And last night you were in my room\n[01:03.196]And now my bedsheets smell like you\n[01:05.183]Every day discovering something brand new\n[01:08.136]Well, I'm in love with your body\n[01:09.962]Oh I, oh I, oh I, oh I\n[01:13.120]I'm in love with your body\n[01:14.908]Oh I, oh I, oh I, oh I\n[01:18.291]I'm in love with your body\n[01:19.888]Oh I, oh I, oh I, oh I\n[01:23.214]I'm in love with your body\n[01:25.156]Every day discovering something brand new\n[01:28.304]I'm in love with the shape of you\n[01:29.892]One week in, we let the story begin\n[01:31.927]We're going out on our first date\n[01:34.524]But you and me are thrifty, so go all-you-can-eat\n[01:36.917]Fill up your bag and I fill up a plate\n[01:39.481]We talk for hours and hours about the sweet and the sour\n[01:42.006]And how your family's doing okay\n[01:44.485]And leave and get in a taxi\n[01:46.019]We kiss in the back seat\n[01:47.158]Tell the driver make the radio play\n[01:48.839]And I'm singin' like\n[01:49.877]Girl, you know I want your love\n[01:52.340]Your love was handmade for somebody like me\n[01:55.480]Come on now, follow my lead\n[01:57.387]I may be crazy, don't mind me\n[01:59.508]Say, \"Boy, let's not talk too much\n[02:02.353]Grab on my waist and put that body on me\n[02:05.490]Come on now, follow my lead\n[02:07.107]Come, come on now, follow my lead\"\n[02:08.931]Mm-mm-mmm\n[02:10.811]I'm in love with the shape of you\n[02:13.124]We push and pull like a magnet do\n[02:15.649]Although my heart is falling too\n[02:18.279]I'm in love with your body\n[02:20.653]And last night you were in my room\n[02:23.202]And now my bedsheets smell like you\n[02:25.234]Every day discovering something brand new\n[02:28.154]Well, I'm in love with your body\n[02:29.908]Oh I, oh I, oh I, oh I\n[02:33.203]I'm in love with your body\n[02:34.865]Oh I, oh I, oh I, oh I\n[02:38.308]I'm in love with your body\n[02:39.949]Oh I, oh I, oh I, oh I\n[02:43.271]I'm in love with your body\n[02:45.189]Every day discovering something brand new\n[02:48.289]I'm in love with the shape of you\n[02:50.207]Come on, be my baby, come on\n[02:52.727]Come on, be my baby, come on\n[02:55.145]Come on, be my baby, come on\n[02:57.678]Come on, be my baby, come on\n[03:00.210]Come on, be my baby, come on\n[03:02.645]Come on, be my baby, come on\n[03:05.106]Come on, be my baby, come on\n[03:07.666]Come on, be my baby, come on\n[03:10.796]I'm in love with the shape of you\n[03:13.196]We push and pull like a magnet do\n[03:15.620]Although my heart is falling too\n[03:18.254]I'm in love with your body\n[03:20.641]And last night you were in my room\n[03:23.205]And now my bedsheets smell like you\n[03:25.238]Every day discovering something brand new\n[03:28.232]I'm in love with your body\n[03:30.246]Come on, be my baby, come on\n[03:32.702]Come on, be my baby, come on\n[03:33.393]I'm in love with your body\n[03:35.117]Come on, be my baby, come on\n[03:37.626]Come on, be my baby, come on\n[03:38.327]I'm in love with your body\n[03:40.233]Come on, be my baby, come on\n[03:42.668]Come on, be my baby, come on\n[03:43.313]I'm in love with your body\n[03:45.253]Every day, discovering something brand new\n[03:48.360]I'm in love with the shape of you",
+ "elrc": "[by:Generated using Lyrically API]\n[00:09.731]<00:09.731>The <00:09.927>club <00:10.284>isn't <00:10.570>the <00:10.721>best <00:10.996>place <00:11.355>to <00:11.473>find <00:11.726>a <00:11.826>lover<00:12.105>\n[00:12.105]<00:12.105>So <00:12.310>the <00:12.428>bar <00:12.810>is <00:13.024>where <00:13.259>I <00:13.464>go<00:14.063>\n[00:14.915]<00:14.915>Me <00:15.132>and <00:15.232>my <00:15.371>friends <00:15.739>at <00:15.922>the <00:16.102>table <00:16.470>doing <00:16.738>shots<00:17.088>\n[00:17.088]<00:17.088>Drinking <00:17.417>fast <00:17.728>and <00:17.869>then <00:18.020>we <00:18.208>talk <00:18.430>slow<00:18.850>\n[00:19.533]<00:19.533>And <00:19.633>you <00:19.763>come <00:19.974>over <00:20.278>and <00:20.401>start <00:20.626>up <00:20.764>a <00:20.878>conver<00:21.149>sation <00:21.536>with <00:21.644>just <00:21.937>me<00:22.315>\n[00:22.315]<00:22.315>And <00:22.439>trust <00:22.754>me <00:22.921>I'll <00:23.117>give <00:23.299>it <00:23.423>a <00:23.523>chance <00:24.215>now<00:24.665>\n[00:24.665]<00:24.665>Take <00:24.765>my <00:24.892>hand, <00:25.284>stop<00:25.702>\n[00:25.702]<00:25.702>Put <00:25.860>Van <00:26.040>the <00:26.181>Man <00:26.373>on <00:26.480>the <00:26.617>juke<00:26.889>box<00:27.282>\n[00:27.282]<00:27.282>And <00:27.431>then <00:27.698>we <00:27.898>start <00:28.375>to <00:28.525>dance<00:28.845>\n[00:28.845]<00:28.845>And <00:29.019>now <00:29.167>I'm <00:29.275>singin' <00:29.636>like<00:29.942>\n[00:29.942]<00:29.942>Girl, <00:30.242>you <00:30.549>know <00:30.871>I <00:31.136>want <00:31.493>your <00:31.758>love<00:32.264>\n[00:32.374]<00:32.374>Your <00:32.600>love <00:32.862>was <00:33.038>hand<00:33.291>made <00:33.594>for <00:33.917>some<00:34.272>body <00:34.641>like <00:34.951>me<00:35.367>\n[00:35.511]<00:35.511>Come <00:35.771>on <00:35.907>now, <00:36.166>follow <00:36.513>my <00:36.809>lead<00:37.238>\n[00:37.367]<00:37.367>I <00:37.613>may <00:37.886>be <00:38.089>cra<00:38.396>zy, <00:38.691>don't <00:38.971>mind <00:39.289>me<00:39.516>\n[00:39.516]<00:39.516>Say, <00:39.875>\"Boy, <00:40.430>let's <00:40.823>not <00:41.133>talk <00:41.482>too <00:41.801>much<00:42.373>\n[00:42.379]<00:42.379>Grab <00:42.629>on <00:42.891>my <00:43.059>waist <00:43.371>and <00:43.614>put <00:43.966>that <00:44.227>body <00:44.640>on <00:44.903>me<00:45.246>\n[00:45.437]<00:45.437>Come <00:45.743>on <00:45.895>now, <00:46.102>follow <00:46.469>my <00:46.755>lead<00:47.110>\n[00:47.122]<00:47.122>Come, <00:47.364>come <00:47.650>on <00:47.824>now, <00:48.054>follow <00:48.359>my <00:48.608>lead\"<00:48.973>\n[00:48.973]<00:48.973>Mm-<00:49.293>mm-<00:49.635>mmm<00:50.025>\n[00:50.776]<00:50.776>I'm <00:51.040>in <00:51.177>love <00:51.518>with <00:51.651>the <00:51.751>shape <00:52.095>of <00:52.427>you<00:52.737>\n[00:53.131]<00:53.131>We <00:53.327>push <00:53.560>and <00:53.684>pull <00:54.005>like <00:54.186>a <00:54.297>mag<00:54.578>net <00:54.929>do<00:55.249>\n[00:55.673]<00:55.673>Although <00:56.019>my <00:56.166>heart <00:56.508>is <00:56.745>fal<00:57.069>ling <00:57.351>too<00:57.704>\n[00:58.305]<00:58.305>I'm <00:58.514>in <00:58.651>love <00:59.021>with <00:59.165>your <00:59.272>bo<00:59.778>dy<01:00.177>\n[01:00.641]<01:00.641>And <01:00.880>last <01:01.119>night <01:01.487>you <01:01.665>were <01:01.818>in <01:02.027>my <01:02.367>room<01:02.814>\n[01:03.196]<01:03.196>And <01:03.376>now <01:03.572>my <01:03.734>bed<01:03.918>sheets <01:04.264>smell <01:04.527>like <01:04.880>you<01:05.183>\n[01:05.183]<01:05.183>Every <01:05.524>day <01:05.677>dis<01:05.800>covering <01:06.346>some<01:06.695>thing <01:07.030>brand <01:07.390>new<01:07.733>\n[01:08.136]<01:08.136>Well, <01:08.347>I'm <01:08.534>in <01:08.677>love <01:09.022>with <01:09.174>your <01:09.326>bo<01:09.827>dy<01:10.131>\n[01:09.962]<01:09.962>Oh <01:10.176>I, <01:10.521>oh <01:10.813>I, <01:11.148>oh <01:11.446>I, <01:11.801>oh <01:12.057>I<01:12.610>\n[01:13.120]<01:13.120>I'm <01:13.490>in <01:13.661>love <01:13.999>with <01:14.163>your <01:14.296>bo<01:14.811>dy<01:15.110>\n[01:14.908]<01:14.908>Oh <01:15.163>I, <01:15.519>oh <01:15.777>I, <01:16.138>oh <01:16.417>I, <01:16.733>oh <01:17.029>I<01:17.572>\n[01:18.291]<01:18.291>I'm <01:18.529>in <01:18.681>love <01:19.032>with <01:19.173>your <01:19.322>bo<01:19.779>dy<01:20.169>\n[01:19.888]<01:19.888>Oh <01:20.169>I, <01:20.508>oh <01:20.839>I, <01:21.151>oh <01:21.422>I, <01:21.776>oh <01:22.070>I<01:22.548>\n[01:23.214]<01:23.214>I'm <01:23.505>in <01:23.669>love <01:24.015>with <01:24.173>your <01:24.311>bo<01:24.753>dy<01:25.119>\n[01:25.156]<01:25.156>Every <01:25.531>day <01:25.727>discove<01:26.095>ring <01:26.382>some<01:26.677>thing <01:26.970>brand <01:27.364>new<01:27.755>\n[01:28.304]<01:28.304>I'm <01:28.514>in <01:28.623>love <01:28.940>with <01:29.078>the <01:29.200>shape <01:29.582>of <01:29.875>you<01:30.208>\n[01:29.892]<01:29.892>One <01:30.117>week <01:30.387>in, <01:30.631>we <01:30.827>let <01:30.983>the <01:31.104>story <01:31.475>begin<01:31.927>\n[01:31.927]<01:31.927>We're <01:32.100>going <01:32.441>out <01:32.678>on <01:32.972>our <01:33.208>first <01:33.503>date<01:34.060>\n[01:34.524]<01:34.524>But <01:34.654>you <01:34.849>and <01:35.010>me <01:35.252>are <01:35.352>thrifty, <01:35.821>so <01:36.025>go <01:36.195>all-<01:36.348>you-<01:36.495>can-<01:36.654>eat<01:36.917>\n[01:36.917]<01:36.917>Fill <01:37.112>up <01:37.266>your <01:37.439>bag <01:37.778>and <01:37.921>I <01:38.021>fill <01:38.236>up <01:38.336>a <01:38.471>plate<01:38.901>\n[01:39.481]<01:39.481>We <01:39.608>talk <01:39.776>for <01:39.929>hours <01:40.303>and <01:40.444>hours <01:40.779>about <01:41.053>the <01:41.164>sweet <01:41.391>and <01:41.491>the <01:41.621>sour<01:42.006>\n[01:42.006]<01:42.006>And <01:42.123>how <01:42.290>your <01:42.430>fami<01:42.718>ly's <01:43.062>doing <01:43.403>okay<01:43.864>\n[01:44.485]<01:44.485>And <01:44.608>leave <01:44.805>and <01:44.905>get <01:45.078>in <01:45.203>a <01:45.324>ta<01:45.670>xi<01:46.019>\n[\n[TRUNCATED FIXTURE]",
+ "elrcMultiPerson": "[by:Generated using Lyrically API]\n[00:09.731]v1: <00:09.731>The <00:09.927>club <00:10.284>isn't <00:10.570>the <00:10.721>best <00:10.996>place <00:11.355>to <00:11.473>find <00:11.726>a <00:11.826>lover<00:12.105>\n[00:12.105]v1: <00:12.105>So <00:12.310>the <00:12.428>bar <00:12.810>is <00:13.024>where <00:13.259>I <00:13.464>go<00:14.063>\n[00:14.915]v1: <00:14.915>Me <00:15.132>and <00:15.232>my <00:15.371>friends <00:15.739>at <00:15.922>the <00:16.102>table <00:16.470>doing <00:16.738>shots<00:17.088>\n[00:17.088]v1: <00:17.088>Drinking <00:17.417>fast <00:17.728>and <00:17.869>then <00:18.020>we <00:18.208>talk <00:18.430>slow<00:18.850>\n[00:19.533]v1: <00:19.533>And <00:19.633>you <00:19.763>come <00:19.974>over <00:20.278>and <00:20.401>start <00:20.626>up <00:20.764>a <00:20.878>conver<00:21.149>sation <00:21.536>with <00:21.644>just <00:21.937>me<00:22.315>\n[00:22.315]v1: <00:22.315>And <00:22.439>trust <00:22.754>me <00:22.921>I'll <00:23.117>give <00:23.299>it <00:23.423>a <00:23.523>chance <00:24.215>now<00:24.665>\n[00:24.665]v1: <00:24.665>Take <00:24.765>my <00:24.892>hand, <00:25.284>stop<00:25.702>\n[00:25.702]v1: <00:25.702>Put <00:25.860>Van <00:26.040>the <00:26.181>Man <00:26.373>on <00:26.480>the <00:26.617>juke<00:26.889>box<00:27.282>\n[00:27.282]v1: <00:27.282>And <00:27.431>then <00:27.698>we <00:27.898>start <00:28.375>to <00:28.525>dance<00:28.845>\n[00:28.845]v1: <00:28.845>And <00:29.019>now <00:29.167>I'm <00:29.275>singin' <00:29.636>like<00:29.942>\n[00:29.942]v1: <00:29.942>Girl, <00:30.242>you <00:30.549>know <00:30.871>I <00:31.136>want <00:31.493>your <00:31.758>love<00:32.264>\n[00:32.374]v1: <00:32.374>Your <00:32.600>love <00:32.862>was <00:33.038>hand<00:33.291>made <00:33.594>for <00:33.917>some<00:34.272>body <00:34.641>like <00:34.951>me<00:35.367>\n[00:35.511]v1: <00:35.511>Come <00:35.771>on <00:35.907>now, <00:36.166>follow <00:36.513>my <00:36.809>lead<00:37.238>\n[00:37.367]v1: <00:37.367>I <00:37.613>may <00:37.886>be <00:38.089>cra<00:38.396>zy, <00:38.691>don't <00:38.971>mind <00:39.289>me<00:39.516>\n[00:39.516]v1: <00:39.516>Say, <00:39.875>\"Boy, <00:40.430>let's <00:40.823>not <00:41.133>talk <00:41.482>too <00:41.801>much<00:42.373>\n[00:42.379]v1: <00:42.379>Grab <00:42.629>on <00:42.891>my <00:43.059>waist <00:43.371>and <00:43.614>put <00:43.966>that <00:44.227>body <00:44.640>on <00:44.903>me<00:45.246>\n[00:45.437]v1: <00:45.437>Come <00:45.743>on <00:45.895>now, <00:46.102>follow <00:46.469>my <00:46.755>lead<00:47.110>\n[00:47.122]v1: <00:47.122>Come, <00:47.364>come <00:47.650>on <00:47.824>now, <00:48.054>follow <00:48.359>my <00:48.608>lead\"<00:48.973>\n[00:48.973]v1: <00:48.973>Mm-<00:49.293>mm-<00:49.635>mmm<00:50.025>\n[00:50.776]v1: <00:50.776>I'm <00:51.040>in <00:51.177>love <00:51.518>with <00:51.651>the <00:51.751>shape <00:52.095>of <00:52.427>you<00:52.737>\n[00:53.131]v1: <00:53.131>We <00:53.327>push <00:53.560>and <00:53.684>pull <00:54.005>like <00:54.186>a <00:54.297>mag<00:54.57",
+ "plain": "[Verse]\nThe club isn't the best place to find a lover\nSo the bar is where I go\nMe and my friends at the table doing shots\nDrinking fast and then we talk slow\nAnd you come over and start up a conversation with just me\nAnd trust me I'll give it a chance now\nTake my hand, stop\nPut Van the Man on the jukebox\nAnd then we start to dance\nAnd now I'm singin' like\n\n[PreChorus]\nGirl, you know I want your love\nYour love was handmade for somebody like me\nCome on now, follow my lead\nI may be crazy, don't mind me\nSay, \"Boy, let's not talk too much\nGrab on my waist and put that body on me\nCome on now, follow my lead\nCome, come on now, follow my lead\"\nMm-mm-mmm\n\n[Chorus]\nI'm in love with the shape of you\nWe push and pull like a magnet do\nAlthough my heart is falling too\nI'm in love with your body\nAnd last night you were in my room\nAnd now my bedsheets smell like you\nEvery day discovering something brand new\nWell, I'm in love with your body\nOh I, oh I, oh I, oh I\nI'm in love with your body\nOh I, oh I, oh I, oh I\nI'm in love with your body\nOh I, oh I, oh I, oh I\nI'm in love with your body\nEvery day discovering something brand new\nI'm in love with the shape of you\n\n[Verse]\nOne week in, we let the story begin\nWe're going out on our first date\nBut you and me are thrifty, so go all-you-can-eat\nFill up your bag and I fill up a plate\nWe talk for hours and hours about the sweet and the sour\nAnd how your family's doing okay\nAnd leave and get in a taxi\nWe kiss in the back seat\nTell the driver make the radio play\nAnd I'm singin' like\n\n[PreChorus]\nGirl, you know I want your love\nYour love was handmade for somebody like me\nCome on now, follow my lead\nI may be crazy, don't mind me\nSay, \"Boy, let's not talk too much\nGrab on my waist and put that body on me\nCome on now, follow my lead\nCome, come on now, follow my lead\"\nMm-mm-mmm\n\n[Chorus]\nI'm in love with the shape of you\nWe push and pull like a magnet do\nAlthough my heart is falling too\nI'm in love with your body\nAnd last night you were in my room\nAnd now my bedsheets smell like you\nEvery day discovering something brand new\nWell, I'm in love with your body\nOh I, oh I, oh I, oh I\nI'm in love with your body\nOh I, oh I, oh I, oh I\nI'm in love with your body\nOh I, oh I, oh I, oh I\nI'm in love with your body\nEvery day discovering something brand new\nI'm in love with the shape of you\n\n[Bridge]\nCome on, be my baby, come on\nCome on, be my baby, come on\nCome on, be my baby, come on\nCome on, be my baby, come on\nCome on, be my baby, come on\nCome on, be my baby, come on\nCome on, be my baby, come on\nCome on, be my baby, come on\n\n[Chorus]\nI'm in love with the shape of you\nWe push and pull like a magnet do\nAlthough my heart is falling too\nI'm in love with your body\nAnd last night you were in my room\nAnd now my bedsheets smell like you\nEvery day discovering something brand new\nI'm in love with your body\n\n[Outro]\nCome on, be my baby, come on\nCome on, be my baby, come on\nI'm in love with your body\nCome on, be my baby, come on\nCome on, be my baby, come on\nI'm in love with your body\nCome on, be my baby, come on\nCome on, be my baby, come on\nI'm in love with your body\nEvery day, discovering something brand new\nI'm in love with the shape of you",
+ "ttmlContent": "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\" itunes:timing=\"Word\" xml:lang=\"en\"><head><metadata><ttm:agent type=\"person\" xml:id=\"v1\"/><iTunesMetadata xmlns=\"http://music.apple.com/lyric-ttml-internal\"><translations/><songwriters><songwriter>Edward Christopher Sheeran</songwriter><songwriter>John McDaid</songwriter><songwriter>Kandi L. Burruss</songwriter><songwriter>Kevin Jerome Briggs</songwriter><songwriter>Steve Mac</songwriter><songwriter>Tameka D. Cottle</songwriter><songwriter>Michael Ebenazer Kwadjo Omari Owuo Junior</songwriter></songwriters><audio lyricOffset=\"0.046\" role=\"spatial\"/></iTunesMetadata></metadata></head><body dur=\"3:53.713\"><div begin=\"9.731\" end=\"29.942\" itunes:songPart=\"Verse\"><p begin=\"9.731\" end=\"12.105\" itunes:key=\"L1\" ttm:agent=\"v1\"><span begin=\"9.731\" end=\"9.927\">The</span> <span begin=\"9.927\" end=\"10.284\">club</span> <span begin=\"10.284\" end=\"10.570\">isn't</span> <span begin=\"10.570\" end=\"10.721\">the</span> <span begin=\"10.721\" end=\"10.996\">best</span> <span begin=\"10.996\" end=\"11.355\">place</span> <span begin=\"11.355\" end=\"11.473\">to</span> <span begin=\"11.473\" end=\"11.726\">find</span> <span begin=\"11.726\" end=\"11.826\">a</span> <span begin=\"11.826\" end=\"12.105\">lover</span></p><p begin=\"12.105\" end=\"14.063\" itunes:key=\"L2\" ttm:agent=\"v1\"><span begin=\"12.105\" end=\"12.310\">So</span> <span begin=\"12.310\" end=\"12.428\">the</span> <span begin=\"12.428\" end=\"12.810\">bar</span> <span begin=\"12.810\" end=\"13.024\">is</span> <span begin=\"13.024\" end=\"13.259\">where</span> <span begin=\"13.259\" end=\"13.460\">I</span> <span begin=\"13.464\" end=\"14.063\">go</span></p><p begin=\"14.915\" end=\"17.088\" itunes:key=\"L3\" ttm:agent=\"v1\"><span begin=\"14.915\" end=\"15.132\">Me</span> <span begin=\"15.132\" end=\"15.232\">and</span> <span begin=\"15.232\" end=\"15.371\">my</span> <span begin=\"15.371\" end=\"15.739\">friends</span> <span begin=\"15.739\" end=\"15.922\">at</span> <span begin=\"15.922\" end=\"16.102\">the</span> <span begin=\"16.102\" end=\"16.470\">table</span> <span begin=\"16.470\" end=\"16.738\">doing</span> <span begin=\"16.738\" end=\"17.088\">shots</span></p><p begin=\"17.088\" end=\"18.850\" itunes:key=\"L4\" ttm:agent=\"v1\"><span begin=\"17.088\" end=\"17.417\">Drinking</span> <span begin=\"17.417\" end=\"17.728\">fast</span> <span begin=\"17.728\" end=\"17.869\">and</span> <span begin=\"17.869\" end=\"18.020\">then</span> <span begin=\"18.020\" end=\"18.208\">we</span> <span begin=\"18.208\" end=\"18.430\">talk</span> <span begin=\"18.430\" end=\"18.850\">slow</span></p><p begin=\"19.533\" end=\"22.315\" itunes:key=\"L5\" ttm:agent=\"v1\"><span begin=\"19.533\" end=\"19.633\">And</span> <span begin=\"19.633\" end=\"19.763\">you</span> <span begin=\"19.763\" end=\"19.974\">come</span> <span begin=\"19.974\" end=\"20.278\">over</span> <span begin=\"20.278\" end=\"20.401\">and</span> <span begin=\"20.401\" end=\"20.626\">start</span> <span begin=\"20.626\" end=\"20.764\">up</span> <span begin=\"20.764\" end=\"20.878\">a</span> <span begin=\"20.878\" end=\"21.149\">conver</span><span begin=\"21.149\" end=\"21.536\">sation</span> <span begin=\"21.536\" end=\"21.644\">with</span> <span begin=\"21.644\" end=\"21.937\">just</span> <span begin=\"21.937\" end=\"22.315\">me</span></p><p begin=\"22.315\" end=\"24.665\" itunes:key=\"L6\" ttm:agent=\"v1\"><span begin=\"22.315\" end=\"22.439\">And</span> <span begin=\"22.439\" end=\"22.754\">trust</span> <span begin=\"22.754\" end=\"22.921\">me</span> <span begin=\"22.921\" end=\"23.117\">I'll</span> <span begin=\"23.117\" end=\"23.299\">give</span> <span begin=\"23.299\" end=\"23.423\">it</span> <span begin=\"23.423\" end=\"23.523\">a</span> <span begin=\"23.523\" end=\"24.215\">chance</span> <span begin=\"24.215\" end=\"24.665\">now</span></p><p begin=\"24.665\" end=\"25.702\" itunes:key=\"L7\" ttm:agent=\"v1\"><span begin=\"24.665\" end=\"24.765\">Take</span> <span begin=\"24.765\" end=\"24.892\">my</span> <span begin=\"24.892\" end=\"25.284\">hand,</span> <span begin=\"25.284\" end=\"25.702\">stop</span></p><p begin=\"25.702\" end=\"27.282\" itunes:key=\"L8\" ttm:age",
+ "source": "local_cache",
+ "cached_at": "2026-10-16T12:01:34.312949Z"
+}
