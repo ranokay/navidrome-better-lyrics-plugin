@@ -98,7 +98,6 @@ type xmlNode struct {
 	Children []xmlNode `xml:",any"`
 }
 
-
 func (candidate lyricsCandidate) present() bool {
 	return len(candidate.response.Lyrics) > 0
 }
