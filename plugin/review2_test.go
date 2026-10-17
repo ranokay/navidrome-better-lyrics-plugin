@@ -1423,3 +1423,24 @@ func TestAnonymous401sKeepBoundedCoverage(t *testing.T) {
 		t.Fatalf("done marker TTL = %d, want the one-hour miss bound", ttl)
 	}
 }
+
+func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
+	t.Parallel()
+
+	// The whole collapsed name is a match option too: "AC/DC" split pieces
+	// ("ac","dc") would never equal the hub alias "acdc" (Greptile P1).
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api/v1/manifest.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1"}`)}, nil
+		case strings.Contains(request.URL, "api/v1/songs.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"z","title":"Thunderstruck","artists":["AC/DC"],"album":"B","path":"lyrics/z.ttml"}]}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+		}
+	}, newFakeLyricsCache(), time.Now, "luna-beat")
+
+	if _, _, err := provider.fetchLunaBeatLyricsCandidatesProvider(lyrics.TrackInfo{Title: "Thunderstruck", Artist: "AC/DC"}); err != nil {
+		t.Fatalf("exact punctuated artist error = %v, want nil", err)
+	}
+}

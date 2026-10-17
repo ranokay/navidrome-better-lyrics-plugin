@@ -185,10 +185,17 @@ func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, trackArtist string)
 	return false
 }
 
-// lunaBeatArtistNames splits a track's artist field on common collaboration
-// separators and collapses each name so alias rows can compare complete names.
+// lunaBeatArtistNames offers the track's normalized whole name first (an
+// artist like "AC/DC" collapses to one alias token; splitting would compare
+// its separator pieces instead and turn exact matches into misses —
+// Greptile), then each collaboration member individually so multi-artist
+// tracks can alias-match hub rows.
 func lunaBeatArtistNames(trackArtist string) []string {
-	names := make([]string, 0, 2)
+	names := make([]string, 0, 3)
+	whole := strings.ToLower(onlyLettersAndDigits(strings.TrimSpace(trackArtist)))
+	if whole != "" {
+		names = append(names, whole)
+	}
 	for _, raw := range strings.FieldsFunc(trackArtist, func(r rune) bool {
 		switch r {
 		case '&', ',', '、', '/', '|', ';', '·':
@@ -196,7 +203,7 @@ func lunaBeatArtistNames(trackArtist string) []string {
 		}
 		return false
 	}) {
-		if collapsed := strings.ToLower(onlyLettersAndDigits(strings.TrimSpace(raw))); collapsed != "" {
+		if collapsed := strings.ToLower(onlyLettersAndDigits(strings.TrimSpace(raw))); collapsed != "" && collapsed != whole {
 			names = append(names, collapsed)
 		}
 	}
