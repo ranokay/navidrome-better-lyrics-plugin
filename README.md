@@ -201,9 +201,12 @@ mise run check
 ### Project layout
 
 ```
-plugin/          Go sources, tests, and manifest.json for the plugin package
-dist/            local build output (plugin.wasm, better-lyrics.ndp); not committed
-docs/research/   feasibility and design research
+plugin/              package main: manifest embed, registration, host seams, contract tests
+internal/provider/   orchestration: source walk, sweep, winner cache, config, transport
+internal/source/     upstream adapters, one file per catalog source; fixtures in testdata/
+internal/lyric/      lyric domain: candidates, timing grades, identity matching, word-sync parsers
+dist/                local build output (plugin.wasm, better-lyrics.ndp); not committed
+docs/                feasibility research, design specs, and implementation plans
 ```
 
 > [!NOTE]

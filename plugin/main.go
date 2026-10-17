@@ -17,12 +17,8 @@ const pluginRepository = "https://github.com/ranokay/navidrome-better-lyrics-plu
 //go:embed manifest.json
 var manifestJSON []byte
 
-// pluginInstance is the registered provider; the package-level reference keeps
-// the PDK callbacks reachable after registration.
-var pluginInstance *provider.Provider
-
 func init() {
-	pluginInstance = provider.New(provider.Deps{
+	p := provider.New(provider.Deps{
 		Send:        host.HTTPSend,
 		Store:       defaultStore(),
 		Now:         time.Now,
@@ -32,9 +28,9 @@ func init() {
 		Logf:        logDebug,
 		UserAgent:   pluginUserAgent(),
 	})
-	lyrics.Register(pluginInstance)
-	lifecycle.Register(pluginInstance)
-	taskworker.Register(pluginInstance)
+	lyrics.Register(p)
+	lifecycle.Register(p)
+	taskworker.Register(p)
 }
 
 func main() {}

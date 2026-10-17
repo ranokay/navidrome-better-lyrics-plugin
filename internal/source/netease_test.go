@@ -198,3 +198,23 @@ func TestNetEaseMalformedYRCDegrades(t *testing.T) {
 		t.Fatalf("result = (%v, %v); want the malformed YRC to degrade", err, health)
 	}
 }
+
+func TestNetEaseFormContentType(t *testing.T) {
+	t.Parallel()
+
+	var contentType string
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "cloudsearch/pc") {
+			contentType = request.Headers["Content-Type"]
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":1,"duration":100000}]}}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	if _, _, err := fetchNetEase(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 100}, time.Now().Add(testLookupBudget)); err != nil {
+		t.Fatalf("fetchNetEase() error = %v, want nil", err)
+	}
+	if contentType != "application/x-www-form-urlencoded" {
+		t.Fatalf("NetEase search Content-Type = %q, want form-urlencoded (opaque bodies break server-side form parsing)", contentType)
+	}
+}

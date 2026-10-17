@@ -2,6 +2,7 @@ package source
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -58,5 +59,24 @@ func TestRetryAfterDurationCapsExcessiveValues(t *testing.T) {
 	}
 	if got := retryAfterDuration(map[string]string{"Retry-After": now.Add(24 * time.Hour).Format(http.TimeFormat)}, now); got != maxRateLimitCooldown {
 		t.Fatalf("date Retry-After = %s, want cap %s", got, maxRateLimitCooldown)
+	}
+}
+
+func TestFormPostsDeclareTheirContentType(t *testing.T) {
+	t.Parallel()
+
+	var seen []string
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		seen = append(seen, request.Headers["Content-Type"])
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	deadline := time.Now().Add(testLookupBudget)
+	if _, err := postForm(rt, "Test", "https://example.test/post", url.Values{"s": {"value"}}, map[string]string{}, deadline); err != nil {
+		t.Fatalf("postForm() error = %v, want nil", err)
+	}
+
+	if len(seen) != 1 || seen[0] != "application/x-www-form-urlencoded" {
+		t.Fatalf("Content-Type headers = %v, want exactly one form-urlencoded POST", seen)
 	}
 }
