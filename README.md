@@ -107,7 +107,7 @@ Legacy is deprecated and is not queried.
 | LunaBeat | word TTML | **off** | `2755337087.github.io` | static community hub, unclear licensing |
 | Apple Music (Lyrically) | word elrc/TTML | **off** | `itunes.apple.com`, `lyrics.paxsenix.org` | third-party mirror with unknown longevity |
 | Better Lyrics Portato | word (QRC→elrc) | on | `lyrics-api.boidu.dev/qq/getLyrics` | QQ word sync via the same API |
-| Musixmatch | word (richsync→elrc) / line | on | `apic.musixmatch.com` | anonymous token self-mints (intermittently captcha-gated); optional user-token config |
+| Musixmatch | word (richsync→elrc) / line / plain | on | `apic.musixmatch.com` | the anonymous self-minted token currently answers without subtitle macros (intermittently captcha-gated); the optional user-token config unlocks the word and line tiers |
 | NetEase | word (YRC→elrc) / line | on | `music.163.com` | unauthenticated plain API; YRC only where available |
 | Soda (Luna) | word (KRC→elrc) / line | on | `api.qishui.com`, `beta-luna.douyin.com` | unofficial endpoints, client UA required |
 | PetitLyrics | word (WSY→elrc) / plain | on | `p0.petitlyrics.com` | uses the official app's client id; official client-binary decoding of the line-tier binary is not implemented |
@@ -145,7 +145,8 @@ Settings → Plugins → Better Lyrics exposes:
 - **Better Lyrics API key** — optional; sent only as the `X-API-Key` header to
   `lyrics-api.boidu.dev`, never logged or included in URLs.
 - **Musixmatch user token** — optional; sent only to `apic.musixmatch.com`,
-  replacing the anonymous self-minted token when a captcha challenge appears.
+  replacing the anonymous self-minted token when a captcha challenge appears,
+  and the only credential that currently unlocks the line and word tiers.
 
 The plugin falls back to its built-in defaults when a config save drops or
 empties the source list; a listed-but-disabled source stays disabled. Saving the
@@ -163,6 +164,7 @@ Using this plugin sends song metadata (title, artist, album, duration), the Navi
 - `unison.boidu.dev`: title, artist, album, and duration on the first attempt; broader retries can omit album and then duration.
 - `lrclib.net`: title, artist, album, and duration; the API asks clients to identify themselves via the User-Agent.
 - `lyrics-api.binimum.org` and `lrc.red`: title, artist, album, and duration, then the matched record's `lyricsUrl`.
+- `lyricsplus.binimum.org` and `lyricsplus.atomix.one` (LyricsPlus): title, artist, album, and duration, with mirror rotation.
 - `api.amll.dev`: title, artist, and album.
 - `apic.musixmatch.com`: title, artist, duration, plus the anonymous (or admin-configured) user token in the query string as the documented client does.
 - `music.163.com` (NetEase): title, artist, duration, and the matched song's id in the query string. Unofficial endpoints may change without notice.
@@ -170,6 +172,8 @@ Using this plugin sends song metadata (title, artist, album, duration), the Navi
 - `p0.petitlyrics.com`: title, artist, album, and the official app's `clientAppId`.
 - `api.credits.fm` and `api.lyricify.app`: title and artist, then a base64 ISRC and a generated throwaway username.
 - `2755337087.github.io` (LunaBeat, default off) and `itunes.apple.com` + `lyrics.paxsenix.org` (Apple via Lyrically, default off): community mirrors whose operators set their own terms.
+- `music.youtube.com` (YouTube Music, default off): title and artist in the search request, then the matched video id in the follow-up calls.
+- `genius.com` (Genius, default off): title and artist to the search endpoint, then the matched song's page.
 
 Because several providers are **unofficial endpoints scraped or reverse-engineered by other open-source apps, they can break or change without notice**. Every source is off-switchable in Settings, and local lyrics always win `LyricsPriority` before fetchers run.
 

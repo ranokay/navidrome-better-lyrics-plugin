@@ -1,7 +1,38 @@
 # Better Lyrics plugin: multi-source lyrics and UI controls
 
 Design date: 2026-10-16
-Status: approved and implemented (Phase A)
+Status: approved and implemented (Phase A); the shipped v0.3.0 catalogue grew past this draft — see "Post-implementation amendments" below.
+
+## Post-implementation amendments (2026-10-17)
+
+Recorded after the v0.3.0 implementation. The sections below keep their original
+text, with markers where they no longer describe the shipped plugin; the full
+decision ledger lives in
+`.superpowers/sdd/2026-10-16-multi-source-lyrics-plugin/progress.md`.
+
+- **Catalogue grew to seventeen ids.** `lyricsplus` (community Apple-timing
+  mirrors), `yt-music` (public innertube client, disabled by default), and
+  `genius` (keyless search plus scrape, disabled by default) shipped in
+  addition to the fourteen goals below, and the manifest version shipped as
+  0.3.0 with the matching required hosts. This supersedes the YouTube Music
+  non-goal: the public innertube client needs no session, so "needs the
+  YouTube session and a videoId" did not hold for the lyrics tab.
+- **The registry descriptor shipped without per-source cooldown defaults or a
+  cost rank.** Cooldowns are provider-global (30 s, Unison 60 s) and the
+  walker starts any source while the budget test passes, so the "rank of
+  expected cost" below was dropped.
+- **The winner cache TTL keys on timing quality, not health** (24 h syllable,
+  1 h word/line, 5 min plain/miss); health labels remain per-source failure
+  context only.
+- **Lyricify grades line and word only.** Enhanced LRC cannot carry the
+  `[from:AppleSyllable]` syllable tier, so the claim below narrows to word.
+- **Musixmatch's word and line tiers ride the optional admin token.** The
+  anonymous self-minted token currently answers without subtitle macros
+  (verified live), so richsync/subtitles need the configured user token; the
+  richsync test rides a reconstructed fixture (`plugin/testdata/fixtures.md`).
+- **PetitLyrics rows are identity-gated.** The lookup response carries
+  per-row `title`/`artist`/`lyricsType`; rows now have to match the request
+  and the requested tier instead of `songs[0]` being taken as-is.
 
 ## Intent and why
 
@@ -40,6 +71,8 @@ Better Lyrics extension for YouTube Music:
      (`app_id=android-player-v1.0`, intermittently captcha-gated → retried on the next
      lookup), optional admin-pasted user token from config, `track.search`,
      `macro.subtitles.get`. Word richsync → enhanced LRC; line LRC; plain.
+     *(Shipped: the anonymous token answers without subtitle macros, so the word and
+     line tiers need the configured user token — see the amendments.)*
    - `netease` "NetEase" — `music.163.com/api/cloudsearch/pc` (form POST) then
      `music.163.com/api/song/lyric/v1`. Word YRC → enhanced LRC; line LRC; plain.
      Unauthenticated plain API; no eapi crypto.
@@ -56,6 +89,8 @@ Better Lyrics extension for YouTube Music:
      `api.lyricify.app/lyrics/get/mobile/new?username=<random>&isrc=<base64>`.
      Line LYL/LYS; word/syllable when the file carries `[from:AppleSyllable]`.
      New: convert LYL → enhanced LRC.
+     *(Shipped: line and word only; enhanced LRC has no syllable tier — see the
+     amendments.)*
 2. Admin controls through the manifest `config` (JSONForms in Settings → Plugins):
    an ordered, toggleable source list plus optional secrets. The plugin reads them as
    JSON blobs and falls back to built-in defaults when unset.
@@ -71,6 +106,8 @@ Better Lyrics extension for YouTube Music:
 - No YouTube Music / YouTube captions: needs the YouTube session and a videoId,
   which a Navidrome plugin has neither of. SimpMusic's API is the same: videoId-keyed
   and now 403-gated to its own clients.
+  *(Superseded in v0.3.0: the shipped `yt-music` source drives the public innertube
+  client with a duration-gated video match and no session — see the amendments.)*
 - No UI rendering inside the plugin: a `.ndp` cannot draw UI. Controls that live in the
   player (source switcher, offset, download) belong to #6033.
 - No lyrics translation/romanization return lines from NetEase or elsewhere; original
@@ -141,6 +178,7 @@ Better Lyrics extension for YouTube Music:
   each source is a descriptor `{id, display, defaultEnabled, hosts, cooldownDefaults,
   fetch(ctx) → []candidateVariant}` plus a rank of expected cost so the walker can skip
   sources that cannot fit the remaining budget.
+  *(Shipped without `cooldownDefaults` or the cost rank — see the amendments.)*
 - One shared word-sync converter module produces *enhanced LRC* from: QRC, KRC, YRC,
   Lyricify LYL/LYS, Musixmatch richsync, PetitLyrics WSY (see the settled call above).
   Reuse `quality.go` grading with the new enhanced-LRC word sniff.
@@ -161,12 +199,16 @@ Better Lyrics extension for YouTube Music:
   cooldowns and `Retry-After` handling. Cache keys gain a source dimension
   (`lyrics:v4:<source>:<track>`) so reordering enabled sources can re-rank from cache
   without refetching; the track-level winner cache (24 h / 1 h / 5 min by health) stays.
+  *(Shipped: the winner TTL keys on timing quality instead of health — see the
+  amendments.)*
 - Manifest: `permissions.http.requiredHosts` adds `lrc.red`, `api.amll.dev`,
   `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`,
   `apic.musixmatch.com`, `music.163.com`, `api.qishui.com`,
   `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`,
   `api.lyricify.app`, `lrclib.net`; `permissions.taskqueue` is added
   (`maxConcurrency` 1) for the background sweep; version bumps to 0.2.0.
+  *(Shipped at 0.3.0 with `lyricsplus.binimum.org`, `lyricsplus.atomix.one`,
+  `music.youtube.com`, and `genius.com` added — see the amendments.)*
 - Config schema (draft-07 + uiSchema, JSONForms 2.5.2 semantics):
   - `sources`: array of `{id (enum), enabled (bool)}` rendered as a table with
     `showSortButtons: true`; read back as one JSON blob via `host.ConfigGet("sources")`.
