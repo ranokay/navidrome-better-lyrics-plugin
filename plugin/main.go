@@ -269,14 +269,17 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			best = preferLyricsCandidate(best, candidate)
 		}
 		if !foundCandidate {
-			if sourceHealth == lookupHealthy {
-				// Persist healthy clean misses so the sweep and later lookups
-				// can skip the refetch (Codex).
+			if sourceHealth == lookupHealthy || sourceHealth == lookupUncertain {
+				// Healthy clean misses and anonymous cache-only misses are
+				// bounded coverage: persist them so the sweep and later
+				// lookups skip the refetch (Codex; Greptile). The miss keys
+				// carry the credential fingerprint, so a configured key or
+				// token re-authorizes them immediately.
 				p.cacheSourceMiss(track, source.ID)
-			} else if sourceHealth == lookupUncertain {
-				// A temporary skip (token rejection) is not covered work: the
-				// next lookup remints and retries (Greptile).
-				health = health.merge(lookupUncertain)
+			} else if sourceHealth == lookupTemporarilySkipped {
+				// Token rejects are not covered work: the next lookup remints
+				// and retries (Greptile).
+				health = health.merge(sourceHealth)
 			}
 		}
 		walkedTotal++

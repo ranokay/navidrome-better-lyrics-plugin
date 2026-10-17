@@ -541,7 +541,7 @@ func TestMusixmatchMintFailuresStayDegraded(t *testing.T) {
 			return &host.HTTPResponse{StatusCode: 401, Body: []byte("denied")}, nil
 		})
 		_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
-		if err != nil || health != lookupUncertain {
+		if err != nil || health != lookupTemporarilySkipped {
 			t.Fatalf("challenge = (%v, %v); want a temporary skip, not a covered miss", err, health)
 		}
 	})
@@ -831,7 +831,7 @@ func TestMusixmatchMintEnvelopeStatusesClassified(t *testing.T) {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":401,"hint":"captcha"}}}`)}, nil
 		})
 		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
-		if err != nil || health != lookupUncertain {
+		if err != nil || health != lookupTemporarilySkipped {
 			t.Fatalf("result = (%v, %v); want the challenge kept as a temporary skip", err, health)
 		}
 	})
@@ -1346,5 +1346,80 @@ func TestWinnerEntriesRespectCredentialChanges(t *testing.T) {
 	assertLyricsSource(t, result.Source, "Better Lyrics", "ttml")
 	if requests <= firstRound {
 		t.Fatalf("requests = %d (first round %d), want the re-authorized lookup to hit the providers again", requests, firstRound)
+	}
+}
+
+func TestLunaBeatRejectsUnrelatedArtistSubstrings(t *testing.T) {
+	t.Parallel()
+
+	// Complete-name comparison only: "blackpink|" must never alias-match a
+	// "Pink" request (Greptile P1).
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api/v1/manifest.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1"}`)}, nil
+		case strings.Contains(request.URL, "api/v1/songs.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"x","title":"Pink Song","artists":["BLACKPINK"],"album":"A","path":"lyrics/x.ttml"}]}`)}, nil
+		default:
+			t.Fatal("a title-only match with an unrelated artist must not fetch TTML")
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+	}, newFakeLyricsCache(), time.Now, "luna-beat")
+
+	_, health, err := fetchLunaBeatLyricsCandidates(provider, lyrics.TrackInfo{Title: "Pink Song", Artist: "Pink"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || health != lookupHealthy {
+		t.Fatalf("result = (%v, %v); want a clean miss over the containment false positive", err, health)
+	}
+
+	collab := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api/v1/manifest.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1"}`)}, nil
+		case strings.Contains(request.URL, "api/v1/songs.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"y","title":"Duet","artists":["Garfunkel"],"album":"B","path":"lyrics/y.ttml"}]}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+		}
+	}, newFakeLyricsCache(), time.Now, "luna-beat")
+
+	if _, _, err := collab.fetchLunaBeatLyricsCandidatesProvider(lyrics.TrackInfo{Title: "Duet", Artist: "Simon & Garfunkel"}); err != nil {
+		t.Fatalf("multi-artist track match error = %v, want nil", err)
+	}
+}
+
+func (p *lyricsProvider) fetchLunaBeatLyricsCandidatesProvider(track lyrics.TrackInfo) ([]lyricsCandidate, lookupHealth, error) {
+	return fetchLunaBeatLyricsCandidates(p, track, time.Now().Add(stageOneLookupBudget))
+}
+
+func TestAnonymous401sKeepBoundedCoverage(t *testing.T) {
+	t.Parallel()
+
+	// Anonymous Better Lyrics/Portato 401s are cache-only misses: they bound
+	// the sweep (one hour, credential-fingerprinted keys) instead of blocking
+	// completion every dedupe cycle (Greptile P2).
+	provider := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
+		{ID: "anon1", Display: "anon1", Hosts: []string{"anon1.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return nil, lookupUncertain, nil
+			}},
+		{ID: "anon2", Display: "anon2", Hosts: []string{"anon2.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return nil, lookupUncertain, nil
+			}},
+		{ID: "tail", Display: "tail", Hosts: []string{"tail.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]line"}, "tail", "lrc")}, lookupHealthy, nil
+			}},
+	}, func(lyrics.TrackInfo) error { return nil })
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	provider.runSweep(track)
+
+	if _, exists, _ := provider.cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
+		t.Fatal("anonymous cache-only misses are bounded coverage: the sweep must still complete")
+	}
+	ttl := provider.cache.(*fakeLyricsCache).ttlsForKey[provider.doneMarkerKey(track, provider.activeSources())]
+	if ttl != unsyncedLyricsCacheTTLSeconds {
+		t.Fatalf("done marker TTL = %d, want the one-hour miss bound", ttl)
 	}
 }

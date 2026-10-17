@@ -42,7 +42,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		if errors.Is(err, errMusixmatchTokenChallenge) {
 			// The challenge answer can clear itself next lookup; skip quietly
 			// without letting the walkers persist it as a miss (Greptile).
-			return nil, lookupUncertain, nil
+			return nil, lookupTemporarilySkipped, nil
 		}
 		return nil, lookupDegraded, err
 	}
@@ -63,7 +63,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// lookup. A temporary skip must not persist as a clean miss, or this
 		// source stays suppressed when its token simply aged out (Greptile).
 		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-		return nil, lookupUncertain, nil
+		return nil, lookupTemporarilySkipped, nil
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
@@ -88,7 +88,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// envelope; drop it so the next lookup remints instead of missing for up
 		// to ten days. A temporary skip must not persist as a missed song.
 		_ = p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-		return nil, lookupUncertain, nil
+		return nil, lookupTemporarilySkipped, nil
 	}
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch track.search", searchEnvelope.Message.Header.StatusCode); err != nil {
 		return nil, health, err
@@ -126,7 +126,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	}
 	if musixmatchTokenRejected(macroEnvelope.Message.Header) {
 		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-		return nil, lookupUncertain, nil
+		return nil, lookupTemporarilySkipped, nil
 	}
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro.subtitles.get", macroEnvelope.Message.Header.StatusCode); err != nil {
 		return nil, health, err
@@ -136,7 +136,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
 		if musixmatchTokenRejected(macro.Header) {
 			p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-			return nil, lookupUncertain, nil
+			return nil, lookupTemporarilySkipped, nil
 		}
 		if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
 			return nil, health, err

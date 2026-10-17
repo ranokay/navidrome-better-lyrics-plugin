@@ -43,6 +43,11 @@ const (
 	lookupHealthy lookupHealth = iota
 	lookupUncertain
 	lookupDegraded
+	// lookupTemporarilySkipped marks a token/config rejection: not covered
+	// work, not a miss, retryable as soon as the credential situation changes
+	// (better-lyrics family anonymous 401s stay uncertain and miss-cache like
+	// the bounded miss coverage callers expect).
+	lookupTemporarilySkipped
 )
 
 func (h lookupHealth) merge(other lookupHealth) lookupHealth {

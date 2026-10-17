@@ -216,9 +216,11 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			}
 			continue
 		}
-		if fetchHealth == lookupUncertain && len(candidates) == 0 {
+		if fetchHealth == lookupTemporarilySkipped && len(candidates) == 0 {
 			// A temporary skip (token rejection) is neither covered work nor a
-			// miss: the next sweep can get a fresh token (Greptile).
+			// miss: the next sweep can get a fresh token (Greptile). Anonymous
+			// cache-only misses stay uncertain and fall through to miss
+			// coverage instead (Greptile G2).
 			cooldownSkipped++
 			skipped++
 			continue
