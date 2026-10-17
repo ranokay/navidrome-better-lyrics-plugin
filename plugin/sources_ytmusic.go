@@ -89,6 +89,12 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if err := p.checkInnertubeOK("YouTube Music watch", response); err != nil {
 		return nil, lookupDegraded, err
 	}
+	var watchTree any
+	if err := json.Unmarshal(response.Body, &watchTree); err != nil {
+		// A malformed 200 must stay retryable; only a well-formed body without
+		// a lyrics browse id is a cacheable miss (Codex round 13).
+		return nil, lookupDegraded, fmt.Errorf("decode YouTube Music watch response: %w", err)
+	}
 	playlistID := firstStringMatch(response.Body, ytmusicBrowseIDPattern)
 	if playlistID == "" {
 		return nil, lookupHealthy, nil
@@ -217,18 +223,13 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 	return "", nil
 }
 
-// ytmusicArtistsMatch accepts any entry from the renderer's artist string when
-// one matches the requested artist tokens.
+// ytmusicArtistsMatch accepts the renderer when any listed artist matches the
+// request completely.
 func ytmusicArtistsMatch(artists string, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true
 	}
-	for _, name := range strings.Split(artists, " • ") {
-		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
-			return true
-		}
-	}
-	return false
+	return artistTokensMatch(strings.ReplaceAll(artists, " • ", " & "), strings.Join(wanted, " "))
 }
 
 // ytmusicSearchHits decodes the payload and collects song renderers in

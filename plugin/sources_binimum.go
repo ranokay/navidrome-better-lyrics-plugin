@@ -126,15 +126,61 @@ func lyricTokensMatch(a, b []string) bool {
 	return true
 }
 
+// artistTokensMatch compares artist fields with complete-name semantics: each
+// side splits into collaborator names on common separators, and any exact
+// collapsed-name equality matches. Prefix tolerance stays for titles only —
+// it would equate "Pink" and "Pink Floyd" (Codex round 13).
+func artistTokensMatch(returned, wanted string) bool {
+	wanted = strings.TrimSpace(wanted)
+	if wanted == "" {
+		return true
+	}
+	returned = strings.TrimSpace(returned)
+	if returned == "" {
+		return false
+	}
+	wantNames := splitArtistNames(wanted)
+	if len(wantNames) == 0 {
+		return true
+	}
+	for _, rowName := range splitArtistNames(returned) {
+		for _, wantName := range wantNames {
+			if rowName == wantName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// splitArtistNames splits a collaborator list and collapses each name.
+func splitArtistNames(value string) []string {
+	names := []string{}
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case '&', ',', '、', '/', ';', '·', '•', '|', '+':
+			return true
+		}
+		return false
+	}) {
+		lower := strings.ToLower(part)
+		// "feat."/"ft." keep their role words from ever matching a plain name.
+		if cleaned := onlyLettersAndDigits(lower); cleaned != "" {
+			names = append(names, cleaned)
+		}
+	}
+	return names
+}
+
 func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimumResult, bool) {
 	target := int64(math.Round(float64(track.Duration)))
-	title, artist := normalizedLyricTokens(track.Title), normalizedLyricTokens(trackArtist(track))
+	title := normalizedLyricTokens(track.Title)
 	var best binimumResult
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, candidateResult := range results {
 		if !lyricTokensMatch(normalizedLyricTokens(candidateResult.TrackName), title) ||
-			!lyricTokensMatch(normalizedLyricTokens(candidateResult.ArtistName), artist) {
+			!artistTokensMatch(candidateResult.ArtistName, trackArtist(track)) {
 			continue
 		}
 		// Provider-supplied URLs are untrusted: only the known lyrics hosts

@@ -2596,3 +2596,114 @@ func TestCDATALyricsCountAsContent(t *testing.T) {
 		t.Fatal("a CDATA-bearing document is not an empty document")
 	}
 }
+
+func TestArtistMatcherRequiresCompleteNames(t *testing.T) {
+	t.Parallel()
+
+	// Prefix tolerance belongs to titles only: "Pink" must not match
+	// "Pink Floyd" (Codex round 13).
+	if artistTokensMatch("Pink Floyd", "Pink") {
+		t.Fatal("Pink matched Pink Floyd")
+	}
+	if !artistTokensMatch("Pink Floyd", "Pink Floyd") {
+		t.Fatal("exact artist names must match")
+	}
+	// Collaborator splitting still works in both directions.
+	if !artistTokensMatch("Oasis", "Oasis & Someone") {
+		t.Fatal("a listed collaborator must match the plain artist")
+	}
+	if !artistTokensMatch("Simon & Garfunkel", "Simon & Garfunkel") {
+		t.Fatal("identical collaboration lists must match")
+	}
+	if artistTokensMatch("Oasis Worship", "Oasis") {
+		t.Fatal("Oasis matched Oasis Worship")
+	}
+}
+
+func TestBinimumRejectsContainingArtist(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "binimum.org") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"track_name":"Song","artist_name":"Pink Floyd","duration":200,"lyricsUrl":"https://lrc.red/s/X.ttml"}]}`)}, nil
+		}
+		t.Fatalf("an unrelated artist row must not be fetched: %s", request.URL)
+		return nil, nil
+	})
+
+	candidates, health, err := fetchBinimumLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Pink", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want the containing artist rejected", candidates, health, err)
+	}
+}
+
+func TestTTMLContentIgnoresMetadataNodes(t *testing.T) {
+	t.Parallel()
+
+	metadataOnly := `<tt xmlns:itunes="urn:itunes"><head><metadata>Song Title Words Here</metadata></head><body></body></tt>`
+	if lyricsTextHasContent(metadataOnly, "ttml") {
+		t.Fatal("metadata-only text must not count as lyric content (Codex round 13)")
+	}
+	withLyrics := `<tt xmlns:itunes="urn:itunes"><head><metadata>Song Title</metadata></head><body><p begin="1">real line</p></body></tt>`
+	if !lyricsTextHasContent(withLyrics, "ttml") {
+		t.Fatal("body text must count as lyric content")
+	}
+	bodyless := `<tt>bare line</tt>`
+	if !lyricsTextHasContent(bodyless, "ttml") {
+		t.Fatal("documents without a body fall back to any character data")
+	}
+}
+
+func TestLRCLibMalformedLyricsFileStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","duration":200,"hasWordSync":true,"lyricsfile":"not: [valid","plainLyrics":"","syncedLyrics":""}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	_, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed lyricsfile to degrade without a fallback", err, health)
+	}
+}
+
+func TestMusixmatchMalformedRichsyncStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "/ws/1.1/token.get"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+		case strings.Contains(request.URL, "/ws/1.1/track.search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":200},"body":{"richsync_body":"{not json"}}}}}}`)}, nil
+		}
+	})
+
+	_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want malformed richsync to degrade without fallbacks", err, health)
+	}
+}
+
+func TestYTMusicMalformedWatchDegrades(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "v1/search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"musicShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"JGwWNGJdvx8"}}}]}}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"queueContextParams": {"browseId": "MPL`)}, nil
+		}
+	})
+
+	_, health, err := fetchYTMusicLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 238}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed watch body to degrade", err, health)
+	}
+}

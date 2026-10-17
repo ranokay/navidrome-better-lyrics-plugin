@@ -139,14 +139,13 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 }
 
 // geniusArtistsMatch accepts the request when any returned artist name matches
-// the track artist tokens fully (prefix-token tolerant, mirroring the other
-// metadata gates; genius splits collaborations on " & ").
+// the track artist completely, with collaboration splitting on both sides.
 func geniusArtistsMatch(returned string, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true
 	}
 	for _, name := range strings.Split(returned, " & ") {
-		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+		if artistTokensMatch(name, strings.Join(wanted, " ")) {
 			return true
 		}
 	}

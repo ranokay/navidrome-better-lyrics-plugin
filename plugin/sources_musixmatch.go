@@ -202,12 +202,15 @@ func musixmatchTokenRejected(header struct {
 // musixmatchCandidate ranks the available payloads: richsync (word) before LRC
 // subtitles (line) before plain lyrics.
 func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCandidate, lookupHealth, error) {
+	var richsyncParseErr error
 	if richsyncBody := macroCalls["track.richsync.get"].Body.RichsyncBody; strings.TrimSpace(richsyncBody) != "" {
 		if lines, err := parseRichsync(richsyncBody); err == nil && len(lines) > 0 {
 			text := lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}
 			if candidate := newLyricsCandidate(text, musixmatchProviderName, "elrc"); candidate.present() {
 				return []lyricsCandidate{candidate}, lookupHealthy, nil
 			}
+		} else {
+			richsyncParseErr = err
 		}
 	}
 	if subtitles := macroCalls["track.subtitles.get"].Body.SubtitleList; len(subtitles) > 0 {
@@ -225,6 +228,11 @@ func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCan
 		if candidate := newLyricsCandidate(text, musixmatchProviderName, "plain"); candidate.present() {
 			return []lyricsCandidate{candidate}, lookupHealthy, nil
 		}
+	}
+	if richsyncParseErr != nil {
+		// Malformed richsync with no usable fallback is a provider failure,
+		// not cacheable coverage (Codex round 13).
+		return nil, lookupDegraded, fmt.Errorf("parse Musixmatch richsync: %w", richsyncParseErr)
 	}
 	return nil, lookupHealthy, nil
 }
@@ -397,18 +405,13 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 	return best, found
 }
 
-// musixmatchArtistsMatch accepts any collaborating artist row whose collapsed
-// tokens match the requested artist.
+// musixmatchArtistsMatch accepts the row when any collaborating artist name
+// matches the requested artist completely.
 func musixmatchArtistsMatch(artistName string, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true
 	}
-	for _, name := range strings.Split(artistName, " & ") {
-		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
-			return true
-		}
-	}
-	return false
+	return artistTokensMatch(artistName, strings.Join(wanted, " "))
 }
 
 // errMusixmatchTokenChallenge marks the anti-bot captcha/rejection the desktop

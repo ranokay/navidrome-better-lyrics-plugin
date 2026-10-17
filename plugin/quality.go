@@ -62,16 +62,41 @@ func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsC
 // tags and timing stamps alone do not count.
 func lyricsTextHasContent(value, format string) bool {
 	if format == "ttml" {
+		// Only text inside lyric-bearing nodes counts: metadata/head text in
+		// an otherwise empty body must not pass (Codex round 13). Documents
+		// without a <body> fall back to any character data so bare lyric
+		// roots keep working.
 		decoder := xml.NewDecoder(strings.NewReader(value))
+		anyText, bodyText, sawBody := false, false, false
+		inBody := false
 		for {
 			token, err := decoder.Token()
 			if err != nil {
-				return false
+				break
 			}
-			if chars, ok := token.(xml.CharData); ok && strings.TrimSpace(string(chars)) != "" {
-				return true
+			switch typed := token.(type) {
+			case xml.StartElement:
+				if strings.EqualFold(typed.Name.Local, "body") {
+					sawBody, inBody = true, true
+				}
+			case xml.EndElement:
+				if strings.EqualFold(typed.Name.Local, "body") {
+					inBody = false
+				}
+			case xml.CharData:
+				if strings.TrimSpace(string(typed)) == "" {
+					continue
+				}
+				anyText = true
+				if inBody {
+					bodyText = true
+				}
 			}
 		}
+		if sawBody {
+			return bodyText
+		}
+		return anyText
 	}
 	text := lrcTimestampPattern.ReplaceAllString(value, " ")
 	text = enhancedWordPattern.ReplaceAllString(text, " ")

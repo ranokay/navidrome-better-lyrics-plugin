@@ -166,7 +166,7 @@ func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 		if !amllNamesMatch(item.MusicNames, titleTokens) {
 			continue
 		}
-		if !amllNamesMatch(item.ArtistNames, artistTokens) {
+		if !amllArtistsMatch(item.ArtistNames, artistTokens) {
 			continue
 		}
 		albumMatch := album != "" && amllNamesContain(item.AlbumNames, normalizedLyricTokens(album))
@@ -177,13 +177,28 @@ func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 	return best, found
 }
 
-// amllNamesMatch accepts any listed name whose collapsed tokens match.
+// amllNamesMatch accepts any listed name whose collapsed tokens match (title
+// prefix tolerance allowed by the callers) — artist callers pass complete-name
+// semantics via artistTokensMatch instead.
 func amllNamesMatch(names []string, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true
 	}
 	for _, name := range names {
 		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+// amllArtistsMatch applies complete-name semantics to the artist column.
+func amllArtistsMatch(names []string, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, name := range names {
+		if artistTokensMatch(name, strings.Join(wanted, " ")) {
 			return true
 		}
 	}

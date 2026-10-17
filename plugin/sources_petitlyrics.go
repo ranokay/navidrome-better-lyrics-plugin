@@ -181,17 +181,12 @@ type petitlyricsSongEntry struct {
 }
 
 // appleLyricallyArtistMatches accepts any collaborating artist entry whose
-// collapsed tokens match the requested artist.
+// complete name matches the requested artist.
 func appleLyricallyArtistMatches(artistName string, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true
 	}
-	for _, name := range strings.Split(artistName, " & ") {
-		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
-			return true
-		}
-	}
-	return false
+	return artistTokensMatch(artistName, strings.Join(wanted, " "))
 }
 
 func petitLyricsHeaders() map[string]string {

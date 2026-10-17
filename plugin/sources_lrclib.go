@@ -155,6 +155,7 @@ func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) 
 		return lyricsCandidate{}, errNoLRCLibPayload
 	}
 
+	var lyricsFileErr error
 	if payload.HasWordSync && strings.TrimSpace(payload.LyricsFile) != "" {
 		lines, err := parseLRCLibLyricsFile([]byte(payload.LyricsFile))
 		if err == nil && len(lines) > 0 {
@@ -163,6 +164,9 @@ func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) 
 				return candidate, nil
 			}
 		}
+		// A malformed lyricsfile stays retryable when no fallback exists
+		// (Codex round 13).
+		lyricsFileErr = err
 	}
 	if strings.TrimSpace(payload.SyncedLyrics) != "" {
 		text := lyrics.LyricsText{Text: payload.SyncedLyrics}
@@ -175,6 +179,9 @@ func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) 
 		if candidate := newLyricsCandidate(text, "LRCLib", "plain"); candidate.present() {
 			return candidate, nil
 		}
+	}
+	if lyricsFileErr != nil {
+		return lyricsCandidate{}, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
 	}
 	return lyricsCandidate{}, errNoLRCLibPayload
 }
@@ -243,19 +250,10 @@ func lrclibMetadataMatches(trackName, artistName string, track lyrics.TrackInfo)
 		lrclibArtistMatches(artistName, track)
 }
 
-// lrclibArtistMatches accepts any of the record's collaborating artists when
-// one matches the requested artist tokens.
+// lrclibArtistMatches accepts the record when any collaborating artist name
+// matches the request completely (no prefix tolerance for artists).
 func lrclibArtistMatches(artistName string, track lyrics.TrackInfo) bool {
-	wanted := normalizedLyricTokens(trackArtist(track))
-	if len(wanted) == 0 {
-		return true
-	}
-	for _, name := range strings.Split(artistName, " & ") {
-		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
-			return true
-		}
-	}
-	return false
+	return artistTokensMatch(artistName, trackArtist(track))
 }
 
 // lrclibDurationsClose keeps the historical two-second tolerance.

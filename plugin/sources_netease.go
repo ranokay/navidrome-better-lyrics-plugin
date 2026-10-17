@@ -191,14 +191,14 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 }
 
 // neteaseArtistsMatch reports whether any returned artist name matches the
-// requested artist tokens: the cloudsearch payload can carry collaborating
+// requested artist completely: the cloudsearch payload can carry collaborating
 // artists, so one matching row suffices.
 func neteaseArtistsMatch(song []neteaseArtist, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true
 	}
 	for _, candidateArtist := range song {
-		if lyricTokensMatch(normalizedLyricTokens(candidateArtist.Name), wanted) {
+		if artistTokensMatch(candidateArtist.Name, strings.Join(wanted, " ")) {
 			return true
 		}
 	}
