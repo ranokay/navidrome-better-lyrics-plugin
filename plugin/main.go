@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/rand"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -14,6 +12,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 const (
@@ -42,7 +41,7 @@ type lyricsProvider struct {
 	enqueueSweep func(lyrics.TrackInfo) error
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
-	sources []lyricsSource
+	sources []source.Source
 	// enqueueSweepSources re-enqueues a continuation carrying only the sources a
 	// sweep had to defer when its budget ran out.
 	enqueueSweepSources func(lyrics.TrackInfo, []string) error
@@ -167,7 +166,7 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 
 // activeSources resolves the source order for this lookup: the injected test
 // catalog when present, otherwise the admin-configured enabled sources.
-func (p *lyricsProvider) activeSources() []lyricsSource {
+func (p *lyricsProvider) activeSources() []source.Source {
 	if p.sources != nil {
 		return p.sources
 	}
@@ -179,10 +178,10 @@ func (p *lyricsProvider) activeSources() []lyricsSource {
 // result lands. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
 // are covered by the background sweep (Task 6).
-func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, lookupHealth, bool, error) {
+func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, source.Health, bool, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
-		return lyric.Candidate{}, lookupHealthy, false, nil
+		return lyric.Candidate{}, source.Healthy, false, nil
 	}
 
 	sources := p.activeSources()
@@ -190,7 +189,7 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candi
 
 	var (
 		best         lyric.Candidate
-		health       = lookupHealthy
+		health       = source.Healthy
 		lookupErrors []error
 		walked       int
 		walkedTotal  int
@@ -200,41 +199,41 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candi
 		coldHosts = map[string]bool{}
 	)
 	implementedTotal := 0
-	for _, source := range sources {
-		if source.Fetch != nil {
+	for _, src := range sources {
+		if src.Fetch != nil {
 			implementedTotal++
 		}
 	}
-	for _, source := range sources {
+	for _, src := range sources {
 		if walked >= stageOneImplementedSources {
 			break
 		}
-		if source.Fetch == nil {
+		if src.Fetch == nil {
 			continue
 		}
 		// A per-source entry (positive or persisted miss) already covers this
 		// source for its TTL: refetching here would re-query providers every
 		// negative-winner cycle. Cached positives are served by the
 		// re-rank above the walk.
-		if _, ok := p.readCachedSourceCoverage(track, source.ID); ok {
+		if _, ok := p.readCachedSourceCoverage(track, src.ID); ok {
 			continue
 		}
-		if coldHostFor(source, coldHosts) != "" {
+		if coldHostFor(src, coldHosts) != "" {
 			continue
 		}
-		if p.sourceInCooldown(source) {
+		if p.sourceInCooldown(src) {
 			// Cooldowns are temporary; skipping keeps the slot for the next
 			// implemented source and the sweep retries it later.
 			continue
 		}
 		walked++
-		candidates, sourceHealth, err := source.Fetch(p, track, deadline)
-		health = health.merge(sourceHealth)
+		candidates, sourceHealth, err := src.Fetch(p, track, deadline)
+		health = health.Merge(sourceHealth)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
-			health = health.merge(lookupDegraded)
-			if isGlobalRateLimitError(err) {
-				for _, hostName := range source.Hosts {
+			health = health.Merge(source.Degraded)
+			if source.IsGlobalRateLimitError(err) {
+				for _, hostName := range src.Hosts {
 					coldHosts[hostName] = true
 				}
 			}
@@ -246,24 +245,24 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candi
 				continue
 			}
 			foundCandidate = true
-			p.cacheSourceCandidate(track, source.ID, candidate)
+			p.cacheSourceCandidate(track, src.ID, candidate)
 			best = lyric.Prefer(best, candidate)
 		}
 		coveredThisSource := true
 		if !foundCandidate {
 			switch sourceHealth {
-			case lookupHealthy, lookupUncertain:
+			case source.Healthy, source.Uncertain:
 				// Healthy clean misses and anonymous cache-only misses are
 				// bounded coverage: persist them so the sweep and later
 				// lookups skip the refetch. The miss keys
 				// carry the credential fingerprint, so a configured key or
 				// token re-authorizes them immediately.
-				p.cacheSourceMiss(track, source.ID)
-			case lookupTemporarilySkipped:
+				p.cacheSourceMiss(track, src.ID)
+			case source.TemporarilySkipped:
 				// Token rejects are not covered work: the next lookup remints
 				// and retries, and the pass must not report complete
 				// foreground coverage or suppress the sweep.
-				health = health.merge(sourceHealth)
+				health = health.Merge(sourceHealth)
 				coveredThisSource = false
 			}
 		}
@@ -286,8 +285,8 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candi
 	return lyric.Candidate{}, health, walkedTotal >= implementedTotal, nil
 }
 
-func coldHostFor(source lyricsSource, coldHosts map[string]bool) string {
-	for _, hostName := range source.Hosts {
+func coldHostFor(src source.Source, coldHosts map[string]bool) string {
+	for _, hostName := range src.Hosts {
 		if coldHosts[hostName] {
 			return hostName
 		}
@@ -318,14 +317,6 @@ func defaultHeaders() map[string]string {
 		"Accept":     "application/json",
 		"User-Agent": pluginUserAgent(),
 	}
-}
-
-// randomHex returns n cryptographically random bytes as hex text; sources use
-// it for request nonces and imitation client identifiers.
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
 }
 
 func pluginUserAgent() string {

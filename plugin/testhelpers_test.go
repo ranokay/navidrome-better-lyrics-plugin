@@ -9,11 +9,24 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
+
+// catalogSources resolves catalog ids into walkable sources, skipping unknown
+// ids so tests stay deterministic as the catalog changes.
+func catalogSources(ids []string) []source.Source {
+	sources := make([]source.Source, 0, len(ids))
+	for _, id := range ids {
+		if src, ok := source.ByID(id); ok {
+			sources = append(sources, src)
+		}
+	}
+	return sources
+}
 
 // newLyricsProviderWithSources bypasses the config service for source-walk tests
 // and injects stub sources directly.
-func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
+func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
 	provider := newLyricsProviderWithDeps(send, cache, now, nil, enqueue)
 	provider.sources = sources
 	return provider
@@ -21,7 +34,7 @@ func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, no
 
 // newLyricsProviderWithSourcesAt is newLyricsProviderWithSources with an
 // injectable clock (tests that pin time-dependent query parameters).
-func newLyricsProviderWithSourcesAt(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
+func newLyricsProviderWithSourcesAt(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
 	if cache == nil {
 		cache = noopLyricsCache{}
 	}
@@ -74,9 +87,9 @@ func providerForCatalogWithCache(send requestSender, cache lyricsCacheStore, now
 	if len(ids) == 0 {
 		ids = defaultCatalogIDs
 	}
-	sources := make([]lyricsSource, 0, len(ids))
+	sources := make([]source.Source, 0, len(ids))
 	for _, id := range ids {
-		source, ok := catalogSource(id)
+		source, ok := source.ByID(id)
 		if !ok {
 			panic("unknown source id " + id)
 		}
@@ -154,10 +167,10 @@ func (c *fakeLyricsCache) lastTTL() int64 {
 
 // winnerTTL returns the TTL recorded for the winner cache entry of a track under a
 // source order; per-source and sweep-marker writes are excluded.
-func (c *fakeLyricsCache) winnerTTL(track lyrics.TrackInfo, order []lyricsSource) int64 {
+func (c *fakeLyricsCache) winnerTTL(track lyrics.TrackInfo, order []source.Source) int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key, _ := lyricsWinnerCacheKey(track, sourceIDs(order))
+	key, _ := lyricsWinnerCacheKey(track, source.IDs(order))
 	return c.ttlsForKey[key]
 }
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 func TestLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *testing.T) {
@@ -142,29 +142,27 @@ func TestLyricsProvider_SkipsKugouWhenCooldownPersistenceFails(t *testing.T) {
 	}
 }
 
-func TestLyricsProvider_PreservesFractionalCooldownDeadline(t *testing.T) {
+func TestLyricsProvider_CooldownPreservesFractionalDeadline(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 23, 6, 0, 0, int(900*time.Millisecond), time.UTC)
 	currentTime := now
 	cache := newFakeLyricsCache()
 	provider := newLyricsProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
-	const requestURL = "https://lyrics-api.boidu.dev/getLyrics?s=Song&a=Artist"
-	provider.rememberRateLimit(&host.HTTPResponse{
-		Headers: map[string]string{"Retry-After": "1", "X-RateLimit-Type": "exceeded"},
-	}, requestURL)
+	key := source.BetterLyricsGlobalCooldownKey
+	provider.RememberCooldown(key, time.Second)
 
 	currentTime = now.Add(100 * time.Millisecond)
-	if err := provider.activeBetterLyricsCooldown(requestURL); err == nil {
-		t.Fatal("cooldown after 100ms = nil, want the one-second Retry-After to remain active")
+	if remaining := provider.Cooldown(key); remaining <= 0 {
+		t.Fatal("cooldown after 100ms = 0, want the one-second Retry-After to remain active")
 	}
 	if ttl := cache.lastTTL(); ttl != 2 {
 		t.Fatalf("fractional cooldown TTL = %d, want 2 seconds to cover the rounded deadline", ttl)
 	}
 
 	currentTime = now.Add(1100 * time.Millisecond)
-	if err := provider.activeBetterLyricsCooldown(requestURL); err != nil {
-		t.Fatalf("cooldown after rounded deadline = %v, want nil", err)
+	if remaining := provider.Cooldown(key); remaining != 0 {
+		t.Fatalf("cooldown after rounded deadline = %s, want 0", remaining)
 	}
 }
 
@@ -200,7 +198,7 @@ func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	if firstRequests != 2 {
 		t.Fatalf("first request count = %d, want Better Lyrics then Unison with Kugou suppressed", firstRequests)
 	}
-	if ttl := cache.ttlsForKey[betterLyricsGlobalCooldownKey]; ttl != 12 {
+	if ttl := cache.ttlsForKey[source.BetterLyricsGlobalCooldownKey]; ttl != 12 {
 		t.Fatalf("cooldown TTL = %d, want Retry-After value 12", ttl)
 	}
 
@@ -259,14 +257,17 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	if firstUnisonRequests != 1 || firstKugouRequests != 1 {
 		t.Fatalf("first requests: Unison=%d Kugou=%d, want 1 each", firstUnisonRequests, firstKugouRequests)
 	}
+	// Unison's 429 without Retry-After records its own one-minute default —
+	// independent of the Better Lyrics family's 30-second window.
+	const wantUnisonCooldownTTL = int64(60)
 	cooldownTTL := int64(0)
 	for _, recorded := range cache.ttls {
-		if recorded == int64(defaultUnisonRateLimitCooldown/time.Second) {
+		if recorded == wantUnisonCooldownTTL {
 			cooldownTTL = recorded
 		}
 	}
 	if cooldownTTL == 0 {
-		t.Fatalf("Unison cooldown TTL taints = %v, want %d", cache.ttls, int64(defaultUnisonRateLimitCooldown/time.Second))
+		t.Fatalf("Unison cooldown TTL taints = %v, want %d", cache.ttls, wantUnisonCooldownTTL)
 	}
 
 	secondUnisonRequests := 0
@@ -293,44 +294,5 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	}
 	if secondUnisonRequests != 0 || secondKugouRequests != 1 {
 		t.Fatalf("second requests: Unison=%d Kugou=%d, want 0 and 1", secondUnisonRequests, secondKugouRequests)
-	}
-}
-
-func TestRetryAfterDuration(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 23, 6, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name   string
-		header string
-		want   time.Duration
-	}{
-		{name: "seconds", header: "12", want: 12 * time.Second},
-		{name: "HTTP date", header: now.Add(45 * time.Second).Format(http.TimeFormat), want: 45 * time.Second},
-		{name: "missing", want: defaultRateLimitCooldown},
-		{name: "invalid", header: "later", want: defaultRateLimitCooldown},
-		{name: "zero", header: "0", want: defaultRateLimitCooldown},
-		{name: "negative", header: "-5", want: defaultRateLimitCooldown},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := retryAfterDuration(map[string]string{"retry-after": test.header}, now); got != test.want {
-				t.Fatalf("retryAfterDuration() = %s, want %s", got, test.want)
-			}
-		})
-	}
-}
-
-func TestRetryAfterDurationCapsExcessiveValues(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.August, 23, 7, 0, 0, 0, time.UTC)
-	if got := retryAfterDuration(map[string]string{"Retry-After": "999999999999999999"}, now); got != maxRateLimitCooldown {
-		t.Fatalf("numeric Retry-After = %s, want cap %s", got, maxRateLimitCooldown)
-	}
-	if got := retryAfterDuration(map[string]string{"Retry-After": now.Add(24 * time.Hour).Format(http.TimeFormat)}, now); got != maxRateLimitCooldown {
-		t.Fatalf("date Retry-After = %s, want cap %s", got, maxRateLimitCooldown)
 	}
 }

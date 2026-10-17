@@ -1,0 +1,77 @@
+package source
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+)
+
+const kugouEndpoint = "https://lyrics-api.boidu.dev/kugou/getLyrics"
+
+type providerAPIResponse struct {
+	Lyrics string `json:"lyrics"`
+}
+
+// fetchLegato queries the Better Lyrics Kugou endpoint for a
+// line-synchronized LRC fallback.
+func fetchLegato(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, Health, error) {
+	kugouURL, ok := kugouRequestURL(track)
+	if !ok {
+		return nil, Healthy, nil
+	}
+	text, err := fetchLegatoPayload(rt, kugouURL, betterLyricsHeaders(rt), deadline)
+	if err != nil {
+		return nil, Degraded, err
+	}
+	if strings.TrimSpace(text.Text) == "" {
+		return nil, Healthy, nil
+	}
+	return []lyric.Candidate{lyric.NewCandidate(text, "Better Lyrics Legato", "lrc")}, Healthy, nil
+}
+
+func fetchLegatoPayload(rt Runtime, requestURL string, headers map[string]string, deadline time.Time) (lyrics.LyricsText, error) {
+	if cooldownErr := activeBetterLyricsCooldown(rt, requestURL); cooldownErr != nil {
+		return lyrics.LyricsText{}, cooldownErr
+	}
+	response, err := get(rt, "Better Lyrics Kugou API", requestURL, headers, deadline)
+	if err != nil {
+		return lyrics.LyricsText{}, err
+	}
+
+	switch response.StatusCode {
+	case 200:
+		var payload providerAPIResponse
+		if err := json.Unmarshal(response.Body, &payload); err != nil {
+			return lyrics.LyricsText{}, fmt.Errorf("decode Better Lyrics Kugou API response: %w", err)
+		}
+		if strings.TrimSpace(payload.Lyrics) == "" {
+			return lyrics.LyricsText{}, nil
+		}
+		return lyrics.LyricsText{Text: payload.Lyrics}, nil
+	case 401, 404:
+		return lyrics.LyricsText{}, nil
+	case 429:
+		retryAfter := rememberRateLimit(rt, response, requestURL)
+		return lyrics.LyricsText{}, rateLimitResponseError("Better Lyrics Kugou API", response, retryAfter)
+	default:
+		return lyrics.LyricsText{}, providerResponseError("Better Lyrics Kugou API", response)
+	}
+}
+
+func kugouRequestURL(track lyrics.TrackInfo) (string, bool) {
+	title := strings.TrimSpace(track.Title)
+	artist := lyric.TrackArtist(track)
+	if title == "" || artist == "" {
+		return "", false
+	}
+	query := url.Values{
+		"a": {artist},
+		"s": {title},
+	}
+	return kugouEndpoint + "?" + query.Encode(), true
+}

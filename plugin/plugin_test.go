@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 func TestPluginVersion(t *testing.T) {
@@ -40,10 +42,10 @@ func TestManifestAllowlistsEverySourceHost(t *testing.T) {
 	for _, host := range manifest.Permissions.HTTP.RequiredHosts {
 		allowed[host] = true
 	}
-	for _, source := range allSources {
-		for _, host := range source.Hosts {
+	for _, src := range source.Catalog {
+		for _, host := range src.Hosts {
 			if !allowed[host] {
-				t.Fatalf("source %q needs host %q that the manifest does not allowlist", source.ID, host)
+				t.Fatalf("source %q needs host %q that the manifest does not allowlist", src.ID, host)
 			}
 		}
 	}
@@ -119,23 +121,23 @@ func TestManifestConfigDefaultsMatchCatalog(t *testing.T) {
 	}
 
 	enum := configSchema.Properties.Sources.Items.Properties.ID.Enum
-	if len(enum) != len(allSources) {
-		t.Fatalf("source enum has %d entries, want %d", len(enum), len(allSources))
+	if len(enum) != len(source.Catalog) {
+		t.Fatalf("source enum has %d entries, want %d", len(enum), len(source.Catalog))
 	}
-	for i, source := range allSources {
-		if got := enum[i]; got != source.ID {
-			t.Fatalf("enum[%d] = %q, want %q", i, got, source.ID)
+	for i, src := range source.Catalog {
+		if got := enum[i]; got != src.ID {
+			t.Fatalf("enum[%d] = %q, want %q", i, got, src.ID)
 		}
 	}
 
 	defaults := configSchema.Properties.Sources.Defaults
-	if len(defaults) != len(allSources) {
+	if len(defaults) != len(source.Catalog) {
 		t.Fatalf("defaults have %d entries, want one per catalog source", len(defaults))
 	}
 	for i, wantDefault := range defaults {
-		wantOn := allSources[i].DefaultEnabled
-		if wantDefault.ID != allSources[i].ID {
-			t.Fatalf("defaults[%d] = %q, want %q", i, wantDefault.ID, allSources[i].ID)
+		wantOn := source.Catalog[i].DefaultEnabled
+		if wantDefault.ID != source.Catalog[i].ID {
+			t.Fatalf("defaults[%d] = %q, want %q", i, wantDefault.ID, source.Catalog[i].ID)
 		}
 		if wantDefault.Enabled != wantOn {
 			t.Fatalf("defaults[%d].enabled = %v, want %v", i, wantDefault.Enabled, wantOn)
@@ -155,7 +157,7 @@ func TestConfigSelectionOmittingEnabledUsesSchemaDefault(t *testing.T) {
 		return "", false
 	}
 	resolved := readProviderConfig(lookup)
-	ids := sourceIDs(resolved.Sources)
+	ids := source.IDs(resolved.Sources)
 	// The upgrade-compat pass still appends unlisted default sources, but the
 	// listed entry itself must not vanish (it decoded as disabled pre-fix).
 	found := false

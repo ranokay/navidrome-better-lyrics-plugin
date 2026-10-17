@@ -7,15 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 const (
@@ -28,38 +27,12 @@ const (
 	syncedLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
 	// unsyncedLyricsCacheTTLSeconds covers word/line-quality winners and the
 	// per-source cache of plain results; sources that miss can be retried soon.
-	unsyncedLyricsCacheTTLSeconds  = int64(time.Hour / time.Second)
-	negativeLyricsCacheTTLSeconds  = int64(5 * time.Minute / time.Second)
-	defaultRateLimitCooldown       = 30 * time.Second
-	defaultUnisonRateLimitCooldown = 60 * time.Second
-	maxRateLimitCooldown           = time.Hour
-	credentialSaltKey              = "credential-salt:v1"
-	lyricsWinnerCacheKeyPrefix     = "lyrics:v4:winner:"
-	lyricsSourceCacheKeyPrefix     = "lyrics:v4:source:"
-	betterLyricsGlobalCooldownKey  = "rate-limit:better-lyrics:global:v3"
-	betterLyricsQueryCooldownKey   = "rate-limit:better-lyrics:query:v3:"
-	unisonGlobalCooldownKey        = "rate-limit:unison:global:v1"
+	unsyncedLyricsCacheTTLSeconds = int64(time.Hour / time.Second)
+	negativeLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
+	credentialSaltKey             = "credential-salt:v1"
+	lyricsWinnerCacheKeyPrefix    = "lyrics:v4:winner:"
+	lyricsSourceCacheKeyPrefix    = "lyrics:v4:source:"
 )
-
-type lookupHealth uint8
-
-const (
-	lookupHealthy lookupHealth = iota
-	lookupUncertain
-	lookupDegraded
-	// lookupTemporarilySkipped marks a token/config rejection: not covered
-	// work, not a miss, retryable as soon as the credential situation changes
-	// (better-lyrics family anonymous 401s stay uncertain and miss-cache like
-	// the bounded miss coverage callers expect).
-	lookupTemporarilySkipped
-)
-
-func (h lookupHealth) merge(other lookupHealth) lookupHealth {
-	if other > h {
-		return other
-	}
-	return h
-}
 
 type lyricsCacheStore interface {
 	Get(key string) ([]byte, bool, error)
@@ -71,28 +44,6 @@ type lyricsCacheUsageStore interface {
 }
 
 type noopLyricsCache struct{}
-
-type rateLimitCooldownError struct {
-	global    bool
-	remaining time.Duration
-}
-
-type providerCooldownError struct {
-	provider  string
-	remaining time.Duration
-}
-
-func (e *rateLimitCooldownError) Error() string {
-	scope := "request"
-	if e.global {
-		scope = "API"
-	}
-	return fmt.Sprintf("better lyrics %s cooldown active for %s", scope, e.remaining)
-}
-
-func (e *providerCooldownError) Error() string {
-	return fmt.Sprintf("%s API cooldown active for %s", e.provider, e.remaining)
-}
 
 func (noopLyricsCache) Get(string) ([]byte, bool, error) {
 	return nil, false, nil
@@ -356,7 +307,7 @@ func (p *lyricsProvider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID s
 // readBestFromSourceCache ranks fresh per-source results in configured order; the
 // earlier source wins timing-quality ties because lyric.Prefer keeps the
 // current candidate.
-func (p *lyricsProvider) readBestFromSourceCache(track lyrics.TrackInfo, order []lyricsSource) lyric.Candidate {
+func (p *lyricsProvider) readBestFromSourceCache(track lyrics.TrackInfo, order []source.Source) lyric.Candidate {
 	var best lyric.Candidate
 	for _, source := range order {
 		candidate, ok := p.readCachedSourceCandidate(track, source.ID)
@@ -368,8 +319,8 @@ func (p *lyricsProvider) readBestFromSourceCache(track lyrics.TrackInfo, order [
 	return best
 }
 
-func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyricsSource) (lyric.Candidate, bool, bool) {
-	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []source.Source) (lyric.Candidate, bool, bool) {
+	key, ok := lyricsWinnerCacheKey(track, source.IDs(order))
 	if !ok {
 		return lyric.Candidate{}, false, false
 	}
@@ -394,8 +345,8 @@ func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyrics
 // so a second lookup for the same track with the same source order skips the walk.
 // sweepComplete records whether the producing lookup covered every implemented
 // enabled source, so cached hits know whether a sweep is still pending.
-func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSource, candidate lyric.Candidate, sweepComplete bool) {
-	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []source.Source, candidate lyric.Candidate, sweepComplete bool) {
+	key, ok := lyricsWinnerCacheKey(track, source.IDs(order))
 	if !ok {
 		return
 	}
@@ -413,8 +364,8 @@ func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSourc
 	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, winnerCacheTTLSeconds(candidate.Quality))
 }
 
-func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyricsSource, sweepComplete bool) {
-	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []source.Source, sweepComplete bool) {
+	key, ok := lyricsWinnerCacheKey(track, source.IDs(order))
 	if !ok {
 		return
 	}
@@ -430,24 +381,9 @@ func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyr
 	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, negativeLyricsCacheTTLSeconds)
 }
 
-func (p *lyricsProvider) activeBetterLyricsCooldown(requestURL string) error {
-	if remaining := p.activeCooldown(betterLyricsGlobalCooldownKey); remaining > 0 {
-		return &rateLimitCooldownError{global: true, remaining: remaining}
-	}
-	if remaining := p.activeCooldown(rateLimitQueryKey(requestURL)); remaining > 0 {
-		return &rateLimitCooldownError{remaining: remaining}
-	}
-	return nil
-}
-
-func (p *lyricsProvider) activeUnisonCooldown() error {
-	if remaining := p.activeCooldown(unisonGlobalCooldownKey); remaining > 0 {
-		return &providerCooldownError{provider: "unison", remaining: remaining}
-	}
-	return nil
-}
-
-func (p *lyricsProvider) activeCooldown(key string) time.Duration {
+// Cooldown reports the remaining provider-wide cooldown for a key; a cache
+// failure or corrupt value fails open.
+func (p *lyricsProvider) Cooldown(key string) time.Duration {
 	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
 		// A cache failure must not make the lyrics provider unavailable.
@@ -468,23 +404,9 @@ func (p *lyricsProvider) activeCooldown(key string) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (p *lyricsProvider) rememberRateLimit(response *host.HTTPResponse, requestURL string) time.Duration {
-	retryAfter := retryAfterDuration(response.Headers, p.now())
-	key := rateLimitQueryKey(requestURL)
-	if globalRateLimit(response) {
-		key = betterLyricsGlobalCooldownKey
-	}
-	p.rememberCooldown(key, retryAfter)
-	return retryAfter
-}
-
-func (p *lyricsProvider) rememberUnisonRateLimit(response *host.HTTPResponse) time.Duration {
-	retryAfter := retryAfterDurationWithDefault(response.Headers, p.now(), defaultUnisonRateLimitCooldown)
-	p.rememberCooldown(unisonGlobalCooldownKey, retryAfter)
-	return retryAfter
-}
-
-func (p *lyricsProvider) rememberCooldown(key string, retryAfter time.Duration) {
+// RememberCooldown persists a cooldown deadline so sibling requests and
+// processes observe the same window.
+func (p *lyricsProvider) RememberCooldown(key string, retryAfter time.Duration) {
 	now := p.now()
 	deadline := now.Add(retryAfter)
 	untilUnix := deadline.Unix()
@@ -496,48 +418,6 @@ func (p *lyricsProvider) rememberCooldown(key string, retryAfter time.Duration) 
 	if err := p.cache.SetWithTTL(key, []byte(strconv.FormatInt(untilUnix, 10)), ttlSeconds); err != nil {
 		logCacheDebug(fmt.Sprintf("rate-limit cooldown persistence failed: %v", err))
 	}
-}
-
-func rateLimitQueryKey(requestURL string) string {
-	digest := sha256.Sum256([]byte(requestURL))
-	return fmt.Sprintf("%s%x", betterLyricsQueryCooldownKey, digest)
-}
-
-func globalRateLimit(response *host.HTTPResponse) bool {
-	limitType := strings.ToLower(strings.TrimSpace(headerValue(response.Headers, "X-RateLimit-Type")))
-	if limitType != "" {
-		return limitType == "exceeded"
-	}
-	body := strings.ToLower(string(response.Body))
-	return !strings.Contains(body, "no cached data") && !strings.Contains(body, "requires cached data")
-}
-
-func retryAfterDuration(headers map[string]string, now time.Time) time.Duration {
-	return retryAfterDurationWithDefault(headers, now, defaultRateLimitCooldown)
-}
-
-func retryAfterDurationWithDefault(headers map[string]string, now time.Time, fallback time.Duration) time.Duration {
-	raw := strings.TrimSpace(headerValue(headers, "Retry-After"))
-	if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil && seconds > 0 {
-		maxSeconds := int64(maxRateLimitCooldown / time.Second)
-		if seconds > maxSeconds {
-			seconds = maxSeconds
-		}
-		return time.Duration(seconds) * time.Second
-	}
-	if retryAt, err := http.ParseTime(raw); err == nil && retryAt.After(now) {
-		return min(retryAt.Sub(now), maxRateLimitCooldown)
-	}
-	return min(fallback, maxRateLimitCooldown)
-}
-
-func headerValue(headers map[string]string, name string) string {
-	for key, value := range headers {
-		if strings.EqualFold(key, name) {
-			return value
-		}
-	}
-	return ""
 }
 
 func durationSecondsCeil(duration time.Duration) int64 {

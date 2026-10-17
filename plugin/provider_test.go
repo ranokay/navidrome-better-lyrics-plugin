@@ -90,7 +90,7 @@ func TestLyricsProvider_GetLyrics(t *testing.T) {
 		{
 			name:         "rejects nil transport response",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-			wantError:    "better lyrics API returned no response",
+			wantError:    "Better Lyrics API returned no response",
 			wantRequests: 3,
 		},
 		{
@@ -180,18 +180,5 @@ func TestLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
 	assertLyricsSource(t, secondResult.Source, "Better Lyrics", "ttml")
 	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, catalogSources(defaultCatalogIDs)); ttl != syncedLyricsCacheTTLSeconds {
 		t.Fatalf("positive cache TTL = %d, want %d", ttl, syncedLyricsCacheTTLSeconds)
-	}
-}
-
-func TestAPIResponseErrorTruncatesDetail(t *testing.T) {
-	t.Parallel()
-
-	detail := strings.Repeat("x", maximumAPIErrorRunes+20)
-	err := apiResponseError(&host.HTTPResponse{
-		StatusCode: 500,
-		Body:       []byte(`{"error":"` + detail + `"}`),
-	})
-	if !strings.HasSuffix(err.Error(), "…") {
-		t.Fatalf("apiResponseError() = %q, want truncated detail", err)
 	}
 }

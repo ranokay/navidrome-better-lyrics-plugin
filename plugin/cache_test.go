@@ -10,6 +10,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
@@ -282,7 +283,7 @@ func TestLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
 	before := cache.sets
 	provider.cacheWinner(
 		lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-		[]lyricsSource{{ID: "one"}},
+		[]source.Source{{ID: "one"}},
 		lyric.NewCandidate(lyrics.LyricsText{Text: "lyrics"}, "Unison", "plain"),
 		false,
 	)

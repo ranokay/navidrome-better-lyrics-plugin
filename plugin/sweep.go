@@ -12,6 +12,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 const (
@@ -39,11 +40,6 @@ const defaultSweepBudget = 24 * time.Second
 type sweepTaskPayload struct {
 	Track   lyrics.TrackInfo `json:"track"`
 	Sources []string         `json:"sources,omitempty"`
-}
-
-// sourceGlobalCooldownKey names the provider-wide rate-limit cooldown for a source.
-func sourceGlobalCooldownKey(identity string) string {
-	return fmt.Sprintf("rate-limit:%s:global:v1", identity)
 }
 
 // OnInit creates the permanent sweep queue. Failing here is non-fatal: lyrics keep
@@ -113,16 +109,16 @@ func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
 
 // sweepDoneMarkerKey fingerprints the enabled source order into the done key so
 // reordering or rescaling the catalog invalidates satisfied sweeps.
-func sweepDoneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
+func sweepDoneMarkerKey(track lyrics.TrackInfo, order []source.Source) string {
 	trackKey, _ := lyricsTrackKey(track)
-	digest := sha256.Sum256([]byte(strings.Join(sourceIDs(order), "|")))
+	digest := sha256.Sum256([]byte(strings.Join(source.IDs(order), "|")))
 	return fmt.Sprintf("%s%x:%s", sweepDonePrefix, digest, trackKey)
 }
 
 // doneMarkerKey is the provider-view done key: it also carries the credential
 // fingerprint so re-authorizing after a recorded miss re-runs the sweep.
 // Credential changes must invalidate negative coverage.
-func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
+func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []source.Source) string {
 	return fmt.Sprintf("%s:cred:%s", sweepDoneMarkerKey(track, order), p.lyricsCredentialsFingerprint())
 }
 
@@ -145,7 +141,7 @@ func (p *lyricsProvider) runSweepSources(track lyrics.TrackInfo, allowed []strin
 	return status, deferredIDs
 }
 
-func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []lyricsSource) {
+func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []source.Source) {
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
 		return "ignored (incomplete track metadata)", nil, nil
 	}
@@ -163,10 +159,10 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		for _, id := range allowed {
 			allowedSet[id] = true
 		}
-		filtered := make([]lyricsSource, 0, len(allowedSet))
-		for _, source := range sources {
-			if allowedSet[source.ID] && source.Fetch != nil {
-				filtered = append(filtered, source)
+		filtered := make([]source.Source, 0, len(allowedSet))
+		for _, src := range sources {
+			if allowedSet[src.ID] && src.Fetch != nil {
+				filtered = append(filtered, src)
 			}
 		}
 		sources = filtered
@@ -190,16 +186,16 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 	coverageTTL := sweepDoneTTL
 	var deferredIDs []string
 	localCold := map[string]bool{}
-	for _, source := range sources {
-		if source.Fetch != nil {
+	for _, src := range sources {
+		if src.Fetch != nil {
 			implemented++
 		}
 	}
-	for _, source := range sources {
-		if source.Fetch == nil {
+	for _, src := range sources {
+		if src.Fetch == nil {
 			continue
 		}
-		if _, expiresAt, ok := p.readCachedSourceCoverageWithExpiry(track, source.ID); ok {
+		if _, expiresAt, ok := p.readCachedSourceCoverageWithExpiry(track, src.ID); ok {
 			remaining := expiresAt - p.now().Unix()
 			if expiresAt > 0 && remaining > 0 {
 				skipped++
@@ -212,14 +208,14 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			// writes) refetch so the pass leaves stamped coverage behind
 			// instead of letting a marker outlive them.
 		}
-		if cooledDown := p.sourceInCooldown(source); cooledDown {
+		if cooledDown := p.sourceInCooldown(src); cooledDown {
 			// A cooled-down source is not covered by this pass, so the pass
 			// cannot be marked done; retry the sweep after the cooldown lapses.
 			cooldownSkipped++
 			skipped++
 			continue
 		}
-		if coldHostFor(source, localCold) != "" {
+		if coldHostFor(src, localCold) != "" {
 			// A KV write failure must not let siblings hit the same globally
 			// rate-limited host inside this pass (in-memory cold hosts).
 			cooldownSkipped++
@@ -228,30 +224,30 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 		if p.now().After(deadline) {
 			deferred++
-			deferredIDs = append(deferredIDs, source.ID)
+			deferredIDs = append(deferredIDs, src.ID)
 			continue
 		}
-		candidates, fetchHealth, err := source.Fetch(p, track, deadline)
+		candidates, fetchHealth, err := src.Fetch(p, track, deadline)
 		if err != nil {
 			if errors.Is(err, errLyricsLookupBudgetExhausted) {
 				// The search finished against the budget and the lyrics hop
 				// could not start: this source belongs in the continuation,
 				// not in the failure count.
 				deferred++
-				deferredIDs = append(deferredIDs, source.ID)
+				deferredIDs = append(deferredIDs, src.ID)
 				continue
 			}
 			failed++
-			if isGlobalRateLimitError(err) {
+			if source.IsGlobalRateLimitError(err) {
 				// Preserve the observed host cooldown in memory too: a KV write
 				// failure must not let siblings hit the rate-limited host now.
-				for _, hostName := range source.Hosts {
+				for _, hostName := range src.Hosts {
 					localCold[hostName] = true
 				}
 			}
 			continue
 		}
-		if fetchHealth == lookupTemporarilySkipped && len(candidates) == 0 {
+		if fetchHealth == source.TemporarilySkipped && len(candidates) == 0 {
 			// A temporary skip (token rejection) is neither covered work nor a
 			// miss: the next sweep can get a fresh token. Anonymous
 			// cache-only misses stay uncertain and fall through to miss
@@ -267,7 +263,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 				continue
 			}
 			hadCandidates = true
-			if p.cacheSourceCandidate(track, source.ID, candidate) {
+			if p.cacheSourceCandidate(track, src.ID, candidate) {
 				storedAny = true
 			}
 		}
@@ -288,7 +284,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			// genuinely has nothing (misses must terminate the sweep).
 			// Persist the miss so later passes and continuations can skip the
 			// refetch instead of re-walking the same clean misses every cycle.
-			if !p.cacheSourceMiss(track, source.ID) {
+			if !p.cacheSourceMiss(track, src.ID) {
 				// A refused miss write is not honest coverage.
 				notCovered++
 				continue
@@ -305,11 +301,11 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 	// already be cached from the original sweep; otherwise the full order is
 	// not covered yet and no marker may be written.
 	coveredOthers := true
-	for _, source := range fullOrder {
-		if allowedSet == nil || source.Fetch == nil || allowedSet[source.ID] {
+	for _, src := range fullOrder {
+		if allowedSet == nil || src.Fetch == nil || allowedSet[src.ID] {
 			continue
 		}
-		_, siblingExpiry, ok := p.readCachedSourceCoverageWithExpiry(track, source.ID)
+		_, siblingExpiry, ok := p.readCachedSourceCoverageWithExpiry(track, src.ID)
 		remaining := siblingExpiry - p.now().Unix()
 		if !ok || siblingExpiry <= 0 || remaining <= 0 {
 			// A sibling without a trustworthy remaining lifetime cannot be
@@ -341,29 +337,29 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 // the hosts it shares with sibling sources (families such as the Better Lyrics
 // endpoints share cooldowns by design — including the v3 keys the legacy
 // fetchers recorded before this registry existed).
-func (p *lyricsProvider) sourceInCooldown(source lyricsSource) bool {
-	if p.activeCooldown(sourceGlobalCooldownKey(source.ID)) > 0 {
+func (p *lyricsProvider) sourceInCooldown(src source.Source) bool {
+	if p.Cooldown(source.GlobalCooldownKey(src.ID)) > 0 {
 		return true
 	}
-	if source.ID == "lyricsplus" {
+	if src.ID == "lyricsplus" {
 		// Its hosts are independent mirrors: per-host cooldowns are honored
 		// inside the fetch while rotating mirrors, and must not suppress the
 		// whole multi-host source here.
 		return false
 	}
-	for _, hostName := range source.Hosts {
-		if p.activeCooldown(sourceGlobalCooldownKey(hostName)) > 0 {
+	for _, hostName := range src.Hosts {
+		if p.Cooldown(source.GlobalCooldownKey(hostName)) > 0 {
 			return true
 		}
 	}
-	if sharesBetterLyricsHost(source) && p.activeCooldown(betterLyricsGlobalCooldownKey) > 0 {
+	if sharesBetterLyricsHost(src) && p.Cooldown(source.BetterLyricsGlobalCooldownKey) > 0 {
 		return true
 	}
 	return false
 }
 
-func sharesBetterLyricsHost(source lyricsSource) bool {
-	for _, hostName := range source.Hosts {
+func sharesBetterLyricsHost(src source.Source) bool {
+	for _, hostName := range src.Hosts {
 		if hostName == "lyrics-api.boidu.dev" {
 			return true
 		}
@@ -405,6 +401,6 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 // credential state: reconfiguring sources must not delay a fresh sweep for
 // the old marker window.
 func (p *lyricsProvider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
-	digest := sha256.Sum256([]byte(strings.Join(sourceIDs(p.activeSources()), "|")))
+	digest := sha256.Sum256([]byte(strings.Join(source.IDs(p.activeSources()), "|")))
 	return fmt.Sprintf("%s%s:%x:%s", sweepMarkerPrefix, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)
 }

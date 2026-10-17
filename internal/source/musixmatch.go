@@ -1,0 +1,447 @@
+package source
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/host"
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+)
+
+const musixmatchEndpoint = "https://apic.musixmatch.com/ws/1.1"
+
+const (
+	musixmatchAppID     = "android-player-v1.0"
+	musixmatchTokenKey  = "musixmatch:token:v1"
+	musixmatchTokenTTL  = int64(10 * 24 * time.Hour / time.Second)
+	musixmatchUserAgent = "Dalvik/2.1.0 (Linux; U; Android 10)"
+)
+
+// musixmatchProviderName is the display name reported in provenance.
+const musixmatchProviderName = "Musixmatch"
+
+// fetchMusixmatch resolves lyrics through Musixmatch's desktop
+// API: mint (or reuse a configured) anonymous user token, search the track by
+// duration drift, then fetch the richest usable payload (word richsync, line
+// subtitles, or plain lyrics).
+func fetchMusixmatch(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, Health, error) {
+	token, err := musixmatchToken(rt, deadline)
+	if err != nil {
+		// A mint challenge means this lookup skips Musixmatch quietly and the
+		// next lookup can try again. Operational failures (transport, timeout,
+		// HTTP 5xx) must stay degraded so sweep coverage cannot mark the
+		// source done while minting is actually down.
+		if errors.Is(err, errMusixmatchTokenChallenge) {
+			// The challenge answer can clear itself next lookup; skip quietly
+			// without letting the walkers persist it as a miss.
+			return nil, TemporarilySkipped, nil
+		}
+		return nil, Degraded, err
+	}
+
+	searchURL, ok := musixmatchSearchURL(track, token)
+	if !ok {
+		return nil, Healthy, nil
+	}
+	searchResponse, err := musixmatchRequest(rt, "track.search", searchURL, deadline)
+	if err != nil {
+		return nil, Degraded, err
+	}
+	switch searchResponse.StatusCode {
+	case 200:
+		// pass to the envelope decode
+	case 401:
+		// The cached token went stale: drop it and try one fresh mint next
+		// lookup. A temporary skip must not persist as a clean miss, or this
+		// source stays suppressed when its token simply aged out.
+		noteMusixmatchTokenRejection(rt)
+		return nil, TemporarilySkipped, nil
+	case 404:
+		return nil, Healthy, nil
+	case 429:
+		return nil, Degraded, rateLimitFailure(rt, "musixmatch", "Musixmatch search", searchResponse)
+	default:
+		return nil, Degraded, providerResponseError("Musixmatch search", searchResponse)
+	}
+	if searchResponse.StatusCode == 401 {
+		// The cached token went stale: drop it and try one fresh mint next lookup.
+		noteMusixmatchTokenRejection(rt)
+		return nil, Healthy, nil
+	}
+
+	var searchEnvelope musixmatchEnvelope
+	if err := json.Unmarshal(searchResponse.Body, &searchEnvelope); err != nil {
+		return nil, Degraded, fmt.Errorf("decode Musixmatch search response: %w", err)
+	}
+	if musixmatchTokenRejected(searchEnvelope.Message.Header) {
+		// Musixmatch sometimes reports the rejected token only in the JSON
+		// envelope; drop it so the next lookup remints instead of missing for up
+		// to ten days. A temporary skip must not persist as a missed song.
+		noteMusixmatchTokenRejection(rt)
+		return nil, TemporarilySkipped, nil
+	}
+	if health, err := musixmatchEnvelopeStatusFailure(rt, "Musixmatch track.search", searchEnvelope.Message.Header.StatusCode); err != nil {
+		return nil, health, err
+	}
+	trackID, found := pickMusixmatchTrack(searchEnvelope.Message.Body.TrackList, track)
+	if !found {
+		return nil, Healthy, nil
+	}
+
+	macroURL, ok := musixmatchMacroURL(strconv.FormatInt(trackID, 10), token)
+	if !ok {
+		return nil, Healthy, nil
+	}
+	macroResponse, err := musixmatchRequest(rt, "macro.subtitles.get", macroURL, deadline)
+	if err != nil {
+		return nil, Degraded, err
+	}
+
+	switch macroResponse.StatusCode {
+	case 200:
+		// pass through to the envelope decode
+	case 404:
+		return nil, Healthy, nil
+	case 429:
+		return nil, Degraded, rateLimitFailure(rt, "musixmatch", "Musixmatch subtitles", macroResponse)
+	default:
+		return nil, Degraded, providerResponseError("Musixmatch subtitles", macroResponse)
+	}
+
+	var macroEnvelope musixmatchEnvelope
+	if err := json.Unmarshal(macroResponse.Body, &macroEnvelope); err != nil {
+		return nil, Degraded, fmt.Errorf("decode Musixmatch subtitles response: %w", err)
+	}
+	if musixmatchTokenRejected(macroEnvelope.Message.Header) {
+		noteMusixmatchTokenRejection(rt)
+		return nil, TemporarilySkipped, nil
+	}
+	if health, err := musixmatchEnvelopeStatusFailure(rt, "Musixmatch macro.subtitles.get", macroEnvelope.Message.Header.StatusCode); err != nil {
+		return nil, health, err
+	}
+	var macroFailures []error
+	for name, macro := range macroEnvelope.Message.Body.MacroCalls {
+		// The richsync/subtitles responses can reject the token while the outer
+		// envelope still says HTTP 200 (stale tokens must be dropped).
+		if musixmatchTokenRejected(macro.Header) {
+			noteMusixmatchTokenRejection(rt)
+			return nil, TemporarilySkipped, nil
+		}
+		if _, err := musixmatchEnvelopeStatusFailure(rt, "Musixmatch macro payload", macro.Header.StatusCode); err != nil {
+			// One failed optional macro must not discard the usable payloads
+			// the same response carries: record it and let the
+			// candidate ranking below decide.
+			macroFailures = append(macroFailures, fmt.Errorf("musixmatch macro %s: %w", name, err))
+			continue
+		}
+	}
+	candidates, health, err := musixmatchCandidate(macroEnvelope.Message.Body.MacroCalls)
+	if len(candidates) > 0 {
+		return candidates, health, err
+	}
+	if len(macroFailures) > 0 {
+		return nil, Degraded, errors.Join(macroFailures...)
+	}
+	return candidates, health, err
+}
+
+// musixmatchTokenRejected reports a JSON-envelope rejection of the current token:
+// expired tokens sometimes arrive only in the header (HTTP 200 outside).
+// musixmatchEnvelopeStatusFailure classifies a JSON header status that the HTTP
+// layer already answered 200 for. Token rejections are handled by the caller and
+// plain no-match (404) keeps the quiet miss contract; an envelope rate limit
+// activates the provider cooldown, and any other non-success status is a
+// degraded failure instead of a healthy miss.
+func musixmatchEnvelopeStatusFailure(rt Runtime, source string, status int) (Health, error) {
+	switch status {
+	case 0, 200, 201, 204, 404:
+		return Healthy, nil
+	case 429:
+		rt.RememberCooldown(GlobalCooldownKey("musixmatch"), defaultRateLimitCooldown)
+		return Degraded, &providerHTTPError{source: source, status: 429, globalRateLimit: true}
+	default:
+		return Degraded, &providerHTTPError{source: source, status: int32(status)}
+	}
+}
+
+// noteMusixmatchTokenRejection bounds retry pressure when a rejection hit:
+// anonymous tokens are dropped so the next lookup remints, while a configured
+// token — the only credential available — records a short provider cooldown
+// so foreground lookups stop hammering the rejected setting. The
+// cooldown lapses quickly, and changing the setting re-authorizes the source
+// as soon as it does.
+func noteMusixmatchTokenRejection(rt Runtime) {
+	if rt.MusixmatchUserToken() != "" {
+		rt.RememberCooldown(GlobalCooldownKey("musixmatch"), defaultRateLimitCooldown)
+		return
+	}
+	_ = rt.Cache().SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+}
+
+func musixmatchTokenRejected(header struct {
+	StatusCode int    `json:"status_code"`
+	Hint       string `json:"hint"`
+}) bool {
+	return header.StatusCode == 401 || header.StatusCode == 403 ||
+		strings.EqualFold(strings.TrimSpace(header.Hint), "captcha")
+}
+
+// musixmatchCandidate ranks the available payloads: richsync (word) before LRC
+// subtitles (line) before plain lyrics.
+func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyric.Candidate, Health, error) {
+	var richsyncParseErr error
+	if richsyncBody := macroCalls["track.richsync.get"].Body.RichsyncBody; strings.TrimSpace(richsyncBody) != "" {
+		if lines, err := lyric.ParseRichsync(richsyncBody); err == nil && len(lines) > 0 {
+			text := lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}
+			if candidate := lyric.NewCandidate(text, musixmatchProviderName, "elrc"); candidate.Present() {
+				return []lyric.Candidate{candidate}, Healthy, nil
+			}
+		} else {
+			richsyncParseErr = err
+		}
+	}
+	if subtitles := macroCalls["track.subtitles.get"].Body.SubtitleList; len(subtitles) > 0 {
+		// Restricted or unavailable subtitles arrive with an empty body;
+		// serving them would cache a blank lyric ahead of usable fallbacks.
+		if body := strings.TrimSpace(subtitles[0].SubtitleBody); body != "" {
+			if candidate := lyric.NewCandidate(lyrics.LyricsText{Text: body}, musixmatchProviderName, "lrc"); candidate.Present() {
+				return []lyric.Candidate{candidate}, Healthy, nil
+			}
+		}
+	}
+	if plainLyrics := macroCalls["track.lyrics.get"].Body.LyricsBody; strings.TrimSpace(plainLyrics) != "" {
+		text := lyrics.LyricsText{Text: plainLyrics}
+		if candidate := lyric.NewCandidate(text, musixmatchProviderName, "plain"); candidate.Present() {
+			return []lyric.Candidate{candidate}, Healthy, nil
+		}
+	}
+	if richsyncParseErr != nil {
+		// Malformed richsync with no usable fallback is a provider failure,
+		// not cacheable coverage.
+		return nil, Degraded, fmt.Errorf("parse Musixmatch richsync: %w", richsyncParseErr)
+	}
+	return nil, Healthy, nil
+}
+
+// musixmatchToken returns the configured admin token when present, otherwise the
+// minted-and-cached anonymous token (minting once per attempt, dropping the cache
+// entry when the API challenges it). The caller's deadline governs the network
+// mint so a late-hop mint cannot blow the lookup budget.
+func musixmatchToken(rt Runtime, deadline time.Time) (string, error) {
+	if config := rt.MusixmatchUserToken(); config != "" {
+		return config, nil
+	}
+	if cached, exists, _ := rt.Cache().Get(musixmatchTokenKey); exists && len(cached) > 0 {
+		if token := strings.TrimSpace(string(cached)); token != "" {
+			return token, nil
+		}
+	}
+
+	nonce := randomMusixmatchNonce()
+	requestURL := fmt.Sprintf("%s/token.get?app_id=%s&user_language=en&t=%s", musixmatchEndpoint, musixmatchAppID, nonce)
+	response, err := musixmatchRequest(rt, "token.get", requestURL, deadline)
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode == 401 {
+		return "", errMusixmatchTokenChallenge
+	}
+	if response.StatusCode == 429 {
+		// Rate-limited minting must cool the provider down; hammering token.get
+		// while it throttles only extends the block.
+		retryAfter := retryAfterDuration(response.Headers, rt.Now())
+		rt.RememberCooldown(GlobalCooldownKey("musixmatch"), retryAfter)
+		return "", rateLimitResponseError("Musixmatch token", response, retryAfter)
+	}
+	if response.StatusCode != 200 && response.StatusCode != 201 {
+		return "", providerResponseError("Musixmatch token", response)
+	}
+
+	var envelope musixmatchTokenEnvelope
+	if err := json.Unmarshal(response.Body, &envelope); err != nil {
+		return "", fmt.Errorf("decode Musixmatch token response: %w", err)
+	}
+	if musixmatchTokenRejected(envelope.Message.Header) {
+		return "", errMusixmatchTokenChallenge
+	}
+	if _, err := musixmatchEnvelopeStatusFailure(rt, "Musixmatch token.get", envelope.Message.Header.StatusCode); err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(envelope.Message.Body.UserToken)
+	if token == "" {
+		return "", fmt.Errorf("musixmatch token response has no user token")
+	}
+	rt.Cache().SetWithTTL(musixmatchTokenKey, []byte(token), musixmatchTokenTTL)
+	return token, nil
+}
+
+// musixmatchRequest issues one Musixmatch GET with the documented desktop UA and
+// no-op AWS load balancer cookies.
+func musixmatchRequest(rt Runtime, label, requestURL string, deadline time.Time) (*host.HTTPResponse, error) {
+	response, err := rt.Do("Musixmatch "+label, "GET", requestURL, nil, musixmatchHeaders(), deadline)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func musixmatchHeaders() map[string]string {
+	return map[string]string{
+		"Accept":     "application/json",
+		"User-Agent": musixmatchUserAgent,
+		"Cookie":     "AWSELB=0; AWSELBCORS=0",
+	}
+}
+
+func randomMusixmatchNonce() string {
+	return randomHex(16)
+}
+
+func musixmatchSearchURL(track lyrics.TrackInfo, token string) (string, bool) {
+	title := strings.TrimSpace(track.Title)
+	artist := lyric.TrackArtist(track)
+	if title == "" || artist == "" {
+		return "", false
+	}
+	query := url.Values{
+		"q_track":        {title},
+		"q_artist":       {artist},
+		"page_size":      {"5"},
+		"s_track_rating": {"desc"},
+		"usertoken":      {token},
+		"format":         {"json"},
+		"app_id":         {musixmatchAppID},
+	}
+	if duration := int64(math.Round(float64(track.Duration))); duration > 0 {
+		query.Set("q_duration", strconv.FormatInt(duration, 10))
+	}
+	return musixmatchEndpoint + "/track.search?" + query.Encode(), true
+}
+
+func musixmatchMacroURL(trackID, token string) (string, bool) {
+	if trackID == "" || token == "" {
+		return "", false
+	}
+	query := url.Values{
+		"namespace":                       {"lyrics_richsynched"},
+		"optional_calls":                  {"track.richsync"},
+		"subtitle_format":                 {"lrc"},
+		"track_id":                        {trackID},
+		"f_subtitle_length_max_deviation": {"40"},
+		"usertoken":                       {token},
+		"format":                          {"json"},
+		"app_id":                          {musixmatchAppID},
+	}
+	return musixmatchEndpoint + "/macro.subtitles.get?" + query.Encode(), true
+}
+
+// pickMusixmatchTrack selects the duration-tightest candidate within 2 s.
+func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackInfo) (int64, bool) {
+	target := int64(math.Round(float64(track.Duration)))
+	titleTokens := lyric.NormalizedTokens(track.Title)
+	var best int64
+	bestDelta := int64(math.MaxInt64)
+	found := false
+	for _, candidate := range candidates {
+		id := int64(candidate.Track.TrackID)
+		if id <= 0 {
+			continue
+		}
+		// The fuzzy track.search rows only qualify when their identity
+		// matches; duration then ranks the qualifying rows.
+		if !lyric.TokensMatch(lyric.NormalizedTokens(candidate.Track.TrackName), titleTokens) {
+			continue
+		}
+		if !musixmatchArtistsMatch(candidate.Track.ArtistName, lyric.TrackArtist(track)) {
+			continue
+		}
+		if track.Duration <= 0 {
+			// The duration gate applies only when the request carries one:
+			// the search already omitted q_duration, so the broader result
+			// set must stay usable.
+			if !found {
+				best, bestDelta, found = id, 0, true
+			}
+			continue
+		}
+		duration := candidate.Track.Duration
+		delta := int64(math.Abs(float64(int64(duration) - target)))
+		if delta > 2 {
+			continue
+		}
+		if delta < bestDelta || !found {
+			best, bestDelta, found = id, delta, true
+		}
+	}
+	return best, found
+}
+
+// musixmatchArtistsMatch accepts the row when any collaborating artist name
+// matches the requested artist completely.
+func musixmatchArtistsMatch(artistName, wanted string) bool {
+	return lyric.ArtistMatch(artistName, wanted)
+}
+
+// errMusixmatchTokenChallenge marks the anti-bot captcha/rejection the desktop
+// endpoint answers with when anonymous minting is blocked; unlike transport or
+// HTTP errors it is a deliberate skip, not an operational failure.
+var errMusixmatchTokenChallenge = errors.New("musixmatch token challenge")
+
+type musixmatchEnvelope struct {
+	Message struct {
+		Header struct {
+			StatusCode int    `json:"status_code"`
+			Hint       string `json:"hint"`
+		} `json:"header"`
+		Body musixmatchBody `json:"body"`
+	} `json:"message"`
+}
+
+type musixmatchTokenEnvelope struct {
+	Message struct {
+		Header struct {
+			StatusCode int    `json:"status_code"`
+			Hint       string `json:"hint"`
+		} `json:"header"`
+		Body struct {
+			UserToken string `json:"user_token"`
+		} `json:"body"`
+	} `json:"message"`
+}
+
+type musixmatchBody struct {
+	TrackList  []musixmatchTrackEntry         `json:"track_list"`
+	MacroCalls map[string]musixmatchMacroBody `json:"macro_calls"`
+}
+
+type musixmatchTrackEntry struct {
+	Track struct {
+		TrackID    int64  `json:"track_id"`
+		TrackName  string `json:"track_name"`
+		ArtistName string `json:"artist_name"`
+		Duration   int64  `json:"track_length"` // seconds (live search wire name)
+	} `json:"track"`
+}
+
+type musixmatchMacroBody struct {
+	Header struct {
+		StatusCode int    `json:"status_code"`
+		Hint       string `json:"hint"`
+	} `json:"header"`
+	Body struct {
+		RichsyncBody string          `json:"richsync_body"`
+		LyricsBody   string          `json:"lyrics_body"`
+		SubtitleList []subtitleEntry `json:"subtitle_list"`
+	} `json:"body"`
+}
+
+type subtitleEntry struct {
+	SubtitleBody string `json:"subtitle_body"`
+}
