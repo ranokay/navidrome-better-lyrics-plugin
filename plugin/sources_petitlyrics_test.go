@@ -94,6 +94,82 @@ func TestPetitLyricsCandidates_LSYBinarySkipsToPlain(t *testing.T) {
 	}
 }
 
+func TestPetitLyricsTierSelectsTheRequestedSong(t *testing.T) {
+	t.Parallel()
+
+	// The lookup echoes each matched row's own metadata; the first row is not
+	// automatically the requested track, so the selection must gate on the
+	// row's title/artist instead of taking songs[0].
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if !strings.Contains(string(request.Body), "lyricsType=1") {
+			t.Fatalf("unexpected tier request: %s", request.Body)
+		}
+		return hostXMLResponse(`<?xml version='1.0' encoding='UTF-8'?><response><status>00000000</status><songs>` +
+			`<song><title>Different Song</title><artist>Somebody Else</artist><lyricsType>1</lyricsType><lyricsData>` + base64Encode("wrong words") + `</lyricsData></song>` +
+			`<song><title>Live Forever</title><artist>Oasis</artist><lyricsType>1</lyricsType><lyricsData>` + base64Encode("right words") + `</lyricsData></song>` +
+			`</songs></response>`), nil
+	})
+
+	payload, health, err := provider.fetchPetitLyricsTier(lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis"}, petitLyricsTypePlain, time.Now().Add(time.Second))
+	if err != nil || health != lookupHealthy {
+		t.Fatalf("health/err = %v/%v, want a healthy lookup", health, err)
+	}
+	if payload.LyricsData != base64Encode("right words") {
+		t.Fatalf("lyricsData = %q, want the row matching the requested song", payload.LyricsData)
+	}
+}
+
+func TestPetitLyricsTierRefusesUnmatchedRows(t *testing.T) {
+	t.Parallel()
+
+	request := lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis"}
+
+	// A row for another song must not be served on the strength of its order.
+	unrelated := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return hostXMLResponse(`<?xml version='1.0' encoding='UTF-8'?><response><status>00000000</status><songs>` +
+			`<song><title>Different Song</title><artist>Somebody Else</artist><lyricsType>1</lyricsType><lyricsData>` + base64Encode("wrong words") + `</lyricsData></song>` +
+			`</songs></response>`), nil
+	})
+	payload, health, err := unrelated.fetchPetitLyricsTier(request, petitLyricsTypePlain, time.Now().Add(time.Second))
+	if err != nil || health != lookupHealthy {
+		t.Fatalf("unrelated row: health/err = %v/%v, want a healthy miss", health, err)
+	}
+	if strings.TrimSpace(payload.LyricsData) != "" {
+		t.Fatalf("unrelated row: lyricsData = %q, want it refused", payload.LyricsData)
+	}
+
+	// A row carrying a different lyrics tier must not be decoded as the
+	// requested one.
+	mistiered := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return hostXMLResponse(`<?xml version='1.0' encoding='UTF-8'?><response><status>00000000</status><songs>` +
+			`<song><title>Live Forever</title><artist>Oasis</artist><lyricsType>2</lyricsType><lyricsData>` + base64Encode("line payload") + `</lyricsData></song>` +
+			`</songs></response>`), nil
+	})
+	payload, health, err = mistiered.fetchPetitLyricsTier(request, petitLyricsTypePlain, time.Now().Add(time.Second))
+	if err != nil || health != lookupHealthy {
+		t.Fatalf("mismatched tier: health/err = %v/%v, want a healthy miss", health, err)
+	}
+	if strings.TrimSpace(payload.LyricsData) != "" {
+		t.Fatalf("mismatched tier: lyricsData = %q, want it refused", payload.LyricsData)
+	}
+}
+
+func TestPetitLyricsNonZeroStatusDegrades(t *testing.T) {
+	t.Parallel()
+
+	// Missing songs answer status 00000000 with zero rows (verified live), so
+	// any other status is a provider failure that must stay retryable instead
+	// of caching as a clean miss.
+	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return hostXMLResponse(`<?xml version='1.0' encoding='UTF-8'?><response><status>00000001</status><songs></songs></response>`), nil
+	})
+
+	_, health, err := provider.fetchPetitLyricsTier(lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis"}, petitLyricsTypePlain, time.Now().Add(time.Second))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("health/err = %v/%v, want a degraded provider failure for an error status", health, err)
+	}
+}
+
 func TestLyricallyCandidates_ITunesSearchThenMirror(t *testing.T) {
 	t.Parallel()
 

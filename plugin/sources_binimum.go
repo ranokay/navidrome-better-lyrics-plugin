@@ -129,7 +129,7 @@ func lyricTokensMatch(a, b []string) bool {
 // artistTokensMatch compares artist fields with complete-name semantics: each
 // side splits into collaborator names on common separators, and any exact
 // collapsed-name equality matches. Prefix tolerance stays for titles only —
-// it would equate "Pink" and "Pink Floyd" (Codex round 13).
+// it would equate "Pink" and "Pink Floyd".
 func artistTokensMatch(returned, wanted string) bool {
 	wanted = strings.TrimSpace(wanted)
 	if wanted == "" {
@@ -139,16 +139,19 @@ func artistTokensMatch(returned, wanted string) bool {
 	if returned == "" {
 		return false
 	}
+	wantedCollapsed := onlyLettersAndDigits(strings.ToLower(wanted))
+	// A wanted name that collapses to no alphanumerics ("???") identifies
+	// nothing: matching it would alias every returned artist.
+	if wantedCollapsed == "" {
+		return false
+	}
 	// Whole-name equality first: "AC/DC" collapses to one name, while the
 	// collaborator split below would break it into "ac" and "dc" that can
-	// never equal "acdc" (Greptile).
-	if onlyLettersAndDigits(strings.ToLower(returned)) == onlyLettersAndDigits(strings.ToLower(wanted)) {
+	// never equal "acdc".
+	if onlyLettersAndDigits(strings.ToLower(returned)) == wantedCollapsed {
 		return true
 	}
 	wantNames := splitArtistNames(wanted)
-	if len(wantNames) == 0 {
-		return true
-	}
 	for _, rowName := range splitArtistNames(returned) {
 		for _, wantName := range wantNames {
 			if rowName == wantName {

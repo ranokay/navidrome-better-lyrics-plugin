@@ -76,7 +76,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
 		_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL)
 	}
-	status, deferredIDs, sources := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
+	status, deferredIDs, markerOrder := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
 	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.
@@ -87,7 +87,10 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 		}
 	}
 	if markerKey != "" {
-		_, done, _ := p.cache.Get(p.doneMarkerKey(payload.Track, sources))
+		// The done marker is written for the full configured order, so the
+		// completion check must use that same order: checking the continuation
+		// subset would release the pending marker although the sweep is done.
+		_, done, _ := p.cache.Get(p.doneMarkerKey(payload.Track, markerOrder))
 		switch {
 		case done:
 			// The completed marker gates duplicates now.
@@ -178,7 +181,8 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 	}
 	// Continuations hand the done marker back to the full configured order:
 	// caching against the deferred subset alone would never satisfy a fresh
-	// full-order check and repeat the whole pass (Codex).
+	// full-order check and repeat the whole pass. The same order is returned
+	// so the task's completion check uses the key the write used.
 	fullOrder := sources
 	if allowedSet != nil {
 		fullOrder = p.activeSources()
@@ -339,7 +343,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			}
 		}
 	}
-	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, sources
+	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, fullOrder
 }
 
 // cacheSourceMissIfAbsent records a healthy source's "no lyrics here" as a

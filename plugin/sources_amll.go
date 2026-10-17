@@ -178,10 +178,11 @@ func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 
 // amllNamesMatch accepts any listed name whose collapsed tokens match (title
 // prefix tolerance allowed by the callers) — artist callers pass complete-name
-// semantics via artistTokensMatch instead.
+// semantics via artistTokensMatch instead. An empty wanted list means the
+// request carried no verifiable title tokens, so nothing may match.
 func amllNamesMatch(names []string, wanted []string) bool {
 	if len(wanted) == 0 {
-		return true
+		return false
 	}
 	for _, name := range names {
 		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {

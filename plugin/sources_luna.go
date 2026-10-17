@@ -155,6 +155,7 @@ func (id *lunaTrackID) UnmarshalJSON(data []byte) error {
 
 func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
+	titleNorm := strings.ToLower(onlyLettersAndDigits(track.Title))
 	for _, group := range groups {
 		for _, datum := range group.Data {
 			trackInfo := datum.Entity.Track
@@ -163,10 +164,11 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 			}
 			// The fuzzy hub search can return unrelated rows within the
 			// duration window: require normalized metadata before the
-			// duration gate (Codex). Collapsed containment tolerates UGC rows
-			// that concatenate name and artist without separators
-			// ("liveforeverOasis"), as the live fixture Does.
-			if !strings.Contains(strings.ToLower(onlyLettersAndDigits(trackInfo.Name)), strings.ToLower(onlyLettersAndDigits(track.Title))) {
+			// duration gate. Collapsed containment tolerates UGC rows that
+			// concatenate name and artist without separators
+			// ("liveforeverOasis"), as the live fixture does. A title without
+			// alphanumerics verifies nothing and matches no row.
+			if titleNorm == "" || !strings.Contains(strings.ToLower(onlyLettersAndDigits(trackInfo.Name)), titleNorm) {
 				continue
 			}
 			if !lunaArtistsMatch(trackInfo, track) {
@@ -197,12 +199,11 @@ type lunaSearchTrack struct {
 // with COMPLETE normalized-name equality, or from a narrowly scoped UGC
 // fallback: hub rows that concatenate title+artist without separators
 // ("liveforeverOasis") when the remainder after the collapsed title is
-// exactly the artist (Codex: substring matching let "blackpink" aliase a
-// "pink" request).
+// exactly the artist. An artist without alphanumerics verifies nothing.
 func lunaArtistsMatch(trackInfo lunaSearchTrack, track lyrics.TrackInfo) bool {
 	artistNorm := strings.ToLower(onlyLettersAndDigits(trackArtist(track)))
 	if artistNorm == "" {
-		return true
+		return false
 	}
 	for _, candidateArtist := range trackInfo.Artists {
 		if strings.ToLower(onlyLettersAndDigits(candidateArtist.Name)) == artistNorm {

@@ -115,9 +115,12 @@ func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyricsCandid
 }
 
 type petitlyricsPayload struct {
-	LyricsType string `json:"-"`
 	LyricsData string `xml:"lyricsData"`
 }
+
+// petitlyricsStatusOK is the only status that carries song data; every other
+// non-empty status is a provider failure (see fetchPetitLyricsTier).
+const petitlyricsStatusOK = "00000000"
 
 // fetchPetitLyricsTier performs one form POST of the GetPetitLyricsData API.
 func (p *lyricsProvider) fetchPetitLyricsTier(track lyrics.TrackInfo, tier string, deadline time.Time) (petitlyricsPayload, lookupHealth, error) {
@@ -158,13 +161,29 @@ func (p *lyricsProvider) fetchPetitLyricsTier(track lyrics.TrackInfo, tier strin
 	if err := xml.Unmarshal(response.Body, &envelope); err != nil {
 		return petitlyricsPayload{}, lookupDegraded, fmt.Errorf("decode PetitLyrics response: %w", err)
 	}
-	if strings.TrimSpace(envelope.Status) == "" || envelope.Status != "00000000" {
-		return petitlyricsPayload{}, lookupHealthy, nil
+	if status := strings.TrimSpace(envelope.Status); status != "" && status != petitlyricsStatusOK {
+		// Missing songs answer the success status with zero rows (verified
+		// against the live API), so any other status is a provider failure:
+		// degrade so the sweep retries instead of caching coverage.
+		return petitlyricsPayload{}, lookupDegraded, fmt.Errorf("PetitLyrics status %s", status)
 	}
-	if len(envelope.Songs.Songs) == 0 {
-		return petitlyricsPayload{}, lookupHealthy, nil
+	// Each row carries its own metadata: the first row is not automatically
+	// the requested song, and a row of a different tier would be decoded with
+	// the wrong parser. Accept only the row that answers this lookup.
+	titleTokens := normalizedLyricTokens(track.Title)
+	for _, song := range envelope.Songs.Songs {
+		if rowTier := strings.TrimSpace(song.LyricsType); rowTier != "" && rowTier != tier {
+			continue
+		}
+		if rowTitle := strings.TrimSpace(song.Title); rowTitle != "" && !lyricTokensMatch(normalizedLyricTokens(rowTitle), titleTokens) {
+			continue
+		}
+		if rowArtist := strings.TrimSpace(song.Artist); rowArtist != "" && !artistTokensMatch(rowArtist, artist) {
+			continue
+		}
+		return petitlyricsPayload{LyricsData: song.LyricsData}, lookupHealthy, nil
 	}
-	return petitlyricsPayload{LyricsData: envelope.Songs.Songs[0].LyricsData}, lookupHealthy, nil
+	return petitlyricsPayload{}, lookupHealthy, nil
 }
 
 type petitlyricsEnvelope struct {
@@ -177,7 +196,10 @@ type petitlyricsSong struct {
 }
 
 type petitlyricsSongEntry struct {
+	LyricsType string `xml:"lyricsType"`
 	LyricsData string `xml:"lyricsData"`
+	Title      string `xml:"title"`
+	Artist     string `xml:"artist"`
 }
 
 // appleLyricallyArtistMatches accepts any collaborating artist entry whose

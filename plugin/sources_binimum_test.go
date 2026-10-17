@@ -19,6 +19,23 @@ func binimumFixture(t *testing.T) []byte {
 	return raw
 }
 
+func TestArtistMatcherFailsClosedWithoutNameTokens(t *testing.T) {
+	t.Parallel()
+
+	// A name that collapses to no alphanumerics identifies nothing: it must
+	// not alias every returned artist (an empty collaborator split used to
+	// accept any row).
+	if artistTokensMatch("Oasis", "???") {
+		t.Fatal("a punctuation-only wanted artist matched Oasis")
+	}
+	if artistTokensMatch("???", "???") {
+		t.Fatal("two punctuation-only artists collapsed into a match")
+	}
+	if artistTokensMatch("???", "Oasis") {
+		t.Fatal("a punctuation-only returned artist matched Oasis")
+	}
+}
+
 func TestBinimumCandidates_PreservesTTML(t *testing.T) {
 	t.Parallel()
 

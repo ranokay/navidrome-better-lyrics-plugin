@@ -13,6 +13,25 @@ const neteaseSearchBody = `{"result":{"songs":[{"id":17822787,"name":"Live Forev
 const neteaseLrcBody = `{"lrc":{"lyric":"{\"t\":0,\"c\":[{\"tx\":\"作词: \"},{\"tx\":\"Noel Gallagher\"}]}\n[00:11.93]Maybe\n"}, "tlyric":{}, "yrc":{}}`
 const neteaseYrcBody = `{"lrc":{"lyric":""}, "yrc":{"lyric":"[10000,3000](10200,500,0)Hey (10700,500,0)there\n"}}`
 
+func TestLunaPickFailsClosedWithoutNormalizedIdentity(t *testing.T) {
+	t.Parallel()
+
+	// The collapsed-containment gate treats an empty needle as matching every
+	// row (strings.Contains(x, "") is true), and an artist that collapses to
+	// nothing used to accept any name.
+	row := lunaGroupDatum{Entity: struct {
+		Track lunaSearchTrack `json:"track"`
+	}{Track: lunaSearchTrack{ID: "42", Name: "Live Forever", Artists: []lunaSearchArtist{{Name: "Oasis"}}, Duration: 240000}}}
+	groups := []lunaResultGroup{{Data: []lunaGroupDatum{row}}}
+
+	if id, found := pickLunaTrack(groups, lyrics.TrackInfo{Title: "🎵", Artist: "Oasis"}); found {
+		t.Fatalf("pickLunaTrack accepted %q for an unverifiable title", id)
+	}
+	if id, found := pickLunaTrack(groups, lyrics.TrackInfo{Title: "Live Forever", Artist: "???"}); found {
+		t.Fatalf("pickLunaTrack accepted %q for an unverifiable artist", id)
+	}
+}
+
 func TestNetEaseCandidates_WordsFromYRC(t *testing.T) {
 	t.Parallel()
 

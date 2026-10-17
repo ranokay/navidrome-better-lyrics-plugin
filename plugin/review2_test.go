@@ -2377,6 +2377,54 @@ func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
 	}
 }
 
+func TestSweepContinuationDoneCheckUsesFullOrder(t *testing.T) {
+	t.Parallel()
+
+	// A continuation that completes the full order writes the done marker for
+	// the full configured order; the completion check in OnTaskExecute must
+	// use that same order, otherwise it releases the pending marker as if
+	// nothing had been covered.
+	cache := newFakeLyricsCache()
+	head := new(int)
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		{ID: "head", Display: "head", Hosts: []string{"head.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*head++
+				time.Sleep(20 * time.Millisecond)
+				return nil, lookupHealthy, nil
+			}},
+		sweepSource("tail", new(int), true, nil),
+	}, func(lyrics.TrackInfo) error { return nil })
+	provider.sweepBudget = 2 * time.Millisecond
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	status, deferredIDs := provider.runSweepSources(track, nil)
+	if len(deferredIDs) != 1 || deferredIDs[0] != "tail" {
+		t.Fatalf("status/deferred = %q/%v, want the tail source deferred", status, deferredIDs)
+	}
+
+	provider.sweepBudget = 0
+	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: []string{"tail"}})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := provider.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, Payload: payload}); err != nil {
+		t.Fatalf("OnTaskExecute() error = %v, want nil", err)
+	}
+
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
+		t.Fatal("the continuation must complete the full-order done marker")
+	}
+	trackKey, _ := lyricsTrackKey(track)
+	raw, exists, _ := cache.Get(provider.sweepPendingMarkerKey(track, trackKey))
+	if !exists {
+		t.Fatal("pending marker vanished although the full-order sweep is done")
+	}
+	if string(raw) == "release" {
+		t.Fatal("OnTaskExecute released the pending marker although the done marker exists")
+	}
+}
+
 func TestDurationGatesSkipWithoutDuration(t *testing.T) {
 	t.Parallel()
 

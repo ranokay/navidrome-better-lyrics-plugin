@@ -10,6 +10,21 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
+func TestAMLLPickFailsClosedWithoutTitleTokens(t *testing.T) {
+	t.Parallel()
+
+	// A request title that collapses to no alphanumerics (emoji-only, say)
+	// cannot verify any row: accepting one serves and caches an unrelated
+	// song.
+	items := []amllItem{{MusicNames: []string{"Live Forever"}, ArtistNames: []string{"Oasis"}}}
+	if _, found := pickAMLLItem(items, lyrics.TrackInfo{Title: "🎵", Artist: "Oasis"}); found {
+		t.Fatal("pickAMLLItem accepted a row for a title with no verifiable tokens")
+	}
+	if amllNamesMatch([]string{"Live Forever"}, nil) {
+		t.Fatal("amllNamesMatch accepted an empty wanted token list")
+	}
+}
+
 func amllFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/amll/" + name)
