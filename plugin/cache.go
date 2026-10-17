@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,7 @@ const (
 	defaultRateLimitCooldown       = 30 * time.Second
 	defaultUnisonRateLimitCooldown = 60 * time.Second
 	maxRateLimitCooldown           = time.Hour
+	credentialSaltKey              = "credential-salt:v1"
 	lyricsWinnerCacheKeyPrefix     = "lyrics:v4:winner:"
 	lyricsSourceCacheKeyPrefix     = "lyrics:v4:source:"
 	betterLyricsGlobalCooldownKey  = "rate-limit:better-lyrics:global:v3"
@@ -144,6 +146,10 @@ type cachedLyricsEnvelope struct {
 	Response      lyrics.GetLyricsResponse `json:"response"`
 	SweepComplete bool                     `json:"sweepComplete,omitempty"`
 	Credentials   string                   `json:"credentials,omitempty"`
+	// ExpiresAt is the write-time expiry (unix seconds) so readers can bound
+	// derived TTLs by the entry's remaining life (Devin). Entries without it
+	// are treated as unsafely-aged and refreshed.
+	ExpiresAt int64 `json:"expiresAt,omitempty"`
 }
 
 // winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.
@@ -166,20 +172,29 @@ func sourceCacheTTLSeconds(quality lyricTimingQuality) int64 {
 }
 
 func (p *lyricsProvider) readCachedCandidate(key string) (lyricsCandidate, bool) {
+	candidate, _, ok := p.readCachedCandidateWithExpiry(key)
+	return candidate, ok
+}
+
+// readCachedCandidateWithExpiry also returns the write-time expiry so callers
+// that derive their own TTLs (the sweep's marker bounds) can use the REMAINING
+// lifetime instead of the original one (Devin). Zero means the entry predates
+// expiry stamping and cannot be trusted for derived TTLs.
+func (p *lyricsProvider) readCachedCandidateWithExpiry(key string) (lyricsCandidate, int64, bool) {
 	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
-		return lyricsCandidate{}, false
+		return lyricsCandidate{}, 0, false
 	}
 	var envelope cachedLyricsEnvelope
 	if err := json.Unmarshal(value, &envelope); err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache entry decode failed: %v", err))
-		return lyricsCandidate{}, false
+		return lyricsCandidate{}, 0, false
 	}
-	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, true
+	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, envelope.ExpiresAt, true
 }
 
 func (p *lyricsProvider) storeCandidateValue(key string, candidate lyricsCandidate, ttl int64) bool {
-	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.quality, Response: candidate.response})
+	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.quality, Response: candidate.response, ExpiresAt: p.now().Add(time.Duration(ttl) * time.Second).Unix()})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return false
@@ -223,11 +238,38 @@ func (p *lyricsProvider) readCachedSourceCandidate(track lyrics.TrackInfo, sourc
 // as a present=false-but-covered sentinel.
 const missingCoverageEnvelope = `{"quality":0}`
 
-// cacheCredentialPepper keys the credential-space HMAC. The namespace needs a
-// stable, non-leaking fingerprint of secret material; a keyed MAC is the
-// standard construction for that (and coded caching of secrets through a raw
-// hash is flagged as weak-password storage).
+// cacheCredentialPepper is the fallback HMAC key used only when the KV store
+// cannot hold the per-installation salt.
 var cacheCredentialPepper = []byte("navidrome-better-lyrics/credential-fingerprint/v1")
+
+// credentialSaltTTL keeps the salt effectively permanent while still riding
+// the TTL API.
+const credentialSaltTTL = int64(10 * 365 * 24 * time.Hour / time.Second)
+
+// credentialSalt returns the per-installation HMAC salt, minting one on first
+// use and persisting it in the plugin KV store. A public constant would let
+// anyone who reads cached entries test credential guesses offline (Devin,
+// CWE-760); a per-installation salt removes that verifiability. The constant
+// remains only as a last resort so fingerprinting never blocks lyrics when the
+// store refuses writes.
+func (p *lyricsProvider) credentialSalt() []byte {
+	if len(p.credentialSaltBytes) >= 16 {
+		return p.credentialSaltBytes
+	}
+	if raw, exists, _ := p.cache.Get(credentialSaltKey); exists && len(raw) >= 16 {
+		p.credentialSaltBytes = raw
+		return raw
+	}
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return cacheCredentialPepper
+	}
+	p.credentialSaltBytes = salt
+	if p.cache.SetWithTTL(credentialSaltKey, salt, credentialSaltTTL) != nil {
+		return cacheCredentialPepper
+	}
+	return salt
+}
 
 // lyricsCredentialsFingerprint distinguishes negative coverage stamped under
 // different Better Lyrics API key / Musixmatch token configurations: adding or
@@ -235,7 +277,7 @@ var cacheCredentialPepper = []byte("navidrome-better-lyrics/credential-fingerpri
 // anonymously (Codex).
 func (p *lyricsProvider) lyricsCredentialsFingerprint() string {
 	config := readProviderConfig(p.configLookup)
-	mac := hmac.New(sha256.New, cacheCredentialPepper)
+	mac := hmac.New(sha256.New, p.credentialSalt())
 	mac.Write([]byte(config.BetterLyricsAPIKey))
 	mac.Write([]byte{0})
 	mac.Write([]byte(config.MusixmatchUserToken))
@@ -260,7 +302,14 @@ func (p *lyricsProvider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string
 	if !ok {
 		return false
 	}
-	if p.cache.SetWithTTL(key, []byte(missingCoverageEnvelope), unsyncedLyricsCacheTTLSeconds) != nil {
+	value, err := json.Marshal(cachedLyricsEnvelope{
+		Quality:   timingUnsynced,
+		ExpiresAt: p.now().Add(time.Duration(unsyncedLyricsCacheTTLSeconds) * time.Second).Unix(),
+	})
+	if err != nil {
+		return false
+	}
+	if p.cache.SetWithTTL(key, value, unsyncedLyricsCacheTTLSeconds) != nil {
 		return false
 	}
 	// An oversized/evicted write must not count as coverage.
@@ -272,14 +321,24 @@ func (p *lyricsProvider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string
 // source: a positive candidate first, otherwise the credential-namespaced
 // negative entry the sweep and stage-one misses persist.
 func (p *lyricsProvider) readCachedSourceCoverage(track lyrics.TrackInfo, sourceID string) (lyricsCandidate, bool) {
-	if candidate, ok := p.readCachedSourceCandidate(track, sourceID); ok {
-		return candidate, true
+	candidate, _, ok := p.readCachedSourceCoverageWithExpiry(track, sourceID)
+	return candidate, ok
+}
+
+// readCachedSourceCoverageWithExpiry reads whichever per-source entry exists
+// (positive first, then the credential-namespaced miss) together with its
+// write-time expiry for remaining-lifetime bounds.
+func (p *lyricsProvider) readCachedSourceCoverageWithExpiry(track lyrics.TrackInfo, sourceID string) (lyricsCandidate, int64, bool) {
+	if key, ok := lyricsCacheKeyForSource(track, sourceID); ok {
+		if candidate, expiresAt, found := p.readCachedCandidateWithExpiry(key); found {
+			return candidate, expiresAt, true
+		}
 	}
 	key, ok := p.sourceMissKey(track, sourceID)
 	if !ok {
-		return lyricsCandidate{}, false
+		return lyricsCandidate{}, 0, false
 	}
-	return p.readCachedCandidate(key)
+	return p.readCachedCandidateWithExpiry(key)
 }
 
 // cacheSourceCandidate persists one per-source result and reports whether the
@@ -343,6 +402,7 @@ func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSourc
 		Response:      candidate.response,
 		SweepComplete: sweepComplete,
 		Credentials:   p.lyricsCredentialsFingerprint(),
+		ExpiresAt:     p.now().Add(time.Duration(winnerCacheTTLSeconds(candidate.quality)) * time.Second).Unix(),
 	})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
@@ -356,7 +416,11 @@ func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyr
 	if !ok {
 		return
 	}
-	value, err := json.Marshal(cachedLyricsEnvelope{SweepComplete: sweepComplete, Credentials: p.lyricsCredentialsFingerprint()})
+	value, err := json.Marshal(cachedLyricsEnvelope{
+		SweepComplete: sweepComplete,
+		Credentials:   p.lyricsCredentialsFingerprint(),
+		ExpiresAt:     p.now().Add(time.Duration(negativeLyricsCacheTTLSeconds) * time.Second).Unix(),
+	})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return

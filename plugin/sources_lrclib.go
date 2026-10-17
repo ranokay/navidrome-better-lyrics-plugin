@@ -29,12 +29,18 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 		return nil, health, err
 	}
 	if len(response) > 0 {
-		candidate, candErr := lrclibCandidate(p, response)
-		if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
-			return nil, lookupDegraded, candErr
-		}
-		if candErr == nil && candidate.present() {
-			return []lyricsCandidate{candidate}, health, nil
+		// The exact endpoint uses fuzzy metadata too: its reply is not
+		// guaranteed to describe the requested recording, so the returned
+		// identity must match before the record can win (Devin: an unrelated
+		// same-shape record would otherwise become the cached winner).
+		if lrclibRecordMatches(response, track) {
+			candidate, candErr := lrclibCandidate(p, response)
+			if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
+				return nil, lookupDegraded, candErr
+			}
+			if candErr == nil && candidate.present() {
+				return []lyricsCandidate{candidate}, health, nil
+			}
 		}
 	}
 	// An unusable exact match (instrumental, empty) is a miss rather than a
@@ -47,6 +53,11 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	if err != nil {
 		return nil, health, err
 	}
+	if len(searchBody) == 0 {
+		// The search endpoint answered a miss (404) with no body: decoding nil
+		// would degrade a clean miss (spotted while wiring the metadata gate).
+		return nil, health, nil
+	}
 
 	var results []lrclibRecord
 	if err := json.Unmarshal(searchBody, &results); err != nil {
@@ -57,6 +68,11 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, result := range results {
+		// Fuzzy search rows only qualify when their identity matches; the
+		// duration gate then ranks the qualifying candidates (Devin).
+		if !lrclibRecordMetadataMatches(result, track) {
+			continue
+		}
 		delta := int64(math.Abs(float64(int64(math.Round(result.Duration)) - target)))
 		if delta > 2 {
 			continue
@@ -174,12 +190,70 @@ func lrclibGetURL(track lyrics.TrackInfo) (string, bool) {
 
 // lrclibRecord keeps the fields used for scoring and re-serialization.
 type lrclibRecord struct {
+	TrackName    string  `json:"trackName"`
+	ArtistName   string  `json:"artistName"`
 	Duration     float64 `json:"duration"`
 	Instrumental bool    `json:"instrumental"`
 	HasWordSync  bool    `json:"hasWordSync"`
 	PlainLyrics  string  `json:"plainLyrics"`
 	SyncedLyrics string  `json:"syncedLyrics"`
 	LyricsFile   string  `json:"lyricsfile"`
+}
+
+// lrclibRecordMatches gates a raw /api/get payload on the returned identity
+// and duration before its lyrics may win.
+func lrclibRecordMatches(record []byte, track lyrics.TrackInfo) bool {
+	var payload struct {
+		TrackName  string  `json:"trackName"`
+		ArtistName string  `json:"artistName"`
+		Duration   float64 `json:"duration"`
+	}
+	if err := json.Unmarshal(record, &payload); err != nil {
+		return false
+	}
+	if !lrclibMetadataMatches(payload.TrackName, payload.ArtistName, track) {
+		return false
+	}
+	return lrclibDurationsClose(payload.Duration, track)
+}
+
+// lrclibRecordMetadataMatches is the search-row variant of the identity gate.
+func lrclibRecordMetadataMatches(record lrclibRecord, track lyrics.TrackInfo) bool {
+	return lrclibMetadataMatches(record.TrackName, record.ArtistName, track)
+}
+
+func lrclibMetadataMatches(trackName, artistName string, track lyrics.TrackInfo) bool {
+	if strings.TrimSpace(trackName) == "" || strings.TrimSpace(artistName) == "" {
+		// Records without identity data cannot be trusted to describe the
+		// request; fall through to broader search instead.
+		return false
+	}
+	return lyricTokensMatch(normalizedLyricTokens(trackName), normalizedLyricTokens(track.Title)) &&
+		lrclibArtistMatches(artistName, track)
+}
+
+// lrclibArtistMatches accepts any of the record's collaborating artists when
+// one matches the requested artist tokens.
+func lrclibArtistMatches(artistName string, track lyrics.TrackInfo) bool {
+	wanted := normalizedLyricTokens(trackArtist(track))
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, name := range strings.Split(artistName, " & ") {
+		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+// lrclibDurationsClose keeps the historical two-second tolerance.
+func lrclibDurationsClose(recordSeconds float64, track lyrics.TrackInfo) bool {
+	if track.Duration <= 0 {
+		return true
+	}
+	delta := math.Abs(recordSeconds - float64(track.Duration))
+	return delta <= 2
 }
 
 func lrclibHeaders() map[string]string {

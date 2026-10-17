@@ -69,9 +69,9 @@ func TestLRCLibCandidates_ExactInstrumentalFallsBackToSearch(t *testing.T) {
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		if strings.Contains(request.URL, "/api/get") {
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":10209922,"instrumental":true,"hasWordSync":false,"plainLyrics":null,"syncedLyrics":null,"lyricsfile":""}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":10209922,"trackName":"Live Forever","artistName":"Oasis","duration":280,"instrumental":true,"hasWordSync":false,"plainLyrics":null,"syncedLyrics":null,"lyricsfile":""}`)}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"instrumental":false,"hasWordSync":false,"duration":280,"plainLyrics":"plain rows","syncedLyrics":"[00:01.00]synced","lyricsfile":""}]`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"trackName":"Live Forever","artistName":"Oasis","instrumental":false,"hasWordSync":false,"duration":280,"plainLyrics":"plain rows","syncedLyrics":"[00:01.00]synced","lyricsfile":""}]`)}, nil
 	})
 
 	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{
@@ -237,7 +237,7 @@ func TestMusixmatchCandidates_EnvelopeStatusDropsStaleToken(t *testing.T) {
 	}
 
 	macroBody := `{"message":{"header":{"status_code":200},"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":401}}}}}}`
-	validSearch := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`
+	validSearch := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`
 	cache2 := newFakeLyricsCache()
 	provider2 := providerForCatalogWithCache(facade(validSearch, macroBody), cache2, time.Now, "musixmatch")
 	candidates, _, err = fetchMusixmatchLyricsCandidates(provider2, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}, time.Now().Add(stageOneLookupBudget))

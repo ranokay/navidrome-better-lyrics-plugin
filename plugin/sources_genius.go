@@ -154,31 +154,97 @@ func geniusPageHeaders() map[string]string {
 	}
 }
 
-// geniusLyricsText extracts the plain text from the song page: the lyric body
-// rides the Lyrics__Root segment between the first lyric container and the
-// footer. Page chrome (the contributors/language/song-bio header block and
-// the editor rails) is removed by its HTML elements with a balanced scan —
-// never by line-text substrings, which would eat real lyric lines ("Genius
-// of love" — Greptile). Line breaks come from <br> and block closes; entities
-// decode; the embed's escaped angular brackets unfold.
+// geniusLyricsText extracts the plain text of the song's lyric sections: the
+// leaf `data-lyrics-container` elements inside the lyrics root. Extracting the
+// containers themselves (rather than rendering everything between the first
+// container and the footer) keeps recommendation sidebars and other page
+// chrome out of the body (Devin), while the header container — whose first
+// line is the contributors chip — is dropped wholesale.
 func geniusLyricsText(page []byte, title string) string {
 	document := string(page)
-	start := strings.Index(document, `<div data-lyrics-container="true"`)
-	if start < 0 {
-		return ""
+	ranges := geniusLeafContainers(document)
+	sections := []string{}
+	for _, bounds := range ranges {
+		// The contributors/language/song-bio header rides inside the first
+		// container's subtree: strip those elements before rendering.
+		fragment := removeGeniusChromeByElements(document[bounds[0]:bounds[1]])
+		lines := geniusFragmentLines(fragment)
+		if len(lines) == 0 {
+			continue
+		}
+		if geniusContainerChrome(lines[0]) {
+			continue
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
 	}
-	segment := document[start:]
-	if marker := strings.Index(segment, "LyricsFooter"); marker > 0 {
-		segment = segment[:marker]
+	body := strings.Join(sections, "\n\n")
+	if title != "" {
+		header := title + " Lyrics"
+		kept := []string{}
+		for _, line := range strings.Split(body, "\n") {
+			if strings.TrimSpace(line) == header {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		body = strings.Join(kept, "\n")
 	}
-	segment = removeGeniusChromeByElements(segment)
+	return strings.TrimSpace(body)
+}
 
-	text := geniusScriptPattern.ReplaceAllString(segment, "")
+// geniusLeafContainers returns the byte ranges of the innermost lyric
+// containers: pages nest containers, and only the leaves carry one section's
+// text each.
+func geniusLeafContainers(document string) [][2]int {
+	all := [][2]int{}
+	search := 0
+	for {
+		index := strings.Index(document[search:], "<div ")
+		if index < 0 {
+			break
+		}
+		start := search + index
+		tagEnd := strings.IndexByte(document[start:], '>')
+		if tagEnd < 0 {
+			break
+		}
+		if strings.Contains(document[start:start+tagEnd+1], `data-lyrics-container="true"`) {
+			end := findGeniusElementEnd(document, start)
+			all = append(all, [2]int{start, end})
+		}
+		search = start + len("<div ")
+	}
+	leaves := [][2]int{}
+	for _, outer := range all {
+		nested := false
+		for _, inner := range all {
+			if inner[0] > outer[0] && inner[0] < outer[1] {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			leaves = append(leaves, outer)
+		}
+	}
+	return leaves
+}
+
+// geniusContainerChrome reports a container that is page chrome, not lyrics:
+// the contributors/language header and the read-more song-bio rail.
+func geniusContainerChrome(firstLine string) bool {
+	return strings.Contains(firstLine, "Contributors") || strings.Contains(firstLine, "Read More")
+}
+
+// geniusFragmentLines renders one markup fragment as plain text lines:
+// line breaks come from <br> and block closes, entities decode, the embed's
+// escaped angular brackets unfold, and blank lines drop.
+func geniusFragmentLines(fragment string) []string {
+	text := geniusScriptPattern.ReplaceAllString(fragment, "")
 	text = geniusBreakPattern.ReplaceAllString(text, "\n")
 	text = geniusBlockClosePattern.ReplaceAllString(text, "\n")
 	text = geniusTagPattern.ReplaceAllString(text, "")
 	text = html.UnescapeString(text)
-
 	lines := []string{}
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
@@ -187,26 +253,20 @@ func geniusLyricsText(page []byte, title string) string {
 		if line == "" {
 			continue
 		}
-		if title != "" && line == title+" Lyrics" {
-			continue
-		}
 		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-// geniusChromeClassName walks those containers whose entire subgroup is page
-// chrome: the contributors/language/song-bio header and the editor rails. The
-// footer is excluded from the cut list because the lyrics slice already ends
-// at the footer marker; anywhere else the Balanced scan keeps real lyric
-// words inside intact. The matched anchor must live inside a `<div ...>`
-// opening tag, so `<aside>`-hosted chrome never eats other elements.
+// geniusChromePattern matches the class attributes of the pure-chrome
+// containers: the contributors/language header, the song-bio expansion, and
+// the editor rails. Removal is element-scoped (balanced scan) so real lyric
+// words are never filtered by substring (Greptile).
 var geniusChromePattern = regexp.MustCompile(`class="[^"]*(?:LyricsHeader__Container|SongBioPreview|LyricsEdit-desktop|LyricsEditExplainer|ContributorsCreditSong)`)
 
 // removeGeniusChromeByElements cuts every geniusChromePattern `<div>` subtree
 // with a balanced scan so the surrounding lyrics keep their markup order. The
-// scan walks open/close tags with a name stack; self-closing and void tags
-// skip. A mis-shapen page loses at most a bounded tail instead of looping.
+// matched anchor must live inside a `<div ...>` opening tag.
 func removeGeniusChromeByElements(document string) string {
 	searchFrom := 0
 	for {
@@ -215,14 +275,17 @@ func removeGeniusChromeByElements(document string) string {
 			return document
 		}
 		end := findGeniusElementEnd(document, loc)
+		if end <= loc {
+			return document
+		}
 		document = document[:loc] + document[end:]
 		searchFrom = loc
 	}
 }
 
 // findGeniusChromeDiv locates the next chrome anchor whose owning tag is an
-// opening `<div ...>`; anchors that ride non-div elements (an `<aside class>`
-// footer forscénario) get skipped without cutting.
+// opening `<div ...>`; anchors that ride other elements get skipped without
+// cutting.
 func findGeniusChromeDiv(document string, from int) int {
 	for search := from; search <= len(document); {
 		anchor := geniusChromePattern.FindStringSubmatchIndex(document[search:])
@@ -240,14 +303,6 @@ func findGeniusChromeDiv(document string, from int) int {
 		search = absStart + 1
 	}
 	return -1
-}
-
-var geniusTokenPattern = regexp.MustCompile(`<(/?)([a-zA-Z0-9]+)[^>]*?(/?)>`)
-
-var geniusVoidTags = map[string]bool{
-	"img": true, "br": true, "hr": true, "input": true,
-	"meta": true, "link": true, "source": true, "circle": true,
-	"path": true, "rect": true, "line": true, "use": true,
 }
 
 // findGeniusElementEnd returns the index just past the `</div>` that closes

@@ -170,12 +170,18 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		if source.Fetch == nil {
 			continue
 		}
-		if cachedCandidate, ok := p.readCachedSourceCoverage(track, source.ID); ok {
-			skipped++
-			if covered := cacheTTLForCoveredCandidate(cachedCandidate); covered > 0 && covered < coverageTTL {
-				coverageTTL = covered
+		if _, expiresAt, ok := p.readCachedSourceCoverageWithExpiry(track, source.ID); ok {
+			remaining := expiresAt - p.now().Unix()
+			if expiresAt > 0 && remaining > 0 {
+				skipped++
+				if remaining < coverageTTL {
+					coverageTTL = remaining
+				}
+				continue
 			}
-			continue
+			// Entries without a trustworthy remaining lifetime (pre-stamp
+			// writes) refetch so the pass leaves stamped coverage behind
+			// instead of letting a marker outlive them (Devin).
 		}
 		if cooledDown := p.sourceInCooldown(source); cooledDown {
 			// A cooled-down source is not covered by this pass, so the pass
@@ -274,15 +280,20 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		if allowedSet == nil || source.Fetch == nil || allowedSet[source.ID] {
 			continue
 		}
-		cachedSibling, ok := p.readCachedSourceCoverage(track, source.ID)
-		if !ok {
+		_, siblingExpiry, ok := p.readCachedSourceCoverageWithExpiry(track, source.ID)
+		remaining := siblingExpiry - p.now().Unix()
+		if !ok || siblingExpiry <= 0 || remaining <= 0 {
+			// A sibling without a trustworthy remaining lifetime cannot be
+			// covered by this marker; the next full sweep restamps it
+			// (Devin).
 			coveredOthers = false
 			break
 		}
-		// A cached sibling's TTL also bounds the marker, so a synchronized
-		// continuation cannot outlive a plain sibling's shorter entry (Codex).
-		if covered := cacheTTLForCoveredCandidate(cachedSibling); covered > 0 && covered < coverageTTL {
-			coverageTTL = covered
+		// A cached sibling's REMAINING life bounds the marker, so a
+		// synchronized continuation cannot outlive a plain sibling's shorter
+		// entry (Codex/Devin).
+		if remaining < coverageTTL {
+			coverageTTL = remaining
 		}
 	}
 	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && coveredOthers && cached+missed+skipped == implemented && implemented > 0 {
@@ -363,19 +374,28 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if !ok {
 		return false
 	}
-	if _, exists, _ := p.cache.Get(sweepMarkerPrefix + trackKey); exists {
+	markerKey := p.sweepPendingMarkerKey(track, trackKey)
+	if _, exists, _ := p.cache.Get(markerKey); exists {
 		return false
 	}
-	if err := p.cache.SetWithTTL(sweepMarkerPrefix+trackKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL); err != nil {
+	if err := p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL); err != nil {
 		// A broken cache must not block lyrics: skip the sweep this round.
 		return false
 	}
 	if err := p.enqueueSweep(track); err != nil {
 		// Release the spot early with a 1-second TTL so the next lookup can retry
 		// the sweep rather than waiting out the whole dedupe window.
-		_ = p.cache.SetWithTTL(sweepMarkerPrefix+trackKey, []byte("release"), 1)
+		_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
 		logCacheDebug(fmt.Sprintf("sweep enqueue failed: %v", err))
 		return false
 	}
 	return true
+}
+
+// sweepPendingMarkerKey namespaces the dedupe marker by source order and
+// credential state: reconfiguring sources must not delay a fresh sweep for
+// the old marker window (Devin).
+func (p *lyricsProvider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
+	digest := sha256.Sum256([]byte(strings.Join(sourceIDs(p.activeSources()), "|")))
+	return fmt.Sprintf("%s%s:%x:%s", sweepMarkerPrefix, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)
 }

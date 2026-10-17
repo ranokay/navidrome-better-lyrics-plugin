@@ -97,7 +97,7 @@ func TestPetitLyricsCandidates_LSYBinarySkipsToPlain(t *testing.T) {
 func TestLyricallyCandidates_ITunesSearchThenMirror(t *testing.T) {
 	t.Parallel()
 
-	itunesBody := `{"resultCount":2,"results":[{"trackId":1,"trackName":"Live Forever","trackTimeMillis":278000},{"trackId":2,"trackName":"Live Forever (Other)","trackTimeMillis":999000}]}`
+	itunesBody := `{"resultCount":2,"results":[{"trackId":1,"trackName":"Live Forever","artistName":"Oasis","trackTimeMillis":278000},{"trackId":2,"trackName":"Live Forever (Other)","artistName":"Artist","trackTimeMillis":999000}]}`
 	mirrorBody := `{"type":"cache","lrc":"[00:01.00]plain","elrc":"[00:01.00]<00:01.10>maybe<00:01.90>line","elrcMultiPerson":"","ttmlContent":"<tt></tt>","plain":"maybe","source":"local_cache","cached_at":"2026-10-17T00:00:00Z"}`
 
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -133,7 +133,7 @@ func TestLyricallyCandidates_ITunesSearchThenMirror(t *testing.T) {
 func TestLyricallyCandidates_TTMLFallbackWhenNoELRC(t *testing.T) {
 	t.Parallel()
 
-	itunesBody := `{"resultCount":1,"results":[{"trackId":9,"trackName":"Song","trackTimeMillis":200000}]}`
+	itunesBody := `{"resultCount":1,"results":[{"trackId":9,"trackName":"Song","artistName":"Artist","trackTimeMillis":200000}]}`
 	mirrorBody := `{"ttmlContent":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Line\"><p begin=\"1\">line</p></tt>"}`
 
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -156,7 +156,7 @@ func TestLyricallyCandidates_DurationMissIsClean(t *testing.T) {
 	t.Parallel()
 
 	provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"resultCount":1,"results":[{"trackId":3,"trackName":"Song","trackTimeMillis":250000}]}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"resultCount":1,"results":[{"trackId":3,"trackName":"Song","artistName":"Artist","trackTimeMillis":250000}]}`)}, nil
 	})
 
 	candidates, health, err := fetchLyricallyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 99}, time.Now().Add(stageOneLookupBudget))

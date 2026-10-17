@@ -275,13 +275,17 @@ func TestLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
 
 	cache := &usageAwareLyricsCache{used: lyricsCacheMaxBytes - lyricsCacheReservedBytes}
 	provider := newLyricsProviderWithDependencies(nil, cache, time.Now)
+	// Mint the credential salt first: it is installation metadata, not
+	// lyrics data, and the headroom rule governs lyric writes only.
+	_ = provider.lyricsCredentialsFingerprint()
+	before := cache.sets
 	provider.cacheWinner(
 		lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 		[]lyricsSource{{ID: "one"}},
 		newLyricsCandidate(lyrics.LyricsText{Text: "lyrics"}, "Unison", "plain"),
 		false,
 	)
-	if cache.sets != 0 {
-		t.Fatalf("cache writes = %d, want 0 when reserved headroom is reached", cache.sets)
+	if written := cache.sets - before; written != 0 {
+		t.Fatalf("cache writes = %d, want 0 when reserved headroom is reached", written)
 	}
 }

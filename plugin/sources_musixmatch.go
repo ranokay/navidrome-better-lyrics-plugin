@@ -326,16 +326,26 @@ func musixmatchMacroURL(trackID, token string) (string, bool) {
 // pickMusixmatchTrack selects the duration-tightest candidate within 2 s.
 func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackInfo) (int64, bool) {
 	target := int64(math.Round(float64(track.Duration)))
+	titleTokens := normalizedLyricTokens(track.Title)
+	artistTokens := normalizedLyricTokens(trackArtist(track))
 	var best int64
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, candidate := range candidates {
 		id := int64(candidate.Track.TrackID)
-		duration := candidate.Track.Duration
-		delta := int64(math.Abs(float64(int64(duration) - target)))
 		if id <= 0 {
 			continue
 		}
+		// The fuzzy track.search rows only qualify when their identity
+		// matches; duration then ranks the qualifying rows (Devin).
+		if !lyricTokensMatch(normalizedLyricTokens(candidate.Track.TrackName), titleTokens) {
+			continue
+		}
+		if !musixmatchArtistsMatch(candidate.Track.ArtistName, artistTokens) {
+			continue
+		}
+		duration := candidate.Track.Duration
+		delta := int64(math.Abs(float64(int64(duration) - target)))
 		if delta > 2 {
 			continue
 		}
@@ -344,6 +354,20 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 		}
 	}
 	return best, found
+}
+
+// musixmatchArtistsMatch accepts any collaborating artist row whose collapsed
+// tokens match the requested artist.
+func musixmatchArtistsMatch(artistName string, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, name := range strings.Split(artistName, " & ") {
+		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+			return true
+		}
+	}
+	return false
 }
 
 // errMusixmatchTokenChallenge marks the anti-bot captcha/rejection the desktop
@@ -380,8 +404,10 @@ type musixmatchBody struct {
 
 type musixmatchTrackEntry struct {
 	Track struct {
-		TrackID  int64 `json:"track_id"`
-		Duration int64 `json:"track_length"` // seconds (live search wire name)
+		TrackID    int64  `json:"track_id"`
+		TrackName  string `json:"track_name"`
+		ArtistName string `json:"artist_name"`
+		Duration   int64  `json:"track_length"` // seconds (live search wire name)
 	} `json:"track"`
 }
 

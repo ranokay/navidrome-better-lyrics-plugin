@@ -133,6 +133,11 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 			!lyricTokensMatch(normalizedLyricTokens(candidateResult.ArtistName), artist) {
 			continue
 		}
+		// Provider-supplied URLs are untrusted: only the known lyrics hosts
+		// may be fetched through the server's HTTP client (Devin: SSRF).
+		if !binimumLyricsURLAllowed(candidateResult.LyricsURL) {
+			continue
+		}
 		delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
 		if delta > 2 {
 			continue
@@ -142,6 +147,22 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 		}
 	}
 	return best, found
+}
+
+// binimumLyricsURLAllowed gates provider-supplied lyrics URLs to the two
+// hosts the service actually serves files from, requiring HTTPS so a hostile
+// or compromised search response cannot redirect the server-side fetch at
+// arbitrary endpoints.
+func binimumLyricsURLAllowed(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "lrc.red", "lyrics-api.binimum.org":
+		return true
+	}
+	return false
 }
 
 func binimumSearchURL(track lyrics.TrackInfo) (string, bool) {

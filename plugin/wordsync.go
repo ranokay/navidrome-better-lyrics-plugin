@@ -301,7 +301,9 @@ func parseRichsync(body string) ([]timedLine, error) {
 			if wordEnd < wordStart+richsyncMinimumTokenMs {
 				wordEnd = wordStart + richsyncMinimumTokenMs
 			}
-			if strings.TrimSpace(token.Text) == "" {
+			// Musixmatch sometimes encodes a space as its own token; dropping
+			// whitespace-only tokens joins the surrounding words (Devin).
+			if token.Text == "" {
 				continue
 			}
 			line.Words = append(line.Words, timedWord{StartMs: wordStart, EndMs: wordEnd, Text: token.Text})

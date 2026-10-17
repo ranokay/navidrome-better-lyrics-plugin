@@ -163,6 +163,20 @@ type petitlyricsSongEntry struct {
 	LyricsData string `xml:"lyricsData"`
 }
 
+// appleLyricallyArtistMatches accepts any collaborating artist entry whose
+// collapsed tokens match the requested artist.
+func appleLyricallyArtistMatches(artistName string, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, name := range strings.Split(artistName, " & ") {
+		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+			return true
+		}
+	}
+	return false
+}
+
 func petitLyricsHeaders() map[string]string {
 	return map[string]string{
 		"Accept":     "text/xml, application/xml",
@@ -206,6 +220,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		Results []struct {
 			TrackID         int64  `json:"trackId"`
 			TrackName       string `json:"trackName"`
+			ArtistName      string `json:"artistName"`
 			TrackTimeMillis int64  `json:"trackTimeMillis"`
 		} `json:"results"`
 	}
@@ -213,11 +228,22 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		return nil, lookupDegraded, fmt.Errorf("decode Apple search response: %w", err)
 	}
 	target := int64(math.Round(float64(track.Duration) * 1000.0))
+	titleTokens := normalizedLyricTokens(track.Title)
+	artistTokens := normalizedLyricTokens(trackArtist(track))
 	var trackID int64
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, result := range search.Results {
 		if result.TrackID <= 0 {
+			continue
+		}
+		// Duration alone does not identify a recording: covers and live
+		// versions share runtimes, so the returned identity gates first and
+		// the duration ranks the survivors (Devin).
+		if !lyricTokensMatch(normalizedLyricTokens(result.TrackName), titleTokens) {
+			continue
+		}
+		if !appleLyricallyArtistMatches(result.ArtistName, artistTokens) {
 			continue
 		}
 		if delta := int64(math.Abs(float64(result.TrackTimeMillis - target))); delta <= 2000 && delta < bestDelta {

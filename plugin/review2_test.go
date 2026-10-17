@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestMusixmatchCandidates_TrackLengthDuration(t *testing.T) {
 		case strings.Contains(request.URL, "/ws/1.1/token.get"):
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
 		case strings.Contains(request.URL, "/ws/1.1/track.search"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`)}, nil
 		default:
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":404}},"track.subtitles.get":{"header":{"status_code":200},"body":{"subtitle_list":[{"subtitle_body":"[00:01.00]line"}]}}}}}}`)}, nil
 		}
@@ -172,7 +173,7 @@ func TestGetLyrics_CachedMissStillSchedulesIncompleteSweep(t *testing.T) {
 	// Simulate the dedupe marker expiring after a short sweep so the next
 	// lookup can retry: the negative winner must not block it (Codex).
 	trackKey, _ := lyricsTrackKey(track)
-	markerKey := sweepMarkerPrefix + trackKey
+	markerKey := provider.sweepPendingMarkerKey(track, trackKey)
 	if _, ok, _ := cache.Get(markerKey); !ok {
 		t.Fatal("expected the dedupe marker from the first sweep")
 	}
@@ -632,7 +633,7 @@ func TestMusixmatchEnvelopeStatusesClassified(t *testing.T) {
 
 	t.Run("rate-limited macro payloads degrade the lookup", func(t *testing.T) {
 		provider := newLyricsProvider(facade(
-			`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`,
+			`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`,
 			`{"message":{"header":{"status_code":200},"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":429}}}}}}`))
 		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
 		if err == nil || health == lookupHealthy {
@@ -1252,7 +1253,7 @@ func TestMusixmatchTokenRejectionsStaySkippable(t *testing.T) {
 	})
 
 	t.Run("rejected macro token stays skippable", func(t *testing.T) {
-		search := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`
+		search := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`
 		cache := newFakeLyricsCache()
 		provider := newLyricsProviderWithDeps(facade(t, search, `{"message":{"header":{"status_code":200},"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":401}}}}}}`), cache, time.Now, nil, nil)
 		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
@@ -1507,10 +1508,13 @@ func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
 		requests++
 		switch {
 		case strings.Contains(request.URL, "v1/search"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"rows":[
-				{"videoId":"AAAAiBz2lyThis","lengthText":{"runs":[{"text":"4:00"}]}},
-				{"videoId":"JGwWNGJdvx8","lengthText":{"runs":[{"text":"3:58"}]}}
-			]}}`)}, nil
+			// Realistic renderer shape: identity columns and arrays sit
+			// between the video id and the rendered length, and the first
+			// row is an unrelated song with the requested runtime (Devin).
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"sectionListRenderer":{"contents":[{"musicShelfRenderer":{"contents":[
+				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"overlay":{"musicItemThumbnailOverlayRenderer":{"content":{"playButton":{"watchEndpoint":{"videoId":"AAAAiBz2lyT"}}}}}}},
+				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"JGwWNGJdvx8"}}}
+			]}}]}}}`)}, nil
 		case strings.Contains(request.URL, "v1/next"):
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"queueContextParams":{},"contents":{"rows":[{"browseId":"MPLYt_SbJhx3gEYmp","title":{"runs":[]}}]}}`)}, nil
 		case strings.Contains(request.URL, "v1/browse"):
@@ -1656,5 +1660,249 @@ func TestGeniusKeepsLyricLinesWithChromeWords(t *testing.T) {
 		if strings.Contains(text, gone) {
 			t.Fatalf("text = %q, want the page chrome %q removed", text, gone)
 		}
+	}
+}
+
+func TestGeniusExcludesRecommendationSidebarText(t *testing.T) {
+	t.Parallel()
+
+	// The first container's byte range spans recommendation sidebars; only
+	// the lyric containers may contribute text (Devin).
+	page := []byte(`<!DOCTYPE html><html><body>
+	<div data-lyrics-container="true" class="Lyrics__Root">
+	<div class="RightSidebar__Container"><h2>You might also like</h2><p>Other Song</p></div>
+	<div data-lyrics-container="true" class="Lyrics__Container">[Verse 1]<br/>A club isn't the best place</div>
+	</div></body></html>`)
+	text := geniusLyricsText(page, "Shape of You")
+	if strings.Contains(text, "You might also like") || strings.Contains(text, "Other Song") {
+		t.Fatalf("text = %q, want recommendation chrome excluded", text)
+	}
+	if !strings.Contains(text, "A club isn't the best place") {
+		t.Fatalf("text = %q, want the lyric line kept", text)
+	}
+}
+
+func TestGeniusFixtureExcludesSidebar(t *testing.T) {
+	t.Parallel()
+
+	page, err := os.ReadFile("testdata/genius/page.html")
+	if err != nil {
+		t.Skipf("fixture unavailable: %v", err)
+	}
+	text := geniusLyricsText(page, "Shape of You")
+	if strings.Contains(text, "You might also like") {
+		t.Fatalf("text = %q, want the recommendation sidebar excluded from the real page", text[:160])
+	}
+	if !strings.Contains(text, "A club isn't") {
+		t.Fatalf("text = %q, want the real lyrics kept", text[:160])
+	}
+}
+
+func TestBininumRejectsHostileLyricsURLs(t *testing.T) {
+	t.Parallel()
+
+	// Provider-supplied URLs are untrusted: a hostile search row must never
+	// be fetched through the server's HTTP client (Devin SSRF).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "evil.example") {
+			t.Fatalf("hostile URL fetched: %s", request.URL)
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"track_name":"Song","artist_name":"Artist","duration":200,"lyricsUrl":"https://evil.example/steal.ttml"}]}`)}, nil
+	})
+
+	candidates, health, err := fetchBinimumLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss without fetching the hostile URL", candidates, health, err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the search call", requests)
+	}
+}
+
+func TestSweepMarkerBoundedByRemainingLifetime(t *testing.T) {
+	t.Parallel()
+
+	// A cached entry with 60 s left must bound the done marker to those 60 s,
+	// not a fresh full TTL (Devin).
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		sweepSource("one", new(int), false, nil),
+	}, func(lyrics.TrackInfo) error { return nil })
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	key, ok := lyricsCacheKeyForSource(track, "one")
+	if !ok {
+		t.Fatal("expected a source cache key")
+	}
+	expiringSoon := `{"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":` +
+		fmt.Sprintf("%d", time.Now().Unix()+60) + `}`
+	if err := cache.SetWithTTL(key, []byte(expiringSoon), 60); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	provider.runSweep(track)
+
+	ttl := cache.ttlsForKey[provider.doneMarkerKey(track, provider.activeSources())]
+	if ttl < 55 || ttl > 61 {
+		t.Fatalf("done marker TTL = %d, want the entry's remaining ~60 s lifetime", ttl)
+	}
+}
+
+func TestSweepRefetchesUnstampedCoverage(t *testing.T) {
+	t.Parallel()
+
+	// Entries without an expiry stamp cannot bound a marker, so the sweep
+	// refetches them once to leave stamped coverage behind (Devin).
+	cache := newFakeLyricsCache()
+	one := new(int)
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		sweepSource("one", one, false, nil),
+	}, func(lyrics.TrackInfo) error { return nil })
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	key, ok := lyricsCacheKeyForSource(track, "one")
+	if !ok {
+		t.Fatal("expected a source cache key")
+	}
+	// Old-format envelope: no expiresAt field.
+	if err := cache.SetWithTTL(key, []byte(`{"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]}}`), 3600); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	provider.runSweep(track)
+
+	if *one != 1 {
+		t.Fatalf("fetches = %d, want the unstamped entry refetched once", *one)
+	}
+	if _, ok := cache.ttlsForKey[provider.doneMarkerKey(track, provider.activeSources())]; !ok {
+		t.Fatal("expected a done marker once every entry carries a stamped lifetime")
+	}
+}
+
+func TestSweepPendingMarkerFollowsSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	// Reconfiguring sources must not delay a fresh sweep for the old
+	// track-only marker window (Devin).
+	cache := newFakeLyricsCache()
+	enqueued := 0
+	enqueue := func(lyrics.TrackInfo) error {
+		enqueued++
+		return nil
+	}
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	first := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		sweepSource("one", new(int), false, nil),
+	}, enqueue)
+	if !first.maybeEnqueueSweep(track) {
+		t.Fatal("first enqueue refused")
+	}
+
+	second := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		sweepSource("one", new(int), false, nil),
+		sweepSource("two", new(int), false, nil),
+	}, enqueue)
+	if !second.maybeEnqueueSweep(track) {
+		t.Fatal("reordered pending marker blocked the fresh sweep")
+	}
+	if enqueued != 2 {
+		t.Fatalf("enqueues = %d, want one per source order", enqueued)
+	}
+}
+
+func TestLyricsPlusDurationRounds(t *testing.T) {
+	t.Parallel()
+
+	// Fractional seconds must not round up into the next whole second
+	// (Devin); 234.2 belongs to 234.
+	var captured string
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		captured = request.URL
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+	fetchLyricsPlusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 234.2}, time.Now().Add(stageOneLookupBudget))
+	if !strings.Contains(captured, "duration=234") || strings.Contains(captured, "duration=235") {
+		t.Fatalf("URL = %q, want duration=234", captured)
+	}
+}
+
+func TestLyricsPlusEmptyPrimaryIsCleanMiss(t *testing.T) {
+	t.Parallel()
+
+	// A decoded empty 200 payload is the mirror's clean miss; a mirror failure
+	// must not turn it into a degraded lookup (Devin).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, lyricsPlusEndpoint) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"type":"Line","lyrics":[]}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 500, Body: []byte(`kaput`)}, nil
+	})
+
+	candidates, health, err := fetchLyricsPlusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v, want a clean miss without mirror rotation", candidates, health, err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the primary mirror", requests)
+	}
+}
+
+func TestParseRichsyncKeepsWhitespaceTokens(t *testing.T) {
+	t.Parallel()
+
+	// Musixmatch can encode a space as its own richsync token; dropping it
+	// joins the surrounding words (Devin).
+	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":" ","o":0.4},{"c":"llo","o":0.45}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil", err)
+	}
+	rendered := enhancedLRCFromTimedLines(lines)
+	plain := regexp.MustCompile(`<[0-9:.]+>|\[[0-9:.]+\]`).ReplaceAllString(rendered, "")
+	if !strings.Contains(plain, "He ") || strings.Contains(plain, "Hello") {
+		t.Fatalf("plain = %q, want the standalone space token retained", plain)
+	}
+}
+
+func TestLRCLibIgnoresMismatchedExactRecord(t *testing.T) {
+	t.Parallel()
+
+	// /api/get is fuzzy too: an unrelated usable record must not become the
+	// winner; the flow falls through to search (Devin).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Other Song","artistName":"Other Artist","duration":280,"plainLyrics":"wrong","syncedLyrics":"[00:01.00]wrong"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 280}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss rather than the unrelated record", candidates, health, err)
+	}
+}
+
+func TestMusixmatchRejectsUnrelatedSearchRows(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "/ws/1.1/token.get"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+		case strings.Contains(request.URL, "/ws/1.1/track.search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Wrong Song","artist_name":"Wrong Artist","track_length":240}}]}}}`)}, nil
+		default:
+			t.Fatalf("lyrics macro must not be requested for an unrelated row: %s", request.URL)
+			return nil, nil
+		}
+	})
+
+	candidates, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song A", Artist: "Artist A", Duration: 240}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss", candidates, health, err)
 	}
 }

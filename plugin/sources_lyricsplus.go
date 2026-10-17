@@ -35,7 +35,7 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	query := url.Values{
 		"title":    {title},
 		"artist":   {artist},
-		"duration": {strconv.FormatInt(int64(math.Round(float64(track.Duration)+0.5)), 10)},
+		"duration": {strconv.FormatInt(int64(math.Round(float64(track.Duration))), 10)},
 		"source":   {lyricsPlusSourceOrder},
 	}
 	if album := strings.TrimSpace(track.Album); album != "" {
@@ -78,9 +78,13 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 			continue
 		}
 		candidates := lyricsPlusCandidates(payload)
-		if len(candidates) > 0 {
-			return candidates, lookupHealthy, nil
+		if len(candidates) == 0 {
+			// A decoded 200 payload with nothing usable is the mirror's own
+			// clean miss: rotating to the next mirror would turn it into a
+			// provider failure (Devin).
+			return nil, lookupHealthy, nil
 		}
+		return candidates, lookupHealthy, nil
 	}
 	if err := errors.Join(lookupErrors...); err != nil {
 		return nil, lookupDegraded, err

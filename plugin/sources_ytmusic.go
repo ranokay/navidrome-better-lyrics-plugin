@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,9 +27,6 @@ const (
 )
 
 var (
-	// A search hit pairs its videoId with a rendered "m:ss"/"h:mm:ss"
-	// duration; matching on duration keeps the plain text honest.
-	ytmusicVideoIDPattern = regexp.MustCompile(`"videoId":"([A-Za-z0-9_-]{11})"[^[]*?"lengthText":\{"runs":\[\{"text":"(\d+:\d+(?::\d+)?)"`)
 	// The watch-next response carries the song's playlist id; browsing it
 	// yields the lyrics description shelf.
 	ytmusicBrowseIDPattern = regexp.MustCompile(`"browseId":"(MPLYt_[A-Za-z0-9_-]+)"`)
@@ -151,28 +149,204 @@ func innertubeHeaders() map[string]string {
 	}
 }
 
-// pickYTMusicVideo pairs each search-hit videoId with its rendered duration
-// ("m:ss" or "h:mm:ss") and returns the first entry within two seconds of the
-// requested duration. Guessing past a duration miss returns wrong plain
-// lyrics, so unmatched durations stay unmatched.
+// ytmusicSearchHit is one decoded search result: the video, its rendered
+// duration, and the title/artist strings from the same renderer.
+type ytmusicSearchHit struct {
+	videoID    string
+	durationMs int64
+	title      string
+	artists    string
+}
+
+// pickYTMusicVideo decodes the search payload and walks song renderers, reading
+// the video id, rendered duration, and identity from the same hit — serialized
+// field order (arrays between videoId and lengthText) must not matter (Devin).
+// A hit must match the requested identity before its duration qualifies; the
+// first qualifying hit wins and unmatched searches stay misses.
 func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) string {
 	target := int64(0)
 	if track.Duration > 0 {
 		target = int64(float64(track.Duration)*1000.0 + 0.5)
 	}
-	for _, match := range ytmusicVideoIDPattern.FindAllSubmatch(body, 32) {
-		videoID := string(match[1])
-		length, err := parseYTMusicDuration(string(match[2]))
-		if err != nil || length <= 0 {
+	titleTokens := normalizedLyricTokens(track.Title)
+	artistTokens := normalizedLyricTokens(trackArtist(track))
+	for _, hit := range ytmusicSearchHits(body) {
+		if hit.videoID == "" || hit.durationMs <= 0 {
 			continue
 		}
-		delta := length - target
-		if target > 0 && (delta < -2000 || delta > 2000) {
+		if !lyricTokensMatch(normalizedLyricTokens(hit.title), titleTokens) {
 			continue
 		}
-		return videoID
+		if !ytmusicArtistsMatch(hit.artists, artistTokens) {
+			continue
+		}
+		if target > 0 {
+			delta := hit.durationMs - target
+			if delta < -2000 || delta > 2000 {
+				continue
+			}
+		}
+		return hit.videoID
 	}
 	return ""
+}
+
+// ytmusicArtistsMatch accepts any entry from the renderer's artist string when
+// one matches the requested artist tokens.
+func ytmusicArtistsMatch(artists string, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, name := range strings.Split(artists, " • ") {
+		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+// ytmusicSearchHits decodes the payload and collects song renderers in
+// deterministic order: arrays keep index order and map keys are visited in
+// sorted order, so the traversal cannot drift between runs.
+func ytmusicSearchHits(body []byte) []ytmusicSearchHit {
+	var tree any
+	if err := json.Unmarshal(body, &tree); err != nil {
+		return nil
+	}
+	hits := []ytmusicSearchHit{}
+	ytmusicWalk(tree, func(renderer map[string]any) {
+		switch {
+		case renderer["musicResponsiveListItemRenderer"] != nil:
+			row, ok := renderer["musicResponsiveListItemRenderer"].(map[string]any)
+			if !ok {
+				return
+			}
+			hits = append(hits, ytmusicRenderHit(row))
+		case renderer["videoRenderer"] != nil:
+			row, ok := renderer["videoRenderer"].(map[string]any)
+			if !ok {
+				return
+			}
+			hits = append(hits, ytmusicRenderHit(row))
+		}
+	})
+	return hits
+}
+
+func ytmusicWalk(node any, visit func(map[string]any)) {
+	switch cast := node.(type) {
+	case map[string]any:
+		visit(cast)
+		keys := make([]string, 0, len(cast))
+		for key := range cast {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			ytmusicWalk(cast[key], visit)
+		}
+	case []any:
+		for _, value := range cast {
+			ytmusicWalk(value, visit)
+		}
+	}
+}
+
+// ytmusicRenderHit reads one renderer's fields: the video id, the rendered
+// length, the title column, and the artist column.
+func ytmusicRenderHit(renderer map[string]any) ytmusicSearchHit {
+	hit := ytmusicSearchHit{videoID: ytmusicFindString(renderer, "videoId", 3)}
+	if lengthText, ok := renderer["lengthText"].(map[string]any); ok {
+		if text := ytmusicFirstRunText(lengthText); text != "" {
+			if parsed, err := parseYTMusicDuration(text); err == nil {
+				hit.durationMs = parsed
+			}
+		}
+	}
+	if columns, ok := renderer["flexColumns"].([]any); ok {
+		if len(columns) > 0 {
+			hit.title = ytmusicFlexColumnText(columns[0])
+		}
+		if len(columns) > 1 {
+			hit.artists = ytmusicFlexColumnText(columns[1])
+		}
+	}
+	if hit.title == "" {
+		if title, ok := renderer["title"].(map[string]any); ok {
+			hit.title = ytmusicFirstRunText(title)
+		}
+	}
+	return hit
+}
+
+// ytmusicFindString reaches for a nested string key (bounded depth) so the
+// several places a renderer hides its video id all resolve.
+func ytmusicFindString(node any, key string, depth int) string {
+	if depth < 0 {
+		return ""
+	}
+	switch cast := node.(type) {
+	case map[string]any:
+		if value, ok := cast[key].(string); ok && value != "" {
+			return value
+		}
+		keys := make([]string, 0, len(cast))
+		for name := range cast {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+		for _, name := range keys {
+			if found := ytmusicFindString(cast[name], key, depth-1); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for _, value := range cast {
+			if found := ytmusicFindString(value, key, depth-1); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+func ytmusicFlexColumnText(column any) string {
+	columnMap, ok := column.(map[string]any)
+	if !ok {
+		return ""
+	}
+	renderer, ok := columnMap["musicResponsiveListItemFlexColumnRenderer"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	text, ok := renderer["text"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	if runs, ok := text["runs"].([]any); ok {
+		for _, run := range runs {
+			if runMap, ok := run.(map[string]any); ok {
+				if value, ok := runMap["text"].(string); ok {
+					parts = append(parts, value)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func ytmusicFirstRunText(node map[string]any) string {
+	runs, ok := node["runs"].([]any)
+	if !ok || len(runs) == 0 {
+		return ""
+	}
+	first, ok := runs[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	text, _ := first["text"].(string)
+	return text
 }
 
 func parseYTMusicDuration(rendered string) (int64, error) {

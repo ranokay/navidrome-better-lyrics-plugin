@@ -94,13 +94,13 @@ func TestGetLyrics_SweepEnqueueFailureReleasesSlot(t *testing.T) {
 	}
 
 	trackKey, _ := lyricsTrackKey(track)
-	raw, exists, _ := cache.Get(sweepMarkerPrefix + trackKey)
+	raw, exists, _ := cache.Get(provider.sweepPendingMarkerKey(track, trackKey))
 	if !exists {
 		t.Fatal("marker missing, want an early-release marker")
 	}
 	value, _ := strconv.Atoi(string(raw))
 	_ = value
-	if _, ok, _ := cache.Get(sweepMarkerPrefix + trackKey); !ok {
+	if _, ok, _ := cache.Get(provider.sweepPendingMarkerKey(track, trackKey)); !ok {
 		t.Fatal("marker vanished, want it retained until its short release TTL lapses")
 	}
 	// The release marker must expire almost immediately (1 s) — assert its TTL.

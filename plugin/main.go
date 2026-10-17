@@ -46,6 +46,9 @@ type lyricsProvider struct {
 	// sweepBudget overrides defaultSweepBudget (0 = default); tests shrink it to
 	// force deferrals deterministically.
 	sweepBudget time.Duration
+	// credentialSaltBytes memoizes the per-installation HMAC salt for this
+	// process so stores whose reads fail do not remint on every fingerprint.
+	credentialSaltBytes []byte
 }
 
 var _ lyrics.Lyrics = (*lyricsProvider)(nil)

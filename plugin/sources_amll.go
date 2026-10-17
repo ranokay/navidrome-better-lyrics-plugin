@@ -82,6 +82,9 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	if err := json.Unmarshal(response.Body, &envelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode AMLL search response: %w", err)
 	}
+	if envelope.Status == 404 {
+		return nil, lookupHealthy, nil
+	}
 	if health, err := amllEnvelopeStatusFailure(p, "AMLL search envelope", envelope.Status); err != nil {
 		return nil, health, err
 	}
@@ -116,6 +119,11 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	}
 	if err := json.Unmarshal(lyricsResponse.Body, &getEnvelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode AMLL lyrics response: %w", err)
+	}
+	if getEnvelope.Status == 404 {
+		// The lyrics endpoint answering "no match" is a clean miss; only a
+		// 200 with a missing body is malformed (Devin).
+		return nil, lookupHealthy, nil
 	}
 	if health, err := amllEnvelopeStatusFailure(p, "AMLL lyrics envelope", getEnvelope.Status); err != nil {
 		return nil, health, err

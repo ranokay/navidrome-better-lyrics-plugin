@@ -131,7 +131,7 @@ func TestLRCLibCandidates_PlainFallback(t *testing.T) {
 	t.Parallel()
 
 	provider := providerForCatalog(func(host.HTTPRequest) (*host.HTTPResponse, error) {
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"plainLyrics":"just plain lyrics","syncedLyrics":""}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","plainLyrics":"just plain lyrics","syncedLyrics":""}`)}, nil
 	})
 
 	candidates, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
