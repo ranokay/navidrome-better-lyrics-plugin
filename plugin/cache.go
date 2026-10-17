@@ -211,6 +211,61 @@ func (p *lyricsProvider) readCachedSourceCandidate(track lyrics.TrackInfo, sourc
 	return p.readCachedCandidate(key)
 }
 
+// missingCoverageEnvelope is the serialized negative per-source entry: an
+// unsynced-quality envelope with no lyrics, decodable by readCachedCandidate
+// as a present=false-but-covered sentinel.
+const missingCoverageEnvelope = `{"quality":0}`
+
+// lyricsCredentialsFingerprint distinguishes negative coverage stamped under
+// different Better Lyrics API key / Musixmatch token configurations: adding or
+// replacing a credential must re-authorize sources whose misses were recorded
+// anonymously (Codex).
+func (p *lyricsProvider) lyricsCredentialsFingerprint() string {
+	config := readProviderConfig(p.configLookup)
+	digest := sha256.Sum256([]byte(config.BetterLyricsAPIKey + "\x00" + config.MusixmatchUserToken))
+	return fmt.Sprintf("%x", digest[:8])
+}
+
+// sourceMissKey namespaces the negative per-source entries by credential state
+// so a newly configured token or API key cannot stay suppressed by an old miss.
+func (p *lyricsProvider) sourceMissKey(track lyrics.TrackInfo, sourceID string) (string, bool) {
+	base, ok := lyricsCacheKeyForSource(track, sourceID)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%s:missing:%s", base, p.lyricsCredentialsFingerprint()), true
+}
+
+// cacheSourceMiss records a healthy source's "no lyrics here" as a negative
+// per-source entry (positives always override it via the main key) so later
+// passes and continuations skip the refetch.
+func (p *lyricsProvider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool {
+	key, ok := p.sourceMissKey(track, sourceID)
+	if !ok {
+		return false
+	}
+	if p.cache.SetWithTTL(key, []byte(missingCoverageEnvelope), unsyncedLyricsCacheTTLSeconds) != nil {
+		return false
+	}
+	// An oversized/evicted write must not count as coverage.
+	_, exists, _ := p.cache.Get(key)
+	return exists
+}
+
+// readCachedSourceCoverage reads whichever per-source entry exists for a
+// source: a positive candidate first, otherwise the credential-namespaced
+// negative entry the sweep and stage-one misses persist.
+func (p *lyricsProvider) readCachedSourceCoverage(track lyrics.TrackInfo, sourceID string) (lyricsCandidate, bool) {
+	if candidate, ok := p.readCachedSourceCandidate(track, sourceID); ok {
+		return candidate, true
+	}
+	key, ok := p.sourceMissKey(track, sourceID)
+	if !ok {
+		return lyricsCandidate{}, false
+	}
+	return p.readCachedCandidate(key)
+}
+
 // cacheSourceCandidate persists one per-source result and reports whether the
 // write actually landed, so the sweep only counts entries it really cached.
 func (p *lyricsProvider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string, candidate lyricsCandidate) bool {

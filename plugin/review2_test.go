@@ -55,7 +55,7 @@ func TestLunaCandidates_QuotedTrackIDs(t *testing.T) {
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, lunaSearchEndpoint):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"7425699317225293865","duration":130032}}}]}]}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"7425699317225293865","name":"liveforeverOasis","artists":[{"name":"又山"}],"duration":130032}}}]}]}`)}, nil
 		default:
 			detailRequest = request.URL
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"[00:04.00]Beneath an empty","type":"lrc"}}`)}, nil
@@ -119,7 +119,7 @@ func TestSweep_MissesMarkDoneCovered(t *testing.T) {
 	provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); !exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
 		t.Fatal("clean source misses are covered sweep work: the done marker must be recorded")
 	}
 }
@@ -139,7 +139,7 @@ func TestSweep_RefusedWritesStayUncovered(t *testing.T) {
 	provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); exists {
 		t.Fatal("a refused cache write is not sweep coverage: no done marker may be written")
 	}
 }
@@ -317,9 +317,9 @@ func TestLiveSearchFixturesDecodeWithRealWireNames(t *testing.T) {
 	}
 
 	luna := jsonUnmarshal[lunaSearchEnvelope](t, "testdata/luna/search.json")
-	id, found := pickLunaTrack(luna.ResultGroups, lyrics.TrackInfo{Title: "whatever", Artist: "still", Duration: 130})
+	id, found := pickLunaTrack(luna.ResultGroups, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 130})
 	if !found || id != "7425699317225293865" {
-		t.Fatalf("pickLunaTrack() = (%q, %v); want the live quoted id", id, found)
+		t.Fatalf("pickLunaTrack() = (%q, %v); want the live quoted id via the collapsed metadata gate", id, found)
 	}
 }
 
@@ -362,7 +362,7 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 			provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 
 			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
-			key := sweepDoneMarkerKey(track, provider.activeSources())
+			key := provider.doneMarkerKey(track, provider.activeSources())
 			ttl, ok := cache.ttlsForKey[key]
 			if !ok {
 				t.Fatalf("done marker missing for %s coverage", tc.format)
@@ -387,7 +387,7 @@ func TestSweep_ContinuationCompletionFingerprintsFullOrder(t *testing.T) {
 		}, func(lyrics.TrackInfo) error { return nil })
 
 		status, _ := provider.runSweepSources(track, []string{"two"})
-		if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); exists {
+		if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); exists {
 			t.Fatalf("continuation wrote a done marker although source one was never covered; status = %q", status)
 		}
 	})
@@ -405,7 +405,7 @@ func TestSweep_ContinuationCompletionFingerprintsFullOrder(t *testing.T) {
 		}
 		provider.runSweepSources(track, []string{"two"})
 
-		if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); !exists {
+		if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
 			t.Fatal("full-order coverage is satisfied by the cached sibling plus the continuation; the done marker must be recorded")
 		}
 	})
@@ -899,7 +899,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 	provider2 := newLyricsProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
 	provider2.runSweepSources(track, []string{"two"})
 
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); !exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
 		t.Fatal("the continuation must complete the full-order marker when earlier misses carried over")
 	}
 	if *one != 1 {
@@ -926,7 +926,7 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 	status, deferred := provider.runSweepSources(track, nil)
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); exists {
 		t.Fatalf("status/deferred = %q/%v; expected the tail to defer, not complete", status, deferred)
 	}
 
@@ -934,11 +934,251 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 	provider2.sweepBudget = 0
 	provider2.runSweepSources(track, []string{"tail"})
 
-	ttl, ok := cache.ttlsForKey[sweepDoneMarkerKey(track, provider2.activeSources())]
+	ttl, ok := cache.ttlsForKey[provider2.doneMarkerKey(track, provider2.activeSources())]
 	if !ok {
 		t.Fatal("expected a done marker from the continuation")
 	}
 	if ttl != unsyncedLyricsCacheTTLSeconds {
 		t.Fatalf("done marker TTL = %d, want the plain sibling's %d entry to bound the continuation marker", ttl, unsyncedLyricsCacheTTLSeconds)
+	}
+}
+
+func TestGetLyrics_EnqueuesSweepOnStageOneError(t *testing.T) {
+	t.Parallel()
+
+	// Stage-one errors must not hide the tail: the join error is retained but
+	// the incomplete walk still schedules the background sweep (Codex P1).
+	enqueued := 0
+	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return nil, lookupDegraded, errors.New("head source down")
+			}},
+		sweepSource("tail", new(int), false, nil),
+	}, func(lyrics.TrackInfo) error {
+		enqueued++
+		return nil
+	})
+
+	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err == nil {
+		t.Fatal("GetLyrics() error = nil, want the joined stage-one error retained")
+	}
+	if enqueued != 1 {
+		t.Fatalf("enqueues = %d, want the sweep scheduled despite the stage-one error", enqueued)
+	}
+}
+
+func TestStageOneMissesCoverTheSweepAndTheWalk(t *testing.T) {
+	t.Parallel()
+
+	// Healthy stage-one misses must persist as negative per-source entries so
+	// the sweep skips them, and a later lookup must not refetch them either
+	// (Codex P2).
+	cache := newFakeLyricsCache()
+	one, two, three, tail := new(int), new(int), new(int), new(int)
+	sources := []lyricsSource{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*one++
+				return nil, lookupHealthy, nil
+			}},
+		{ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*two++
+				return nil, lookupHealthy, nil
+			}},
+		{ID: "three", Display: "three", Hosts: []string{"three.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*three++
+				return nil, lookupHealthy, nil
+			}},
+		{ID: "tail", Display: "tail", Hosts: []string{"tail.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*tail++
+				return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]tail line"}, "tail", "lrc")}, lookupHealthy, nil
+			}},
+	}
+	provider := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	// Stage one walks the three misses and never reaches the tail.
+	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatalf("first GetLyrics() error = %v, want nil", err)
+	}
+	if *one != 1 || *two != 1 || *three != 1 || *tail != 0 {
+		t.Fatalf("fetch counts = %d/%d/%d/%d, want only the head three fetched", *one, *two, *three, *tail)
+	}
+
+	// The sweep skips the persisted misses instead of refetching them.
+	provider.runSweep(track)
+	if *one != 1 || *two != 1 || *three != 1 {
+		t.Fatalf("miss fetch counts after sweep = %d/%d/%d, want the sweep to reuse the miss entries", *one, *two, *three)
+	}
+
+	// A later lookup with no winner must also skip the miss entries.
+	cache.mu.Lock()
+	for key := range cache.values {
+		if strings.HasPrefix(key, lyricsWinnerCacheKeyPrefix) {
+			delete(cache.values, key)
+		}
+	}
+	cache.mu.Unlock()
+
+	reread := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	result, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("re-read GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, result.Source, "tail", "lrc")
+	if *one != 1 || *two != 1 || *three != 1 {
+		t.Fatalf("miss fetch counts after winner reset = %d/%d/%d, want the misses to stay cached (Codex)", *one, *two, *three)
+	}
+}
+
+func TestNetEaseSearchEnvelopeStatusesClassified(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}
+	t.Run("search envelope 500 degrades", func(t *testing.T) {
+		provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":500}`)}, nil
+		})
+		_, health, err := fetchNetEaseLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want degraded on envelope 500", err, health)
+		}
+	})
+
+	t.Run("search envelope 429 activates cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":429}`)}, nil
+		}, cache, time.Now, nil, nil)
+		_, _, err := fetchNetEaseLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("envelope 429 converted to a miss; want a degraded error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("netease")) <= 0 {
+			t.Fatal("envelope 429 activated no cooldown")
+		}
+	})
+
+	t.Run("search envelope 404 keeps a quiet miss", func(t *testing.T) {
+		provider := newLyricsProvider(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":404}`)}, nil
+		})
+		_, health, err := fetchNetEaseLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health != lookupHealthy {
+			t.Fatalf("result = (%v, %v); want the 404 kept quiet", err, health)
+		}
+	})
+}
+
+func TestLunaCandidates_GateMatchesByMetadata(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		switch {
+		case strings.Contains(request.URL, lunaSearchEndpoint):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[
+				{"entity":{"track":{"id":"11","name":"Different Song","artists":[{"name":"Elsewhere"}],"duration":130032}}},
+				{"entity":{"track":{"id":"22","name":"liveforeverOasis","artists":[{"name":"又山"}],"duration":130032}}}
+			]}]}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"[00:04.00]Beneath an empty","type":"lrc"}}`)}, nil
+		}
+	})
+
+	candidates, health, err := fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 130}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLunaLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v, want the duration-tied unrelated row rejected and the UGC row accepted", candidates, health)
+	}
+
+	provider = newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, lunaSearchEndpoint):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"11","name":"Different Song","artists":[{"name":"Elsewhere"}],"duration":130032}}},{"entity":{"track":{"id":"33","name":"Live Forever (Live)","artists":[{"name":"Oasis"}],"duration":130032}}}]}]}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"[00:04.00]Beneath an empty","type":"lrc"}}`)}, nil
+		}
+	})
+	candidates, _, err = fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 130}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v, want the live-titled Oasis row accepted over the unrelated row", candidates, err)
+	}
+	if candidates[0].quality != timingLine {
+		t.Fatalf("quality = %v, want the timed line from the metadata-matched row", candidates[0].quality)
+	}
+
+	provider = newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"11","name":"Different Song","artists":[{"name":"Elsewhere"}],"duration":130032}}}]}]}`)}, nil
+	})
+	candidates, _, err = fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 130}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("result = %#v/%v, want a clean miss when no row matches the metadata", candidates, err)
+	}
+}
+
+func TestParseRichsync_FractionalSecondOffsets(t *testing.T) {
+	t.Parallel()
+
+	// Musixmatch richsync `o` offsets are fractional seconds relative to the
+	// chunk: decrypted as ms they shift words 1000x and fractional values
+	// crashed the whole decode (Codex P1).
+	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":0.12}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil with fractional offsets", err)
+	}
+	first := lines[0]
+	if first.Words[1].StartMs != 12520 {
+		t.Fatalf("word 2 start = %d, want 12520 (0.12s after the line start)", first.Words[1].StartMs)
+	}
+
+	lines, err = parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":1},{"c":"llo","o":1.2}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil with integral offsets", err)
+	}
+	if lines[0].Words[1].StartMs != 13600 {
+		t.Fatalf("word 2 start = %d, want 13600 (1.2s after the line start)", lines[0].Words[1].StartMs)
+	}
+}
+
+func TestCoverageCredChangeInvalidatesMisses(t *testing.T) {
+	t.Parallel()
+
+	// Negative coverage records unauthenticated misses; adding or replacing a
+	// credential must re-authorize those sources (Codex).
+	missCalls := 0
+	sources := []lyricsSource{
+		{ID: "liner", Display: "liner", Hosts: []string{"liner.example.test"}, Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+			missCalls++
+			return nil, lookupHealthy, nil
+		}},
+	}
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	first := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	first.runSweep(track)
+	if missCalls != 1 {
+		t.Fatalf("first sweep fetches = %d, want a single miss fetch", missCalls)
+	}
+
+	// The credential arrives: the miss entry must no longer suppress the
+	// source, and the new-credentials done marker is a fresh key.
+	reauthorized := newLyricsProviderWithSourcesAt(nil, first.cache, time.Now, sources, nil)
+	reauthorized.configLookup = func(key string) (string, bool) {
+		if key == "betterLyricsApiKey" {
+			return "secret", true
+		}
+		return "", false
+	}
+	reauthorized.runSweep(track)
+	if missCalls != 2 {
+		t.Fatalf("fetches after the credential change = %d, want the stale miss entry to be bypassed", missCalls)
 	}
 }

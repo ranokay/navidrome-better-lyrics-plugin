@@ -175,6 +175,11 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 			// source already answered inside stage one (Codex).
 			p.maybeEnqueueSweep(track)
 		}
+	} else {
+		// Retain the error, but an incomplete walk must still reach the tail:
+		// schedule the sweep so the returned error is the only failure the
+		// request exposes (Codex P1).
+		p.maybeEnqueueSweep(track)
 	}
 	return candidate.response, err
 }
@@ -226,6 +231,13 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 		if source.Fetch == nil {
 			continue
 		}
+		// A per-source entry (positive or persisted miss) already covers this
+		// source for its TTL: refetching here would re-query providers every
+		// negative-winner cycle (Codex). Cached positives are served by the
+		// re-rank above the walk.
+		if _, ok := p.readCachedSourceCoverage(track, source.ID); ok {
+			continue
+		}
 		if coldHostFor(source, coldHosts) != "" {
 			continue
 		}
@@ -247,12 +259,19 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			}
 			continue
 		}
+		foundCandidate := false
 		for _, candidate := range candidates {
 			if !candidate.present() {
 				continue
 			}
+			foundCandidate = true
 			p.cacheSourceCandidate(track, source.ID, candidate)
 			best = preferLyricsCandidate(best, candidate)
+		}
+		if !foundCandidate {
+			// Persist healthy clean misses so the sweep and later lookups can
+			// skip the refetch (Codex).
+			p.cacheSourceMiss(track, source.ID)
 		}
 		walkedTotal++
 		if best.quality == timingSyllable {

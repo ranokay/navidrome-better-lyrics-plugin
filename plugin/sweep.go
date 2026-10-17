@@ -86,6 +86,13 @@ func sweepDoneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
 	return fmt.Sprintf("%s%x:%s", sweepDonePrefix, digest, trackKey)
 }
 
+// doneMarkerKey is the provider-view done key: it also carries the credential
+// fingerprint so re-authorizing after a recorded miss re-runs the sweep
+// (Codex: credential changes must invalidate negative coverage).
+func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
+	return fmt.Sprintf("%s:cred:%s", sweepDoneMarkerKey(track, order), p.lyricsCredentialsFingerprint())
+}
+
 // cacheTTLForCoveredCandidate maps a covered candidate to its per-source cache
 // TTL so a done marker can only outlive the results it stands for as long as
 // the shortest of those results does.
@@ -161,7 +168,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		if source.Fetch == nil {
 			continue
 		}
-		if cachedCandidate, ok := p.readCachedSourceCandidate(track, source.ID); ok {
+		if cachedCandidate, ok := p.readCachedSourceCoverage(track, source.ID); ok {
 			skipped++
 			if covered := cacheTTLForCoveredCandidate(cachedCandidate); covered > 0 && covered < coverageTTL {
 				coverageTTL = covered
@@ -227,7 +234,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			// genuinely has nothing (Codex: misses must terminate the sweep).
 			// Persist the miss so later passes and continuations can skip the
 			// refetch instead of re-walking the same clean misses every cycle.
-			if !p.cacheSourceMissIfAbsent(track, source.ID) {
+			if !p.cacheSourceMiss(track, source.ID) {
 				// A refused miss write is not honest coverage.
 				notCovered++
 				continue
@@ -243,7 +250,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		if allowedSet == nil || source.Fetch == nil || allowedSet[source.ID] {
 			continue
 		}
-		cachedSibling, ok := p.readCachedSourceCandidate(track, source.ID)
+		cachedSibling, ok := p.readCachedSourceCoverage(track, source.ID)
 		if !ok {
 			coveredOthers = false
 			break
@@ -255,7 +262,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 	}
 	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && coveredOthers && cached+missed+skipped == implemented && implemented > 0 {
-		key := sweepDoneMarkerKey(track, fullOrder)
+		key := p.doneMarkerKey(track, fullOrder)
 		if p.cache.SetWithTTL(key, []byte(p.now().Format(time.RFC3339)), coverageTTL) == nil {
 			// Also verify the write actually stayed (an oversized write is
 			// dropped); re-read to be sure.
@@ -325,7 +332,7 @@ func sharesBetterLyricsHost(source lyricsSource) bool {
 // sources behind those cooldowns benefit from the same deviating skip logic in the
 // sweep, so enqueuing without a marker check could cause duplicate work.
 func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
-	if _, done, _ := p.cache.Get(sweepDoneMarkerKey(track, p.activeSources())); done {
+	if _, done, _ := p.cache.Get(p.doneMarkerKey(track, p.activeSources())); done {
 		return false
 	}
 	trackKey, ok := lyricsTrackKey(track)

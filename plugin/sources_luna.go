@@ -116,11 +116,12 @@ type lunaResultGroup struct {
 
 type lunaGroupDatum struct {
 	Entity struct {
-		Track struct {
-			ID       lunaTrackID `json:"id"`
-			Duration int64       `json:"duration"` // ms
-		} `json:"track"`
+		Track lunaSearchTrack `json:"track"`
 	} `json:"entity"`
+}
+
+type lunaSearchArtist struct {
+	Name string `json:"name"`
 }
 
 // lunaTrackID accepts the quoted ids the live Luna search payload ships (they
@@ -155,12 +156,46 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 			if trackInfo.ID == "" {
 				continue
 			}
+			// The fuzzy hub search can return unrelated rows within the
+			// duration window: require normalized metadata before the
+			// duration gate (Codex). Collapsed containment tolerates UGC rows
+			// that concatenate name and artist without separators
+			// ("liveforeverOasis"), as the live fixture Does.
+			if !strings.Contains(strings.ToLower(onlyLettersAndDigits(trackInfo.Name)), strings.ToLower(onlyLettersAndDigits(track.Title))) {
+				continue
+			}
+			if !lunaArtistsMatch(trackInfo, track) {
+				continue
+			}
 			if delta := trackInfo.Duration - target; delta > -2000 && delta < 2000 {
 				return string(trackInfo.ID), true
 			}
 		}
 	}
 	return "", false
+}
+
+type lunaSearchTrack struct {
+	ID       lunaTrackID        `json:"id"`
+	Name     string             `json:"name"`
+	Artists  []lunaSearchArtist `json:"artists"`
+	Duration int64              `json:"duration"` // ms
+}
+
+// lunaArtistsMatch accepts the requested artist either from any artists-array
+// entry or concatenated inside the track name itself.
+func lunaArtistsMatch(trackInfo lunaSearchTrack, track lyrics.TrackInfo) bool {
+	nameNorm := strings.ToLower(onlyLettersAndDigits(trackInfo.Name))
+	artistNorm := strings.ToLower(onlyLettersAndDigits(trackArtist(track)))
+	if artistNorm == "" {
+		return true
+	}
+	for _, candidateArtist := range trackInfo.Artists {
+		if strings.Contains(strings.ToLower(onlyLettersAndDigits(candidateArtist.Name)), artistNorm) {
+			return true
+		}
+	}
+	return strings.Contains(nameNorm, artistNorm)
 }
 
 type lunaDetailEnvelope struct {

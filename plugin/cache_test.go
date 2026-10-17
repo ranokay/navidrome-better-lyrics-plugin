@@ -169,8 +169,12 @@ func TestLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
 	if requests != 6 {
 		t.Fatalf("network request count = %d, want both three-provider lookups", requests)
 	}
-	if ttl := cache.lastTTL(); ttl != 0 {
-		t.Fatalf("cache TTL = %d, want no cached operational failure", ttl)
+	// Every KV write in the failure path is the sweep marker ("sweep:");
+	// entries under the winner/source namespaces would mean a cached failure.
+	for key := range cache.values {
+		if strings.HasPrefix(key, lyricsWinnerCacheKeyPrefix) || strings.HasPrefix(key, lyricsSourceCacheKeyPrefix) {
+			t.Fatalf("cache keys written = %v, want no cached operational failure", cache.values)
+		}
 	}
 }
 

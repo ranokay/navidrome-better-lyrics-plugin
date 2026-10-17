@@ -107,7 +107,7 @@ func TestSweep_CompletionWritesDoneMarker(t *testing.T) {
 
 	provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, activeSourcesList())); !exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, activeSourcesList())); !exists {
 		t.Fatal("completed sweep did not record its done marker")
 	}
 	if provider.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) {
@@ -129,7 +129,7 @@ func TestSweep_FailuresKeepTheTrackReSweepable(t *testing.T) {
 
 	status := provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 	assertContains(t, status, "failed=1")
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, activeSourcesList())); exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, activeSourcesList())); exists {
 		t.Fatal("failed sweep wrote a done marker")
 	}
 }

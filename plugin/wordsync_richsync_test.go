@@ -18,7 +18,7 @@ func TestParseRichsync(t *testing.T) {
 	}{
 		{
 			name:       "word chunks with offsets",
-			body:       `[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":120}]},{"ts":14.0,"te":14.5,"l":[{"c":" world","o":0}]}]`,
+			body:       `[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":0.12}]},{"ts":14.0,"te":14.5,"l":[{"c":" world","o":0}]}]`,
 			wantLines:  2,
 			wantErrNil: true,
 		},
@@ -58,7 +58,7 @@ func TestParseRichsync(t *testing.T) {
 func TestParseRichsync_WordWindows(t *testing.T) {
 	t.Parallel()
 
-	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":120}]},{"ts":14.0,"te":14.5,"l":[{"c":" world","o":0}]}]`)
+	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":0.12}]},{"ts":14.0,"te":14.5,"l":[{"c":" world","o":0}]}]`)
 	if err != nil {
 		t.Fatalf("parseRichsync() error = %v, want nil", err)
 	}

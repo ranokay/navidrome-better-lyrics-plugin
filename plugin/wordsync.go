@@ -290,10 +290,13 @@ func parseRichsync(body string) ([]timedLine, error) {
 		}
 		line := timedLine{StartMs: start, EndMs: end, Text: chunk.Text()}
 		for k, token := range chunk.Tokens {
-			wordStart := start + token.Offset
+			// `o` is a fractional seconds offset relative to the chunk's ts:
+			// decoding it as milliseconds shifted windows 1000x and fractional
+			// values broke the whole decode (Codex P1).
+			wordStart := start + int64(math.Round(token.Offset*1000))
 			wordEnd := end
 			if k+1 < len(chunk.Tokens) {
-				wordEnd = start + chunk.Tokens[k+1].Offset
+				wordEnd = start + int64(math.Round(chunk.Tokens[k+1].Offset*1000))
 			}
 			if wordEnd < wordStart+richsyncMinimumTokenMs {
 				wordEnd = wordStart + richsyncMinimumTokenMs
@@ -321,8 +324,8 @@ type richsyncChunk struct {
 }
 
 type richsyncWordJSON struct {
-	Text   string `json:"c"`
-	Offset int64  `json:"o"`
+	Text   string  `json:"c"`
+	Offset float64 `json:"o"`
 }
 
 const richsyncMinimumTokenMs = int64(40)

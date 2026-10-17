@@ -45,6 +45,12 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if err := json.Unmarshal(response.Body, &search); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode NetEase search response: %w", err)
 	}
+	// Classify the application-level status the HTTP layer already answered
+	// 200 for: an envelope failure disguised as HTTP 200 must not become a
+	// healthy miss that a sweep marks covered (Codex).
+	if health, err := neteaseEnvelopeStatusFailure(p, search.Code); err != nil {
+		return nil, health, err
+	}
 	song, found := pickNetEaseSong(search.Result.Songs, track)
 	if !found {
 		return nil, lookupHealthy, nil
@@ -109,6 +115,7 @@ func stripNetEaseCreditLines(text string) string {
 }
 
 type neteaseSearchEnvelope struct {
+	Code   int `json:"code"`
 	Result struct {
 		Songs []neteaseSong `json:"songs"`
 	} `json:"result"`
@@ -123,6 +130,22 @@ type neteaseSong struct {
 
 type neteaseArtist struct {
 	Name string `json:"name"`
+}
+
+// neteaseEnvelopeStatusFailure classifies the cloudsearch JSON code the HTTP
+// layer already answered 200 for: 0/200 pass, no-match 404 keeps the quiet
+// miss contract, 429 activates the provider cooldown, other non-success
+// statuses degrade the lookup instead of reporting a healthy miss (Codex).
+func neteaseEnvelopeStatusFailure(p *lyricsProvider, code int) (lookupHealth, error) {
+	switch code {
+	case 0, 200, 404:
+		return lookupHealthy, nil
+	case 429:
+		p.rememberCooldown(sourceGlobalCooldownKey("netease"), defaultRateLimitCooldown)
+		return lookupDegraded, &providerHTTPError{source: "NetEase cloudsearch envelope", status: 429, globalRateLimit: true}
+	default:
+		return lookupDegraded, &providerHTTPError{source: "NetEase cloudsearch envelope", status: int32(code)}
+	}
 }
 
 func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {

@@ -194,7 +194,7 @@ func TestLunaCandidates_UnknownTypeReturnsPlainCandidate(t *testing.T) {
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "api.qishui.com/luna/search/track"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":1,"duration":280000}}}]}]}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":1,"name":"Live Forever","artists":[{"name":"Oasis"}],"duration":280000}}}]}]}`)}, nil
 		default:
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"[00:04.00]Beneath an empty","type":"brand-new-dialect"}}`)}, nil
 		}
@@ -310,7 +310,7 @@ func TestSweep_RetainsInMemoryHostCooldowns(t *testing.T) {
 	assertContains(t, status, "skipped=1")
 	// The pass was not covered, so the done marker must not short-circuit it: the
 	// next lookup gets to re-sweep once the sibling-host cooldown passes.
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, []lyricsSource{first, shared})); exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, []lyricsSource{first, shared})); exists {
 		t.Fatal("an incomplete sweep wrote a done marker")
 	}
 }
@@ -329,7 +329,7 @@ func TestSweep_MarksCachedOnlyAfterRealStore(t *testing.T) {
 		// Without coverage the next lookup must still be allowed to re-sweep.
 	}
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
-	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, []lyricsSource{healthy})); exists {
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, []lyricsSource{healthy})); exists {
 		t.Fatal("done marker recorded although the KV store rejected the lyrics write")
 	}
 }

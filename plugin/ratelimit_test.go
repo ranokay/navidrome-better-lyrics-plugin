@@ -200,7 +200,7 @@ func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	if firstRequests != 2 {
 		t.Fatalf("first request count = %d, want Better Lyrics then Unison with Kugou suppressed", firstRequests)
 	}
-	if ttl := cache.lastTTL(); ttl != 12 {
+	if ttl := cache.ttlsForKey[betterLyricsGlobalCooldownKey]; ttl != 12 {
 		t.Fatalf("cooldown TTL = %d, want Retry-After value 12", ttl)
 	}
 
@@ -259,8 +259,14 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	if firstUnisonRequests != 1 || firstKugouRequests != 1 {
 		t.Fatalf("first requests: Unison=%d Kugou=%d, want 1 each", firstUnisonRequests, firstKugouRequests)
 	}
-	if ttl := cache.lastTTL(); ttl != int64(defaultUnisonRateLimitCooldown/time.Second) {
-		t.Fatalf("Unison cooldown TTL = %d, want %d", ttl, int64(defaultUnisonRateLimitCooldown/time.Second))
+	cooldownTTL := int64(0)
+	for _, recorded := range cache.ttls {
+		if recorded == int64(defaultUnisonRateLimitCooldown/time.Second) {
+			cooldownTTL = recorded
+		}
+	}
+	if cooldownTTL == 0 {
+		t.Fatalf("Unison cooldown TTL taints = %v, want %d", cache.ttls, int64(defaultUnisonRateLimitCooldown/time.Second))
 	}
 
 	secondUnisonRequests := 0

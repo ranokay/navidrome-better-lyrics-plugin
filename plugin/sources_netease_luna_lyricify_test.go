@@ -92,7 +92,7 @@ func TestNetEaseCandidates_NoDurationMatchMeansNoLyricCall(t *testing.T) {
 func TestLunaCandidates_WordsFromPlainKRC(t *testing.T) {
 	t.Parallel()
 
-	searchBody := `{"result_groups":[{"data":[{"entity":{"track":{"id":7425699317225293865,"duration":280000}}}]}]}`
+	searchBody := `{"result_groups":[{"data":[{"entity":{"track":{"id":7425699317225293865,"name":"Live Forever (Live)","artists":[{"name":"Oasis"}],"duration":280000}}}]}]}`
 	detailBody := `{"lyric":{"content":"[400,4900]<0,1040,0>Beneath <1040,280,0>an <1320,240,0>empty\n","type":"krc"}}`
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
@@ -118,7 +118,7 @@ func TestLunaCandidates_WordsFromPlainKRC(t *testing.T) {
 func TestLunaCandidates_LineLRCWithoutWordData(t *testing.T) {
 	t.Parallel()
 
-	searchBody := `{"result_groups":[{"data":[{"entity":{"track":{"id":1,"duration":280000}}}]}]}`
+	searchBody := `{"result_groups":[{"data":[{"entity":{"track":{"id":1,"name":"Live Forever","artists":[{"name":"Oasis"}],"duration":280000}}}]}]}`
 	detailBody := `{"lyric":{"content":"[00:04.00]Beneath an empty\n","type":"lrc"}}`
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
