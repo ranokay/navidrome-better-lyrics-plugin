@@ -795,7 +795,7 @@ func TestAMLLyricsEnvelopeStatusesClassified(t *testing.T) {
 			requests++
 			switch {
 			case strings.Contains(request.URL, "v1/lyrics/search"):
-				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1"}]}}`)}, nil
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1","musicNames":["Song"],"artistNames":["Artist"]}]}}`)}, nil
 			case strings.Contains(request.URL, "v1/lyrics/get"):
 				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":500}`)}, nil
 			default:
@@ -1281,7 +1281,7 @@ func TestLunaBeatMatchesArtistAliases(t *testing.T) {
 		case strings.Contains(request.URL, "api/v1/songs.json"):
 			return &host.HTTPResponse{StatusCode: 200, Body: index}, nil
 		default:
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt xmlns:itunes="urn:itunes"><p begin="1" end="2"><span begin="1" end="2">stub line</span></p></tt>`)}, nil
 		}
 	}, newFakeLyricsCache(), time.Now, "luna-beat")
 
@@ -1381,7 +1381,7 @@ func TestLunaBeatRejectsUnrelatedArtistSubstrings(t *testing.T) {
 		case strings.Contains(request.URL, "api/v1/songs.json"):
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"y","title":"Duet","artists":["Garfunkel"],"album":"B","path":"lyrics/y.ttml"}]}`)}, nil
 		default:
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt xmlns:itunes="urn:itunes"><p begin="1" end="2"><span begin="1" end="2">stub line</span></p></tt>`)}, nil
 		}
 	}, newFakeLyricsCache(), time.Now, "luna-beat")
 
@@ -1441,7 +1441,7 @@ func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"z","title":"Thunderstruck","artists":["AC/DC"],"album":"B","path":"lyrics/z.ttml"}]}`)}, nil
 		default:
 			ttmlRequest = request.URL
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt xmlns:itunes="urn:itunes"><p begin="1" end="2"><span begin="1" end="2">stub line</span></p></tt>`)}, nil
 		}
 	}, newFakeLyricsCache(), time.Now, "luna-beat")
 
@@ -1991,7 +1991,7 @@ func TestBinimumMatchesWithoutDuration(t *testing.T) {
 		if strings.Contains(request.URL, "binimum.org") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"track_name":"Song","artist_name":"Artist","duration":240,"lyricsUrl":"https://lrc.red/s/X.ttml"}]}`)}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt xmlns:itunes="urn:itunes"><p begin="1" end="2"><span begin="1" end="2">stub line</span></p></tt>`)}, nil
 	})
 
 	candidates, _, err := fetchBinimumLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
@@ -2374,5 +2374,207 @@ func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
 	ttl := cache.ttlsForKey[provider.sweepPendingMarkerKey(track, trackKey)]
 	if ttl != sweepQueuedMarkerTTL {
 		t.Fatalf("marker TTL = %d, want the queued window %d while the continuation waits", ttl, sweepQueuedMarkerTTL)
+	}
+}
+
+func TestDurationGatesSkipWithoutDuration(t *testing.T) {
+	t.Parallel()
+
+	// Durationless tracks must still match on identity in every selector
+	// (Codex round 12).
+	netease, ok := pickNetEaseSong([]neteaseSong{
+		{ID: 1, Name: "Song", Artists: []neteaseArtist{{Name: "Artist"}}, Duration: 240000},
+	}, lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
+	if !ok || netease.ID != 1 {
+		t.Fatalf("pickNetEaseSong = %#v/%v, want the durationless identity match", netease, ok)
+	}
+
+	var groups []lunaResultGroup
+	groups = append(groups, lunaResultGroup{Data: []lunaGroupDatum{
+		{Entity: struct {
+			Track lunaSearchTrack `json:"track"`
+		}{Track: lunaSearchTrack{ID: "77", Name: "Song", Artists: []lunaSearchArtist{{Name: "Artist"}}, Duration: 240000}}},
+	}})
+	if id, found := pickLunaTrack(groups, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}); !found || id != "77" {
+		t.Fatalf("pickLunaTrack = (%q, %v), want the durationless identity match", id, found)
+	}
+
+	lrclibProvider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"trackName":"Song","artistName":"Artist","duration":240,"plainLyrics":"words","syncedLyrics":"[00:01.00]words"}]`)}, nil
+	})
+	if candidates, _, err := fetchLRCLibLyricsCandidates(lrclibProvider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget)); err != nil || len(candidates) != 1 {
+		t.Fatalf("lrclib durationless = %#v/%v, want the identity match", candidates, err)
+	}
+
+	appleProvider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "itunes.apple.com") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"trackId":9,"trackName":"Song","artistName":"Artist","trackTimeMillis":240000}]}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttmlContent":"<tt xmlns:itunes=\"urn:itunes\"><p begin=\"1\">line</p></tt>"}`)}, nil
+	})
+	if candidates, _, err := fetchLyricallyLyricsCandidates(appleProvider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget)); err != nil || len(candidates) != 1 {
+		t.Fatalf("lyrically durationless = %#v/%v, want the identity match", candidates, err)
+	}
+}
+
+func TestLunaMalformedKRCDegrades(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, lunaSearchEndpoint) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"5","name":"Song","artists":[{"name":"Artist"}],"duration":240000}}}]}]}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyric":{"content":"(definitely not a KRC payload","type":"krc"}}`)}, nil
+	})
+
+	_, health, err := fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 240}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed KRC to degrade", err, health)
+	}
+}
+
+func TestNetEaseMalformedYRCDegrades(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "cloudsearch/pc"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":111,"name":"Song","ar":[{"name":"Artist"}],"dt":240000}]},"code":200}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":200,"lrc":{"lyric":""},"yrc":{"lyric":"(not a YRC envelope at all"}}`)}, nil
+		}
+	})
+
+	_, health, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 240}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed YRC to degrade", err, health)
+	}
+}
+
+func TestYTMusicMalformedBrowseDegrades(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "v1/search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"musicShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"JGwWNGJdvx8"}}}]}}}`)}, nil
+		case strings.Contains(request.URL, "v1/next"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"browseId":"MPLYt_SbJhx3gEYmp"}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents": {"musicDescriptionShel`)}, nil
+		}
+	})
+
+	_, health, err := fetchYTMusicLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 238}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want the malformed browse body to degrade", err, health)
+	}
+}
+
+func TestAMLLSelectsByIdentityNotOrder(t *testing.T) {
+	t.Parallel()
+
+	// An unrelated first row must not win; the matching row (with album
+	// preference) serves (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "v1/lyrics/search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[
+				{"id":"111","musicNames":["Other Song"],"artistNames":["Other Artist"],"albumNames":["A"]},
+				{"id":"222","musicNames":["Song"],"artistNames":["Artist"],"albumNames":["Wrong Album"]},
+				{"id":"333","musicNames":["Song"],"artistNames":["Artist"],"albumNames":["Right Album"]}
+			]}}`)}, nil
+		case strings.Contains(request.URL, "v1/lyrics/get"):
+			if !strings.Contains(request.URL, "id=333") {
+				t.Fatalf("fetched id from the unrelated/less-preferred row: %s", request.URL)
+			}
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\"><p begin=\"1\">line</p></tt>"}}`)}, nil
+		default:
+			t.Errorf("unexpected request %q", request.URL)
+			return nil, nil
+		}
+	})
+
+	candidates, _, err := fetchAMLLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Right Album"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates = %#v/%v, want the identity+album match served", candidates, err)
+	}
+}
+
+func TestMusixmatchKeepsFallbackWhenMacroFails(t *testing.T) {
+	t.Parallel()
+
+	// richsync 500 must not discard the usable subtitles macro (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "/ws/1.1/token.get"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+		case strings.Contains(request.URL, "/ws/1.1/track.search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":500}},"track.subtitles.get":{"header":{"status_code":200},"body":{"subtitle_list":[{"subtitle_body":"[00:01.00]usable line"}]}}}}}}`)}, nil
+		}
+	})
+
+	candidates, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || health != lookupHealthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v/%v, want the subtitles fallback served despite the richsync failure", candidates, health, err)
+	}
+	if !strings.Contains(candidates[0].response.Lyrics[0].Text, "usable line") {
+		t.Fatalf("text = %q, want the subtitles payload", candidates[0].response.Lyrics[0].Text)
+	}
+}
+
+func TestLRCLibAlignmentFailureDoesNotDuplicate(t *testing.T) {
+	t.Parallel()
+
+	// A LAST token that cannot be found verbatim forfeits the remainder
+	// append: appending the untouched line after the token rendered it twice
+	// (Codex).
+	rendered := renderLRCLibFixture(t, "version: '1.0'\n"+
+		"lines:\n"+
+		"- start_ms: 1000\n"+
+		"  end_ms: 2500\n"+
+		"  text: first line\n"+
+		"  words:\n"+
+		"  - text: first\n"+
+		"    start_ms: 1000\n"+
+		"    end_ms: 1500\n"+
+		"  - text: line!\n"+
+		"    start_ms: 1500\n"+
+		"    end_ms: 2500\n")
+	if got := strings.Count(rendered, "line"); got != 1 {
+		t.Fatalf("rendered = %q, want the unaligned line rendered once (line appears %d times)", rendered, got)
+	}
+}
+
+func renderLRCLibFixture(t *testing.T, document string) string {
+	t.Helper()
+	lines, err := parseLRCLibLyricsFile([]byte(document))
+	if err != nil {
+		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+	}
+	return enhancedLRCFromTimedLines(lines)
+}
+
+func TestEmptyTTMLDocumentIsNotACandidate(t *testing.T) {
+	t.Parallel()
+
+	empty := newLyricsCandidate(lyrics.LyricsText{Text: "<tt></tt>"}, "Stub", "ttml")
+	if empty.present() {
+		t.Fatal("an empty TTML document must not become a candidate (Codex)")
+	}
+	if !emptyLyricsDocument("<tt></tt>", "ttml") {
+		t.Fatal("an empty TTML document is a well-formed empty payload")
+	}
+	metadataOnly := newLyricsCandidate(lyrics.LyricsText{Text: `<tt xmlns:itunes="urn:itunes"></tt>`}, "Stub", "ttml")
+	if metadataOnly.present() {
+		t.Fatal("a metadata-only TTML document must not become a candidate")
+	}
+	if emptyLyricsDocument("<tt><broken", "ttml") {
+		t.Fatal("malformed XML is not a well-formed empty payload")
 	}
 }

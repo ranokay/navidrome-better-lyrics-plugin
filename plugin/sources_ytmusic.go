@@ -112,7 +112,13 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		return nil, lookupDegraded, err
 	}
 
-	text := strings.Join(ytmusicDescriptionLines(response.Body), "\n")
+	lines, browseErr := ytmusicDescriptionLines(response.Body)
+	if browseErr != nil {
+		// A malformed 200 browse body is a provider failure, not a cacheable
+		// miss (Codex).
+		return nil, lookupDegraded, fmt.Errorf("decode YouTube Music browse response: %w", browseErr)
+	}
+	text := strings.Join(lines, "\n")
 	if strings.TrimSpace(text) == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -399,18 +405,18 @@ func firstStringMatch(body []byte, pattern *regexp.Regexp) string {
 // The shelf chrome (editor label, source attribution) rides the same runs and
 // gets trimmed. Deeply nested responses decode generically so upstream
 // re-parenting cannot break the extraction silently.
-func ytmusicDescriptionLines(body []byte) []string {
+func ytmusicDescriptionLines(body []byte) ([]string, error) {
 	var tree any
 	if err := json.Unmarshal(body, &tree); err != nil {
-		return nil
+		return nil, err
 	}
 	shelf := ytmusicFindShelf(tree)
 	if shelf == nil {
-		return nil
+		return nil, nil
 	}
 	description, _ := shelf["description"].(map[string]any)
 	if description == nil {
-		return nil
+		return nil, nil
 	}
 	var texts []string
 	if runs, ok := description["runs"].([]any); ok {
@@ -428,7 +434,7 @@ func ytmusicDescriptionLines(body []byte) []string {
 	for len(texts) > 0 && ytmusicChromeLine(texts[0]) {
 		texts = texts[1:]
 	}
-	return texts
+	return texts, nil
 }
 
 func ytmusicFindShelf(node any) map[string]any {

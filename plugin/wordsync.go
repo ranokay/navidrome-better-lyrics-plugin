@@ -448,6 +448,7 @@ func lrclibWordSeparators(text string, words []timedWord) []timedWord {
 		return words
 	}
 	cursor := 0
+	aligned := true
 	for i := range words {
 		token := words[i].Text
 		if token == "" {
@@ -466,9 +467,15 @@ func lrclibWordSeparators(text string, words []timedWord) []timedWord {
 		if i > 0 && !endsWithWhitespace(words[i-1].Text) && !startsWithWhitespace(token) {
 			words[i-1].Text += " "
 		}
+		// One failed lookup forfeits the remainder append: the unaligned
+		// token's text still lives in the remaining slice, so appending it
+		// would duplicate the line (Codex).
+		aligned = false
 	}
-	if remaining := text[cursor:]; remaining != "" {
-		words[len(words)-1].Text += remaining
+	if aligned {
+		if remaining := text[cursor:]; remaining != "" {
+			words[len(words)-1].Text += remaining
+		}
 	}
 	return words
 }

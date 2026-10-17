@@ -59,7 +59,7 @@ func TestBinimumCandidates_PrefersDurationMatch(t *testing.T) {
 	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		fetches++
 		if strings.Contains(request.URL, "lrc.red/s/GBQCP1400011") {
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte("<tt></tt>")}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte("<tt xmlns:itunes=\"urn:itunes\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">stub line</span></p></tt>")}, nil
 		}
 		return &host.HTTPResponse{StatusCode: 200, Body: search}, nil
 	})

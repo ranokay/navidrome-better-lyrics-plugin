@@ -269,8 +269,18 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		if !appleLyricallyArtistMatches(result.ArtistName, artistTokens) {
 			continue
 		}
-		if delta := int64(math.Abs(float64(result.TrackTimeMillis - target))); delta <= 2000 && delta < bestDelta {
+		if track.Duration > 0 {
+			// The duration gate applies only when the request carries one
+			// (Codex).
+			delta := int64(math.Abs(float64(result.TrackTimeMillis - target)))
+			if delta > 2000 || delta >= bestDelta {
+				continue
+			}
 			trackID, bestDelta, found = result.TrackID, delta, true
+			continue
+		}
+		if !found {
+			trackID, bestDelta, found = result.TrackID, 0, true
 		}
 	}
 	if !found {

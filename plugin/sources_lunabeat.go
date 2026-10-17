@@ -88,6 +88,9 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	}
 	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "LunaBeat", "ttml")
 	if !candidate.present() {
+		if emptyLyricsDocument(text, "ttml") {
+			return nil, lookupHealthy, nil
+		}
 		return nil, lookupDegraded, fmt.Errorf("LunaBeat lyrics returned malformed TTML")
 	}
 	return []lyricsCandidate{candidate}, lookupHealthy, nil

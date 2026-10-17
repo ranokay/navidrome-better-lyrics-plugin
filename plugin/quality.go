@@ -30,6 +30,12 @@ type lyricsCandidate struct {
 }
 
 func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsCandidate {
+	if !lyricsTextHasContent(text.Text, format) {
+		// A well-formed but empty or metadata-only payload (e.g. `<tt></tt>`)
+		// must not become a present candidate that outranks usable fallbacks
+		// (Codex).
+		return lyricsCandidate{}
+	}
 	quality := timingUnsynced
 	switch format {
 	case "ttml":
@@ -51,6 +57,40 @@ func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsC
 		quality:  quality,
 	}
 }
+
+// lyricsTextHasContent reports whether a payload carries servable lyric text:
+// tags and timing stamps alone do not count.
+func lyricsTextHasContent(value, format string) bool {
+	text := value
+	if format == "ttml" {
+		text = xmlTagPattern.ReplaceAllString(text, " ")
+	}
+	text = lrcTimestampPattern.ReplaceAllString(text, " ")
+	text = enhancedWordPattern.ReplaceAllString(text, " ")
+	return strings.TrimSpace(text) != ""
+}
+
+// emptyLyricsDocument reports a payload with no lyric content that is still
+// structurally well-formed (e.g. `<tt></tt>`): such documents are clean
+// misses, whereas malformed XML degrades. TTML well-formedness is checked
+// structurally; other formats treat parsed-but-contentless as empty.
+func emptyLyricsDocument(value, format string) bool {
+	if lyricsTextHasContent(value, format) {
+		return false
+	}
+	if format == "ttml" {
+		return xml.Unmarshal([]byte(value), new(xmlNode)) == nil
+	}
+	return true
+}
+
+// xmlNode is a permissive document root for the well-formedness check.
+type xmlNode struct {
+	XMLName  xml.Name
+	Children []xmlNode `xml:",any"`
+}
+
+var xmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 func (candidate lyricsCandidate) present() bool {
 	return len(candidate.response.Lyrics) > 0

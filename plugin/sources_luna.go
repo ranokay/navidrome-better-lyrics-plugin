@@ -82,7 +82,12 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 	switch strings.ToLower(strings.TrimSpace(detail.Lyric.Type)) {
 	case "krc":
 		lines, parseErr := parseKFamilyLyrics(wordSyncKRC, content)
-		if parseErr == nil && len(lines) > 0 {
+		if parseErr != nil {
+			// Nonempty KRC that no longer parses is a provider failure, not
+			// cacheable negative coverage (Codex).
+			return nil, lookupDegraded, fmt.Errorf("parse Luna KRC payload: %w", parseErr)
+		}
+		if len(lines) > 0 {
 			candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Soda (Luna)", "elrc")
 			if candidate.present() {
 				return []lyricsCandidate{candidate}, lookupHealthy, nil
@@ -167,9 +172,15 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 			if !lunaArtistsMatch(trackInfo, track) {
 				continue
 			}
-			if delta := trackInfo.Duration - target; delta > -2000 && delta < 2000 {
-				return string(trackInfo.ID), true
+			if track.Duration > 0 {
+				// The duration gate applies only when the request carries one
+				// (Codex).
+				delta := trackInfo.Duration - target
+				if delta <= -2000 || delta >= 2000 {
+					continue
+				}
 			}
+			return string(trackInfo.ID), true
 		}
 	}
 	return "", false

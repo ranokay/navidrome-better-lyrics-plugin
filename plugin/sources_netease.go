@@ -89,6 +89,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		return nil, health, err
 	}
 
+	var yrcParseErr error
 	if yrc := strings.TrimSpace(lyricEnvelope.YRC.Lyric); yrc != "" {
 		lines, parseErr := parseKFamilyLyrics(wordSyncYRC, stripNetEaseCreditLines(yrc))
 		if parseErr == nil && len(lines) > 0 {
@@ -97,12 +98,18 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 				return []lyricsCandidate{candidate}, lookupHealthy, nil
 			}
 		}
+		yrcParseErr = parseErr
 	}
 	if lrc := strings.TrimSpace(lyricEnvelope.LRC.Lyric); lrc != "" {
 		candidate := newLyricsCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc")
 		if candidate.present() {
 			return []lyricsCandidate{candidate}, lookupHealthy, nil
 		}
+	}
+	if yrcParseErr != nil {
+		// Nonempty YRC that failed to parse with no usable LRC fallback is a
+		// provider failure, not cacheable negative coverage (Codex).
+		return nil, lookupDegraded, fmt.Errorf("parse NetEase YRC payload: %w", yrcParseErr)
 	}
 	return nil, lookupHealthy, nil
 }
@@ -170,9 +177,15 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 		if !neteaseArtistsMatch(song.Artists, artist) {
 			continue
 		}
-		if delta := song.Duration - target; delta < 2000 && delta > -2000 {
-			return song, true
+		if track.Duration > 0 {
+			// The duration gate applies only when the request carries one;
+			// durationless entries still match on identity (Codex).
+			delta := song.Duration - target
+			if delta >= 2000 || delta <= -2000 {
+				continue
+			}
 		}
+		return song, true
 	}
 	return neteaseSong{}, false
 }

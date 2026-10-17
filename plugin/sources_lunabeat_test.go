@@ -52,7 +52,7 @@ func TestLunaBeatCandidates_SecondLookupUsesCachedIndex(t *testing.T) {
 			indexRequests++
 			return &host.HTTPResponse{StatusCode: 200, Body: songs}, nil
 		default:
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt xmlns:itunes="urn:itunes"><p begin="1" end="2"><span begin="1" end="2">stub line</span></p></tt>`)}, nil
 		}
 	}, newFakeLyricsCache(), time.Now)
 
@@ -101,7 +101,7 @@ func TestLunaBeatCandidates_ReorderedRevisionRefetchesIndex(t *testing.T) {
 		case strings.Contains(request.URL, "api/v1/songs.json"):
 			return &host.HTTPResponse{StatusCode: 200, Body: musicIndex}, nil
 		default:
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt xmlns:itunes="urn:itunes"><p begin="1" end="2"><span begin="1" end="2">stub line</span></p></tt>`)}, nil
 		}
 	}, newFakeLyricsCache(), time.Now)
 

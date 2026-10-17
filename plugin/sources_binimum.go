@@ -88,8 +88,12 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if strings.TrimSpace(string(lyricsResponse.Body)) == "" {
 		return nil, lookupHealthy, nil
 	}
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: string(lyricsResponse.Body)}, "BiniLyrics", "ttml")
+	text := string(lyricsResponse.Body)
+	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "BiniLyrics", "ttml")
 	if !candidate.present() {
+		if emptyLyricsDocument(text, "ttml") {
+			return nil, lookupHealthy, nil
+		}
 		return nil, lookupDegraded, fmt.Errorf("BiniLyrics lyrics returned malformed TTML")
 	}
 	return []lyricsCandidate{candidate}, lookupHealthy, nil

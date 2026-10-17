@@ -78,7 +78,7 @@ func TestAMLLCandidates_GetFailureSurfaces(t *testing.T) {
 
 	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/v1/lyrics/search") {
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1"}]}}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1","musicNames":["Song"],"artistNames":["Artist"]}]}}`)}, nil
 		}
 		return &host.HTTPResponse{StatusCode: 500, Body: []byte(`{"error":"boom"}`)}, nil
 	})
@@ -97,7 +97,7 @@ func TestAMLLCandidates_UnexpectedGetPayloadErrors(t *testing.T) {
 
 	provider := providerForCatalog(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/v1/lyrics/search") {
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1"}]}}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1","musicNames":["Song"],"artistNames":["Artist"]}]}}`)}, nil
 		}
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"lyrics":""}}`)}, nil
 	})

@@ -33,7 +33,10 @@ func (i *amllItemID) UnmarshalJSON(raw []byte) error {
 }
 
 type amllItem struct {
-	ID amllItemID `json:"id"`
+	ID          amllItemID `json:"id"`
+	MusicNames  []string   `json:"musicNames"`
+	ArtistNames []string   `json:"artistNames"`
+	AlbumNames  []string   `json:"albumNames"`
 }
 
 // amllEnvelopeStatusFailure classifies an application-level status the HTTP
@@ -91,8 +94,14 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	if len(envelope.Data.Items) == 0 {
 		return nil, lookupHealthy, nil
 	}
+	matched, ok := pickAMLLItem(envelope.Data.Items, track)
+	if !ok {
+		// Response order is not identity: only a normalized title/artist
+		// match may be fetched (Codex).
+		return nil, lookupHealthy, nil
+	}
 
-	lyricsURL := fmt.Sprintf("%s/v1/lyrics/get?id=%s&format=ttml", amllEndpoint, url.QueryEscape(string(envelope.Data.Items[0].ID)))
+	lyricsURL := fmt.Sprintf("%s/v1/lyrics/get?id=%s&format=ttml", amllEndpoint, url.QueryEscape(string(matched.ID)))
 	lyricsResponse, err := p.sendRequest("AMLL lyrics", lyricsURL, headers, deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
@@ -132,11 +141,62 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 		return nil, lookupDegraded, fmt.Errorf("AMLL lyrics returned malformed TTML")
 	}
 
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: getEnvelope.Data.Lyrics}, "AMLL", "ttml")
+	lyricsBody := getEnvelope.Data.Lyrics
+	candidate := newLyricsCandidate(lyrics.LyricsText{Text: lyricsBody}, "AMLL", "ttml")
 	if !candidate.present() {
+		if emptyLyricsDocument(lyricsBody, "ttml") {
+			return nil, lookupHealthy, nil
+		}
 		return nil, lookupDegraded, fmt.Errorf("AMLL lyrics returned unparseable TTML")
 	}
 	return []lyricsCandidate{candidate}, lookupHealthy, nil
+}
+
+// pickAMLLItem selects the search row whose collapsed title and artist match
+// the request; the album breaks ties between otherwise-qualified rows.
+func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
+	titleTokens := normalizedLyricTokens(track.Title)
+	artistTokens := normalizedLyricTokens(trackArtist(track))
+	album := strings.TrimSpace(track.Album)
+
+	var best amllItem
+	found := false
+	bestAlbum := false
+	for _, item := range items {
+		if !amllNamesMatch(item.MusicNames, titleTokens) {
+			continue
+		}
+		if !amllNamesMatch(item.ArtistNames, artistTokens) {
+			continue
+		}
+		albumMatch := album != "" && amllNamesContain(item.AlbumNames, normalizedLyricTokens(album))
+		if !found || (!bestAlbum && albumMatch) {
+			best, found, bestAlbum = item, true, bestAlbum || albumMatch
+		}
+	}
+	return best, found
+}
+
+// amllNamesMatch accepts any listed name whose collapsed tokens match.
+func amllNamesMatch(names []string, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, name := range names {
+		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+func amllNamesContain(names []string, tokens []string) bool {
+	for _, name := range names {
+		if lyricTokensMatch(normalizedLyricTokens(name), tokens) {
+			return true
+		}
+	}
+	return false
 }
 
 func amllSearchURL(track lyrics.TrackInfo) (string, bool) {

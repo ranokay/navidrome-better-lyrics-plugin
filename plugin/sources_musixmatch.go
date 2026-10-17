@@ -131,18 +131,30 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro.subtitles.get", macroEnvelope.Message.Header.StatusCode); err != nil {
 		return nil, health, err
 	}
-	for _, macro := range macroEnvelope.Message.Body.MacroCalls {
+	var macroFailures []error
+	for name, macro := range macroEnvelope.Message.Body.MacroCalls {
 		// The richsync/subtitles responses can reject the token while the outer
 		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
 		if musixmatchTokenRejected(macro.Header) {
 			p.noteMusixmatchTokenRejection()
 			return nil, lookupTemporarilySkipped, nil
 		}
-		if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
-			return nil, health, err
+		if _, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
+			// One failed optional macro must not discard the usable payloads
+			// the same response carries (Codex): record it and let the
+			// candidate ranking below decide.
+			macroFailures = append(macroFailures, fmt.Errorf("musixmatch macro %s: %w", name, err))
+			continue
 		}
 	}
-	return musixmatchCandidate(macroEnvelope.Message.Body.MacroCalls)
+	candidates, health, err := musixmatchCandidate(macroEnvelope.Message.Body.MacroCalls)
+	if len(candidates) > 0 {
+		return candidates, health, err
+	}
+	if len(macroFailures) > 0 {
+		return nil, lookupDegraded, errors.Join(macroFailures...)
+	}
+	return candidates, health, err
 }
 
 // musixmatchTokenRejected reports a JSON-envelope rejection of the current token:

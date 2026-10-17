@@ -75,15 +75,19 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	found := false
 	for _, result := range results {
 		// Fuzzy search rows only qualify when their identity matches; the
-		// duration gate then ranks the qualifying candidates (Devin).
+		// duration gate then ranks the qualifying candidates (Devin), and
+		// only applies when the request carries a duration (Codex).
 		if !lrclibRecordMetadataMatches(result, track) {
 			continue
 		}
-		delta := int64(math.Abs(float64(int64(math.Round(result.Duration)) - target)))
-		if delta > 2 {
-			continue
+		delta := int64(0)
+		if track.Duration > 0 {
+			delta = int64(math.Abs(float64(int64(math.Round(result.Duration)) - target)))
+			if delta > 2 {
+				continue
+			}
 		}
-		if delta < bestDelta {
+		if delta < bestDelta || !found {
 			best, bestDelta, found = result, delta, true
 		}
 	}
