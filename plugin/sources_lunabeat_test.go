@@ -70,6 +70,8 @@ func TestLunaBeatCandidates_SecondLookupUsesCachedIndex(t *testing.T) {
 func TestLunaBeatCandidates_IndexFailureSkipsSource(t *testing.T) {
 	t.Parallel()
 
+	// Index acquisition is an operational failure, not a clean miss: sweeps
+	// must not mark the source covered while the hub is down (Codex).
 	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "api/v1/manifest.json") || strings.Contains(request.URL, "api/v1/songs.json") {
 			return &host.HTTPResponse{StatusCode: 503, Body: []byte(`unavailable`)}, nil
@@ -79,11 +81,11 @@ func TestLunaBeatCandidates_IndexFailureSkipsSource(t *testing.T) {
 	}, newFakeLyricsCache(), time.Now)
 
 	candidates, health, err := fetchLunaBeatLyricsCandidates(provider, lyrics.TrackInfo{Title: "confidence", Artist: "Gareth.T"}, time.Now().Add(stageOneLookupBudget))
-	if err != nil || len(candidates) != 0 {
-		t.Fatalf("result = %#v/%v; want clean miss on broken index", candidates, err)
+	if err == nil || len(candidates) != 0 {
+		t.Fatalf("result = %#v/%v; want a degraded operational failure on a broken index", candidates, err)
 	}
-	if health != lookupHealthy {
-		t.Fatalf("health = %v, want healthy (source failed clean)", health)
+	if health != lookupDegraded {
+		t.Fatalf("health = %v, want degraded", health)
 	}
 }
 

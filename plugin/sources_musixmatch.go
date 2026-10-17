@@ -227,6 +227,9 @@ func (p *lyricsProvider) musixmatchToken(deadline time.Time) (string, error) {
 	if musixmatchTokenRejected(envelope.Message.Header) {
 		return "", errMusixmatchTokenChallenge
 	}
+	if _, err := p.musixmatchEnvelopeStatusFailure("Musixmatch token.get", envelope.Message.Header.StatusCode); err != nil {
+		return "", err
+	}
 	token := strings.TrimSpace(envelope.Message.Body.UserToken)
 	if token == "" {
 		return "", fmt.Errorf("musixmatch token response has no user token")

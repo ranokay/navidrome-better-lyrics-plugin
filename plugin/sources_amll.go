@@ -36,6 +36,22 @@ type amllItem struct {
 	ID amllItemID `json:"id"`
 }
 
+// amllEnvelopeStatusFailure classifies an application-level status the HTTP
+// layer already answered 200 for: no-match 404 keeps the quiet miss contract,
+// an envelope rate limit activates the provider cooldown, and any other
+// non-200 status is a degraded failure instead of a healthy miss (Codex).
+func amllEnvelopeStatusFailure(p *lyricsProvider, source string, status int) (lookupHealth, error) {
+	switch status {
+	case 200, 404:
+		return lookupHealthy, nil
+	case 429:
+		p.rememberCooldown(sourceGlobalCooldownKey("amll"), defaultRateLimitCooldown)
+		return lookupDegraded, &providerHTTPError{source: source, status: 429, globalRateLimit: true}
+	default:
+		return lookupDegraded, &providerHTTPError{source: source, status: int32(status)}
+	}
+}
+
 // fetchAMLLyricsCandidates resolves lyrics through the AMLL community DB:
 // first search by name/artist/album, then fetch the matched TTML.
 func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
@@ -65,6 +81,9 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	var envelope amllSearchEnvelope
 	if err := json.Unmarshal(response.Body, &envelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode AMLL search response: %w", err)
+	}
+	if health, err := amllEnvelopeStatusFailure(p, "AMLL search envelope", envelope.Status); err != nil {
+		return nil, health, err
 	}
 	if len(envelope.Data.Items) == 0 {
 		return nil, lookupHealthy, nil
@@ -97,6 +116,9 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	}
 	if err := json.Unmarshal(lyricsResponse.Body, &getEnvelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode AMLL lyrics response: %w", err)
+	}
+	if health, err := amllEnvelopeStatusFailure(p, "AMLL lyrics envelope", getEnvelope.Status); err != nil {
+		return nil, health, err
 	}
 	if strings.TrimSpace(getEnvelope.Data.Lyrics) == "" {
 		return nil, lookupDegraded, fmt.Errorf("AMLL lyrics returned malformed TTML")

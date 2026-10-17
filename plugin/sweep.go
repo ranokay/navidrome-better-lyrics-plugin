@@ -225,6 +225,13 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		default:
 			// A clean miss is covered work too: the source was fetched and
 			// genuinely has nothing (Codex: misses must terminate the sweep).
+			// Persist the miss so later passes and continuations can skip the
+			// refetch instead of re-walking the same clean misses every cycle.
+			if !p.cacheSourceMissIfAbsent(track, source.ID) {
+				// A refused miss write is not honest coverage.
+				notCovered++
+				continue
+			}
 			missed++
 		}
 	}
@@ -236,11 +243,16 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		if allowedSet == nil || source.Fetch == nil || allowedSet[source.ID] {
 			continue
 		}
-		if _, ok := p.readCachedSourceCandidate(track, source.ID); ok {
-			continue
+		cachedSibling, ok := p.readCachedSourceCandidate(track, source.ID)
+		if !ok {
+			coveredOthers = false
+			break
 		}
-		coveredOthers = false
-		break
+		// A cached sibling's TTL also bounds the marker, so a synchronized
+		// continuation cannot outlive a plain sibling's shorter entry (Codex).
+		if covered := cacheTTLForCoveredCandidate(cachedSibling); covered > 0 && covered < coverageTTL {
+			coverageTTL = covered
+		}
 	}
 	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && coveredOthers && cached+missed+skipped == implemented && implemented > 0 {
 		key := sweepDoneMarkerKey(track, fullOrder)
@@ -253,6 +265,31 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 	}
 	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, sources
+}
+
+// cacheSourceMissIfAbsent records a healthy source's "no lyrics here" as a
+// negative per-source entry (shortest miss TTL wins nothing: it bounds neither
+// the done marker nor any positive result) so continuations and later passes
+// can count the source covered without refetching it.
+func (p *lyricsProvider) cacheSourceMissIfAbsent(track lyrics.TrackInfo, sourceID string) bool {
+	key, ok := lyricsCacheKeyForSource(track, sourceID)
+	if !ok {
+		return false
+	}
+	if _, exists, _ := p.cache.Get(key); exists {
+		// A concurrent or previous pass already stored a positive result.
+		return true
+	}
+	value, err := json.Marshal(cachedLyricsEnvelope{Quality: timingUnsynced})
+	if err != nil {
+		return false
+	}
+	if p.cache.SetWithTTL(key, value, unsyncedLyricsCacheTTLSeconds) != nil {
+		return false
+	}
+	// An oversized/evicted write must not count as coverage.
+	_, exists, _ := p.cache.Get(key)
+	return exists
 }
 
 // sourceInCooldown reports provider-wide cooldown state for a source's own id and

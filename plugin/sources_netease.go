@@ -115,14 +115,30 @@ type neteaseSearchEnvelope struct {
 }
 
 type neteaseSong struct {
-	ID       int64 `json:"id"`
-	Duration int64 `json:"dt"` // ms (live cloudsearch wire name)
+	ID       int64           `json:"id"`
+	Name     string          `json:"name"`
+	Artists  []neteaseArtist `json:"ar"` // live cloudsearch wire: `ar`
+	Duration int64           `json:"dt"` // ms (live cloudsearch wire name)
+}
+
+type neteaseArtist struct {
+	Name string `json:"name"`
 }
 
 func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
+	title, artist := normalizedLyricTokens(track.Title), normalizedLyricTokens(trackArtist(track))
 	for _, song := range songs {
 		if song.ID <= 0 {
+			continue
+		}
+		// Require a normalized metadata match before the duration gate: the
+		// fuzzy cloud search can return unrelated rows with similar durations,
+		// and their lyrics would then outrank correct candidates (Codex).
+		if !lyricTokensMatch(normalizedLyricTokens(song.Name), title) {
+			continue
+		}
+		if !neteaseArtistsMatch(song.Artists, artist) {
 			continue
 		}
 		if delta := song.Duration - target; delta < 2000 && delta > -2000 {
@@ -130,6 +146,21 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 		}
 	}
 	return neteaseSong{}, false
+}
+
+// neteaseArtistsMatch reports whether any returned artist name matches the
+// requested artist tokens: the cloudsearch payload can carry collaborating
+// artists, so one matching row suffices.
+func neteaseArtistsMatch(song []neteaseArtist, wanted []string) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	for _, candidateArtist := range song {
+		if lyricTokensMatch(normalizedLyricTokens(candidateArtist.Name), wanted) {
+			return true
+		}
+	}
+	return false
 }
 
 type neteaseLyricEnvelope struct {

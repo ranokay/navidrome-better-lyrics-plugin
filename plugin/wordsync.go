@@ -55,6 +55,7 @@ const (
 // whole text as a wordless line.
 func parseKFamilyLyrics(mode wordSyncMode, input string) ([]timedLine, error) {
 	var lines []timedLine
+	offset := kFamilyGlobalOffset(input)
 	for _, raw := range strings.Split(input, "\n") {
 		lineStart, lineDur, body, ok := parseBracketLine(strings.TrimRight(raw, "\r"))
 		if !ok {
@@ -66,10 +67,52 @@ func parseKFamilyLyrics(mode wordSyncMode, input string) ([]timedLine, error) {
 		}
 		lines = append(lines, timedLine{StartMs: lineStart, EndMs: lineStart + lineDur, Text: lineText, Words: words})
 	}
+	shiftTimedLines(lines, offset)
 	if len(lines) == 0 {
 		return nil, errEmptyWordSyncInput
 	}
 	return lines, nil
+}
+
+// kFamilyGlobalOffset scans metadata rows for the last `[offset:±ms]` tag: KRC,
+// QRC, and YRC payloads use it to resynchronise every timing window, and the
+// bracket parser would otherwise discard it silently (Codex).
+func kFamilyGlobalOffset(input string) int64 {
+	var offset int64
+	for _, raw := range strings.Split(input, "\n") {
+		row := strings.TrimSpace(strings.TrimRight(raw, "\r"))
+		if !strings.HasPrefix(row, "[offset:") || !strings.HasSuffix(row, "]") {
+			continue
+		}
+		value := strings.TrimSpace(row[len("[offset:") : len(row)-1])
+		negative := strings.HasPrefix(value, "-")
+		value = strings.TrimLeft(value, "+-")
+		ms, err := parseMillis(value)
+		if err != nil {
+			continue
+		}
+		if negative {
+			ms = -ms
+		}
+		offset = ms
+	}
+	return offset
+}
+
+// shiftTimedLines applies a global offset to every line and word window,
+// clamping negative stamps to zero the way enhanced-LRC stamps require.
+func shiftTimedLines(lines []timedLine, offset int64) {
+	if offset == 0 {
+		return
+	}
+	for i := range lines {
+		lines[i].StartMs = max(int64(0), lines[i].StartMs+offset)
+		lines[i].EndMs = max(lines[i].StartMs, lines[i].EndMs+offset)
+		for j := range lines[i].Words {
+			lines[i].Words[j].StartMs = max(int64(0), lines[i].Words[j].StartMs+offset)
+			lines[i].Words[j].EndMs = max(lines[i].Words[j].StartMs, lines[i].Words[j].EndMs+offset)
+		}
+	}
 }
 
 // parseBracketLine splits `[start,dur]` headers from row bodies. Rows without two

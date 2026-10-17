@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,11 +30,14 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		return nil, lookupHealthy, nil
 	}
 
-	songs, _, ok := p.readLunaBeatIndex(deadline)
-	if !ok {
-		// A broken or oversized index skips the source for this lookup without
-		// failing the whole chain (Review Focus #4).
-		return nil, lookupHealthy, nil
+	songs, err := p.readLunaBeatIndex(deadline)
+	if err != nil {
+		// Index acquisition is operational: a timeout, HTTP error, malformed
+		// payload, or oversized index must stay a degraded lookup so sweeps
+		// cannot mark the source covered while the hub is actually down
+		// (Codex). A valid index with no matching song stays the only healthy
+		// miss.
+		return nil, lookupDegraded, err
 	}
 
 	wanted := normalizeLunaBeatTitle(title, artist)
@@ -90,8 +94,10 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 }
 
 // readLunaBeatIndex returns the cached songs index when the live manifest revision
-// matches, otherwise refetches the index (and re-caches it gzipped).
-func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnvelope, string, bool) {
+// matches, otherwise refetches the index (and re-caches it gzipped). Manifest
+// failures fall through to a direct index refetch (best-effort revision
+// tracking); index acquisition failures themselves degrade the lookup (Codex).
+func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnvelope, error) {
 	manifestResponse, err := p.sendRequest("LunaBeat manifest", lunaBeatBase+"/api/v1/manifest.json", lunaBeatHeaders(), deadline)
 	if err == nil && manifestResponse.StatusCode == 200 {
 		var manifest struct {
@@ -102,7 +108,7 @@ func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnv
 				if value, unpackErr := gunzipString(raw); unpackErr == nil {
 					var envelope lunaBeatIndexEnvelope
 					if json.Unmarshal(value, &envelope) == nil && envelope.Revision == manifest.Revision {
-						return envelope, envelope.Revision, true
+						return envelope, nil
 					}
 				}
 			}
@@ -111,21 +117,29 @@ func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnv
 
 	indexResponse, err := p.sendRequest("LunaBeat index", lunaBeatBase+"/api/v1/songs.json", lunaBeatHeaders(), deadline)
 	if err != nil {
-		return lunaBeatIndexEnvelope{}, "", false
+		return lunaBeatIndexEnvelope{}, err
 	}
-	if indexResponse.StatusCode == 200 {
-		var envelope lunaBeatIndexEnvelope
-		if json.Unmarshal(indexResponse.Body, &envelope) == nil && envelope.Revision != "" {
-			if raw := gzipString(indexResponse.Body); len(raw) <= maxCachedLyricsEntryBytes {
-				p.cache.SetWithTTL(lunaBeatIndexKey, raw, lunaBeatIndexTTL)
-				return envelope, envelope.Revision, true
-			}
-			// An index larger than the per-entry cap would evict the whole store;
-			// skip the source instead.
-			return lunaBeatIndexEnvelope{}, "", false
-		}
+	switch indexResponse.StatusCode {
+	case 200:
+		// fall through to the envelope decode
+	case 429:
+		retryAfter := retryAfterDuration(indexResponse.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("luna-beat"), retryAfter)
+		return lunaBeatIndexEnvelope{}, rateLimitResponseError("LunaBeat index", indexResponse, retryAfter)
+	default:
+		return lunaBeatIndexEnvelope{}, providerResponseError("LunaBeat index", indexResponse)
 	}
-	return lunaBeatIndexEnvelope{}, "", false
+	var envelope lunaBeatIndexEnvelope
+	if json.Unmarshal(indexResponse.Body, &envelope) != nil || envelope.Revision == "" {
+		return lunaBeatIndexEnvelope{}, errors.New("decode LunaBeat index response")
+	}
+	if raw := gzipString(indexResponse.Body); len(raw) <= maxCachedLyricsEntryBytes {
+		p.cache.SetWithTTL(lunaBeatIndexKey, raw, lunaBeatIndexTTL)
+		return envelope, nil
+	}
+	// An index larger than the per-entry cap would evict the whole store;
+	// that is an operational failure too, not a miss.
+	return lunaBeatIndexEnvelope{}, errors.New("LunaBeat index exceeds the cache entry cap")
 }
 
 type lunaBeatIndexEnvelope struct {

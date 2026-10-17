@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,36 @@ import (
 )
 
 const qqEndpoint = "https://lyrics-api.boidu.dev/qq/getLyrics"
+
+// portatoQRCContent extracts the QRC body from the QQ XML envelope: the live
+// payload wraps the bracket rows in a LyricContent attribute, so parsing the
+// raw document would leave XML entities escaped and lose rows whose line
+// breaks were entity-encoded. Raw (non-XML) QRC responses pass through
+// unchanged; a malformed QrcInfos shell fails loudly so the lookup degrades
+// instead of parsing XML junk (Codex).
+func portatoQRCContent(document string) (string, error) {
+	if !strings.Contains(document, "QrcInfos") {
+		return document, nil
+	}
+	var shell struct {
+		LyricInfos []struct {
+			Lyrics []struct {
+				LyricContent string `xml:"LyricContent,attr"`
+			} `xml:",any"`
+		} `xml:",any"`
+	}
+	if err := xml.Unmarshal([]byte(document), &shell); err != nil {
+		return "", fmt.Errorf("decode QQ QRC envelope: %w", err)
+	}
+	for _, info := range shell.LyricInfos {
+		for _, lyric := range info.Lyrics {
+			if content := strings.TrimSpace(lyric.LyricContent); content != "" {
+				return content, nil
+			}
+		}
+	}
+	return "", errors.New("QQ QRC envelope carries no LyricContent")
+}
 
 // fetchPortatoLyricsCandidates queries the Better Lyrics QQ endpoint for
 // word-synced QRC lyrics, walking the same specificity tiers as the TTML source.
@@ -45,7 +76,13 @@ func fetchPortatoLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 			continue
 		}
 
-		lines, parseErr := parseKFamilyLyrics(wordSyncQRC, text)
+		qrc, extractErr := portatoQRCContent(text)
+		if extractErr != nil {
+			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics QQ API returned a bad QRC envelope"))
+			health = health.merge(lookupDegraded)
+			continue
+		}
+		lines, parseErr := parseKFamilyLyrics(wordSyncQRC, qrc)
 		if parseErr != nil {
 			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics QQ API returned unparseable QRC"))
 			health = health.merge(lookupDegraded)

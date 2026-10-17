@@ -23,7 +23,7 @@ func TestNetEaseCandidates_MatchesLiveDTDuration(t *testing.T) {
 		requests++
 		switch {
 		case strings.Contains(request.URL, "cloudsearch/pc"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":17822787,"name":"Live Forever","dt":280000}]}}`)}, nil
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":17822787,"name":"Live Forever","ar":[{"name":"Oasis"}],"dt":280000}]}}`)}, nil
 		default:
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lrc":{"lyric":"[00:11.93]Maybe\n"},"yrc":{}}`)}, nil
 		}
@@ -629,4 +629,316 @@ func TestMusixmatchEnvelopeStatusesClassified(t *testing.T) {
 			t.Fatalf("result = (%v, %v); want a degraded lookup when a rate-limited macro spoils the pass", err, health)
 		}
 	})
+}
+
+func TestKFamilyOffsetShiftsTimings(t *testing.T) {
+	t.Parallel()
+
+	// KRC/QRC/YRC carry a global `[offset:±ms]` tag; dropping it left every
+	// line and word window unshifted (Codex).
+	positive, err := parseKFamilyLyrics(wordSyncQRC, "[offset:500]\n[1000,400]word(0,400)\n")
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics(offset +500) error = %v, want nil", err)
+	}
+	if rendered := enhancedLRCFromTimedLines(positive); !strings.HasPrefix(rendered, "[00:01.50]<00:01.50>word") {
+		t.Fatalf("rendered = %q, want the +500ms offset folded into the stamp", rendered)
+	}
+
+	negative, err := parseKFamilyLyrics(wordSyncQRC, "[offset:-300]\n[500,400]word(0,400)\n")
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics(offset -300) error = %v, want nil", err)
+	}
+	if rendered := enhancedLRCFromTimedLines(negative); !strings.HasPrefix(rendered, "[00:00.20]<00:00.20>word") {
+		t.Fatalf("rendered = %q, want the -300ms offset folded into the stamp", rendered)
+	}
+
+	untouched, err := parseKFamilyLyrics(wordSyncQRC, "[offset:0]\n[1000,400]word(0,400)\n")
+	if err != nil {
+		t.Fatalf("parseKFamilyLyrics(offset 0) error = %v, want nil", err)
+	}
+	if rendered := enhancedLRCFromTimedLines(untouched); !strings.HasPrefix(rendered, "[00:01.00]") {
+		t.Fatalf("rendered = %q, want a zero offset to leave timings alone", rendered)
+	}
+}
+
+func TestPortatoQRCEnvelopeExtraction(t *testing.T) {
+	t.Parallel()
+
+	// The QQ response wraps QRC inside an XML attribute: literal newlines let
+	// the bracket parser see the rows, but XML entities stay escaped and
+	// entity-encoded line breaks break parsing entirely (Codex).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "qq") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lyrics":"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<QrcInfos>\n<LyricInfo LyricCount=\"1\">\n<Lyric_1 LyricType=\"1\" LyricContent=\"[400,400]Rock &amp; Roll(0,400)\u000a[900,300]Go(0,300)\n\"/>\n</LyricInfo>\n</QrcInfos>","provider":"qq"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	candidates, health, err := fetchPortatoLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchPortatoLyricsCandidates() error = %v, want nil", err)
+	}
+	if health != lookupHealthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v, want one candidate from the XML envelope", candidates, health)
+	}
+	rendered := candidates[0].response.Lyrics[0].Text
+	if strings.Contains(rendered, "&amp;") {
+		t.Fatalf("rendered = %q, want XML entities decoded", rendered)
+	}
+	if !strings.Contains(rendered, "Rock & Roll") || !strings.Contains(rendered, "Go") {
+		t.Fatalf("rendered = %q, want the escaped lyric text unescaped and both lines parsed", rendered)
+	}
+}
+
+func TestLunaBeatIndexFailuresStayDegraded(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis"}
+	facade := func(manifestStatus, indexStatus int32) func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			switch {
+			case strings.Contains(request.URL, "manifest.json"):
+				if manifestStatus == 0 {
+					return &host.HTTPResponse{StatusCode: 404}, nil
+				}
+				return &host.HTTPResponse{StatusCode: manifestStatus, Body: []byte(`{"revision":"r1"}`)}, nil
+			case strings.Contains(request.URL, "songs.json"):
+				return &host.HTTPResponse{StatusCode: indexStatus, Body: []byte(`{"schemaVersion":6,"revision":"r1","songs":[]}`)}, nil
+			default:
+				t.Errorf("unexpected request %q", request.URL)
+				return &host.HTTPResponse{StatusCode: 404}, nil
+			}
+		}
+	}
+
+	t.Run("index http failure degrades", func(t *testing.T) {
+		provider := newLyricsProviderWithDeps(facade(404, 503), newFakeLyricsCache(), time.Now, nil, nil)
+		_, health, err := fetchLunaBeatLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a degraded operational failure", err, health)
+		}
+	})
+
+	t.Run("index 429 activates cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(404, 429), cache, time.Now, nil, nil)
+		_, _, err := fetchLunaBeatLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("index 429 converted to a miss; want a degraded error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("luna-beat")) <= 0 {
+			t.Fatal("index 429 activated no cooldown")
+		}
+	})
+
+	t.Run("valid index without a match stays a healthy miss", func(t *testing.T) {
+		provider := newLyricsProviderWithDeps(facade(200, 200), newFakeLyricsCache(), time.Now, nil, nil)
+		_, health, err := fetchLunaBeatLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health != lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a quiet miss with an empty valid index", err, health)
+		}
+	})
+}
+
+func TestAMLLyricsEnvelopeStatusesClassified(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	facade := func(searchExecutor func() string) func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			switch {
+			case strings.Contains(request.URL, "amll"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(searchExecutor())}, nil
+			default:
+				return &host.HTTPResponse{StatusCode: 404}, nil
+			}
+		}
+	}
+
+	t.Run("item envelope server status degrades", func(t *testing.T) {
+		provider := newLyricsProvider(facade(func() string { return `{"status":500}` }))
+		_, health, err := fetchAMLLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want degraded on envelope 500", err, health)
+		}
+	})
+
+	t.Run("item envelope 429 activates cooldown", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(func() string { return `{"status":429}` }), cache, time.Now, nil, nil)
+		_, _, err := fetchAMLLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("envelope 429 converted to a miss; want a degraded error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("amll")) <= 0 {
+			t.Fatal("envelope 429 activated no cooldown")
+		}
+	})
+
+	t.Run("lyrics envelope server status degrades", func(t *testing.T) {
+		requests := 0
+		provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			requests++
+			switch {
+			case strings.Contains(request.URL, "v1/lyrics/search"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"1"}]}}`)}, nil
+			case strings.Contains(request.URL, "v1/lyrics/get"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":500}`)}, nil
+			default:
+				t.Errorf("unexpected request %q", request.URL)
+				return &host.HTTPResponse{StatusCode: 404}, nil
+			}
+		})
+		_, _, err := fetchAMLLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatalf("lookup succeeded; want a degraded error when the lyrics envelope reports 500 (requests=%d)", requests)
+		}
+	})
+}
+
+func TestMusixmatchMintEnvelopeStatusesClassified(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	t.Run("mint envelope 429 keeps no cooldown creativity", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":429}}}`)}, nil
+		}, cache, time.Now, nil, nil)
+		_, _, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("token.get envelope 429 converted to a miss; want an error")
+		}
+		if provider.activeCooldown(sourceGlobalCooldownKey("musixmatch")) <= 0 {
+			t.Fatal("token.get envelope 429 activated no cooldown")
+		}
+	})
+
+	t.Run("mint envelope challenge stays quiet", func(t *testing.T) {
+		provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":401,"hint":"captcha"}}}`)}, nil
+		})
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health != lookupHealthy {
+			t.Fatalf("result = (%v, %v); want the challenge kept quiet", err, health)
+		}
+	})
+}
+
+func TestNetEaseCandidates_RequireMetadataMatch(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "cloudsearch/pc"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[
+				{"id":111,"name":"I Could Sing of Your Love Forever","ar":[{"name":"Oasis Worship"}],"dt":280000},
+				{"id":222,"name":"Live Forever (Live)","ar":[{"name":"Oasis"}],"dt":340000}
+			]}}`)}, nil
+		case strings.Contains(request.URL, "lyric/v1"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"lrc":{"lyric":"[00:11.93]Maybe\n"},"yrc":{}}`)}, nil
+		default:
+			t.Errorf("unexpected request %q", request.URL)
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+	})
+
+	candidates, _, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 340}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchNetEaseLyricsCandidates() error = %v, want nil", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want the metadata-matching candidate only (the unrelated duration-only row must be rejected)", candidates)
+	}
+	assertLyricsSource(t, candidates[0].response.Source, "NetEase", "lrc")
+
+	provider = newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":111,"name":"Wrong Song","ar":[{"name":"Somebody"}],"dt":340000}]}}`)}, nil
+	})
+	if candidates, health, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 340}, time.Now().Add(stageOneLookupBudget)); err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss when no row matches the metadata", candidates, health, err)
+	}
+}
+
+func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
+	t.Parallel()
+
+	// The first pass records a clean miss and defers the tail source; the
+	// continuation must recognize the earlier miss instead of re-enqueueing
+	// full sweeps every dedupe cycle (Codex).
+	cache := newFakeLyricsCache()
+	one, two := new(int), new(int)
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*one++
+				time.Sleep(3 * time.Millisecond)
+				return nil, lookupHealthy, nil
+			}},
+		{ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				*two++
+				return nil, lookupHealthy, nil
+			}},
+	}, func(lyrics.TrackInfo) error { return nil })
+	provider.sweepBudget = time.Millisecond
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	status, deferredIDs := provider.runSweepSources(track, nil)
+	if len(deferredIDs) != 1 || deferredIDs[0] != "two" {
+		t.Fatalf("status/deferred = %q/%v, want the tail source deferred", status, deferredIDs)
+	}
+	if *one != 1 || *two != 0 {
+		t.Fatalf("fetch counts = %d/%d, want only the head source fetched", *one, *two)
+	}
+
+	provider.sweepBudget = 0
+	provider2 := newLyricsProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
+	provider2.runSweepSources(track, []string{"two"})
+
+	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); !exists {
+		t.Fatal("the continuation must complete the full-order marker when earlier misses carried over")
+	}
+	if *one != 1 {
+		t.Fatalf("head fetch count = %d, want the continuation to skip the cached clean miss", *one)
+	}
+}
+
+func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
+	t.Parallel()
+
+	// A plain sibling's per-source entry expires after an hour; the marker a
+	// continuation writes over the full order must not outlive it (Codex).
+	cache := newFakeLyricsCache()
+	plainSource := lyricsSource{ID: "plain", Display: "plain", Hosts: []string{"plain.example.test"}, DefaultEnabled: true,
+		Fetch: func(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+			time.Sleep(3 * time.Millisecond)
+			return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "plain words"}, "plain", "plain")}, lookupHealthy, nil
+		}}
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		plainSource,
+		sweepSource("tail", new(int), false, nil),
+	}, func(lyrics.TrackInfo) error { return nil })
+	provider.sweepBudget = time.Millisecond
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	status, deferred := provider.runSweepSources(track, nil)
+	if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); exists {
+		t.Fatalf("status/deferred = %q/%v; expected the tail to defer, not complete", status, deferred)
+	}
+
+	provider2 := newLyricsProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
+	provider2.sweepBudget = 0
+	provider2.runSweepSources(track, []string{"tail"})
+
+	ttl, ok := cache.ttlsForKey[sweepDoneMarkerKey(track, provider2.activeSources())]
+	if !ok {
+		t.Fatal("expected a done marker from the continuation")
+	}
+	if ttl != unsyncedLyricsCacheTTLSeconds {
+		t.Fatalf("done marker TTL = %d, want the plain sibling's %d entry to bound the continuation marker", ttl, unsyncedLyricsCacheTTLSeconds)
+	}
 }
