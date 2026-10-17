@@ -1429,6 +1429,7 @@ func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
 
 	// The whole collapsed name is a match option too: "AC/DC" split pieces
 	// ("ac","dc") would never equal the hub alias "acdc" (Greptile P1).
+	var ttmlRequest string
 	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "api/v1/manifest.json"):
@@ -1436,11 +1437,19 @@ func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
 		case strings.Contains(request.URL, "api/v1/songs.json"):
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"z","title":"Thunderstruck","artists":["AC/DC"],"album":"B","path":"lyrics/z.ttml"}]}`)}, nil
 		default:
+			ttmlRequest = request.URL
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
 		}
 	}, newFakeLyricsCache(), time.Now, "luna-beat")
 
-	if _, _, err := provider.fetchLunaBeatLyricsCandidatesProvider(lyrics.TrackInfo{Title: "Thunderstruck", Artist: "AC/DC"}); err != nil {
+	candidates, _, err := provider.fetchLunaBeatLyricsCandidatesProvider(lyrics.TrackInfo{Title: "Thunderstruck", Artist: "AC/DC"})
+	if err != nil {
 		t.Fatalf("exact punctuated artist error = %v, want nil", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want the matched row turned into a candidate", candidates)
+	}
+	if !strings.Contains(ttmlRequest, "lyrics/z.ttml") {
+		t.Fatalf("TTML fetch = %q, want the alias-matched lyrics file fetched", ttmlRequest)
 	}
 }
