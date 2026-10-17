@@ -423,11 +423,14 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 	// full sweeps every dedupe cycle.
 	cache := newFakeLyricsCache()
 	one, two := new(int), new(int)
-	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+	// The injected clock advances when the head source fetches, so the budget
+	// overrun is deterministic instead of racing real scheduling.
+	current := time.Now()
+	provider := newTestProviderWithSources(nil, cache, func() time.Time { return current }, []source.Source{
 		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				*one++
-				time.Sleep(20 * time.Millisecond)
+				current = current.Add(time.Second)
 				return nil, source.Healthy, nil
 			}},
 		{ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
@@ -448,7 +451,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 	}
 
 	provider.sweepBudget = 0
-	provider2 := newTestProviderWithSources(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
+	provider2 := newTestProviderWithSources(nil, cache, func() time.Time { return current }, provider.sources, func(lyrics.TrackInfo) error { return nil })
 	provider2.runSweepSources(track, []string{"two"})
 
 	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
@@ -465,12 +468,16 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 	// A plain sibling's per-source entry expires after an hour; the marker a
 	// continuation writes over the full order must not outlive it.
 	cache := newFakeLyricsCache()
+	// The injected clock advances when the plain source fetches; the write and
+	// the continuation then share one clock, so the remaining-life bound is
+	// exact rather than wall-clock dependent.
+	current := time.Now()
 	plainSource := source.Source{ID: "plain", Display: "plain", Hosts: []string{"plain.example.test"}, DefaultEnabled: true,
 		Fetch: func(rt source.Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, source.Health, error) {
-			time.Sleep(20 * time.Millisecond)
+			current = current.Add(time.Second)
 			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "plain words"}, "plain", "plain")}, source.Healthy, nil
 		}}
-	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, func() time.Time { return current }, []source.Source{
 		plainSource,
 		sweepSource("tail", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -482,7 +489,7 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 		t.Fatalf("status/deferred = %q/%v; expected the tail to defer, not complete", status, deferred)
 	}
 
-	provider2 := newTestProviderWithSources(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
+	provider2 := newTestProviderWithSources(nil, cache, func() time.Time { return current }, provider.sources, func(lyrics.TrackInfo) error { return nil })
 	provider2.sweepBudget = 0
 	provider2.runSweepSources(track, []string{"tail"})
 
@@ -874,11 +881,14 @@ func TestSweepContinuationDoneCheckUsesFullOrder(t *testing.T) {
 	// nothing had been covered.
 	cache := newFakeLyricsCache()
 	head := new(int)
-	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+	// The injected clock advances when the head source fetches, so the budget
+	// overrun is deterministic instead of racing real scheduling.
+	current := time.Now()
+	provider := newTestProviderWithSources(nil, cache, func() time.Time { return current }, []source.Source{
 		{ID: "head", Display: "head", Hosts: []string{"head.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				*head++
-				time.Sleep(20 * time.Millisecond)
+				current = current.Add(time.Second)
 				return nil, source.Healthy, nil
 			}},
 		sweepSource("tail", new(int), true, nil),
