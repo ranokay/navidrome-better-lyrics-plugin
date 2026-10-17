@@ -2578,3 +2578,21 @@ func TestEmptyTTMLDocumentIsNotACandidate(t *testing.T) {
 		t.Fatal("malformed XML is not a well-formed empty payload")
 	}
 }
+
+func TestCDATALyricsCountAsContent(t *testing.T) {
+	t.Parallel()
+
+	// CDATA carries real lyric text: rejecting it would cache a miss for
+	// valid documents (Greptile P1).
+	cdata := `<tt xmlns:itunes="urn:itunes"><body><div><p begin="1" end="2"><![CDATA[Rock & Roll]]></p></div></body></tt>`
+	if !lyricsTextHasContent(cdata, "ttml") {
+		t.Fatal("CDATA lyric text must count as servable content")
+	}
+	candidate := newLyricsCandidate(lyrics.LyricsText{Text: cdata}, "Stub", "ttml")
+	if !candidate.present() {
+		t.Fatal("a CDATA-bearing document must produce a candidate")
+	}
+	if emptyLyricsDocument(cdata, "ttml") {
+		t.Fatal("a CDATA-bearing document is not an empty document")
+	}
+}

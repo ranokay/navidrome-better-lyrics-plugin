@@ -61,11 +61,19 @@ func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsC
 // lyricsTextHasContent reports whether a payload carries servable lyric text:
 // tags and timing stamps alone do not count.
 func lyricsTextHasContent(value, format string) bool {
-	text := value
 	if format == "ttml" {
-		text = xmlTagPattern.ReplaceAllString(text, " ")
+		decoder := xml.NewDecoder(strings.NewReader(value))
+		for {
+			token, err := decoder.Token()
+			if err != nil {
+				return false
+			}
+			if chars, ok := token.(xml.CharData); ok && strings.TrimSpace(string(chars)) != "" {
+				return true
+			}
+		}
 	}
-	text = lrcTimestampPattern.ReplaceAllString(text, " ")
+	text := lrcTimestampPattern.ReplaceAllString(value, " ")
 	text = enhancedWordPattern.ReplaceAllString(text, " ")
 	return strings.TrimSpace(text) != ""
 }
@@ -90,7 +98,6 @@ type xmlNode struct {
 	Children []xmlNode `xml:",any"`
 }
 
-var xmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 func (candidate lyricsCandidate) present() bool {
 	return len(candidate.response.Lyrics) > 0
