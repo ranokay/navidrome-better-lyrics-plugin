@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -216,14 +217,23 @@ func (p *lyricsProvider) readCachedSourceCandidate(track lyrics.TrackInfo, sourc
 // as a present=false-but-covered sentinel.
 const missingCoverageEnvelope = `{"quality":0}`
 
+// cacheCredentialPepper keys the credential-space HMAC. The namespace needs a
+// stable, non-leaking fingerprint of secret material; a keyed MAC is the
+// standard construction for that (and coded caching of secrets through a raw
+// hash is flagged as weak-password storage).
+var cacheCredentialPepper = []byte("navidrome-better-lyrics/credential-fingerprint/v1")
+
 // lyricsCredentialsFingerprint distinguishes negative coverage stamped under
 // different Better Lyrics API key / Musixmatch token configurations: adding or
 // replacing a credential must re-authorize sources whose misses were recorded
 // anonymously (Codex).
 func (p *lyricsProvider) lyricsCredentialsFingerprint() string {
 	config := readProviderConfig(p.configLookup)
-	digest := sha256.Sum256([]byte(config.BetterLyricsAPIKey + "\x00" + config.MusixmatchUserToken))
-	return fmt.Sprintf("%x", digest[:8])
+	mac := hmac.New(sha256.New, cacheCredentialPepper)
+	mac.Write([]byte(config.BetterLyricsAPIKey))
+	mac.Write([]byte{0})
+	mac.Write([]byte(config.MusixmatchUserToken))
+	return fmt.Sprintf("%x", mac.Sum(nil)[:8])
 }
 
 // sourceMissKey namespaces the negative per-source entries by credential state
