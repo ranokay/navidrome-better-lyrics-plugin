@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"crypto/sha256"
@@ -44,14 +44,16 @@ type sweepTaskPayload struct {
 
 // OnInit creates the permanent sweep queue. Failing here is non-fatal: lyrics keep
 // working and the queue lifecycle can be repaired by reloading the plugin.
-func (p *lyricsProvider) OnInit() error {
-	_ = createSweepQueue()
+func (p *Provider) OnInit() error {
+	if p.createQueue != nil {
+		_ = p.createQueue(sweepQueueName, 1)
+	}
 	return nil
 }
 
 // OnTaskExecute dispatches queued sweeps; tasks from other queues are ignored so a
 // misconfigured queue cannot trigger unrelated fetches.
-func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, error) {
+func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, error) {
 	if req.QueueName != sweepQueueName {
 		return "ignored queue " + req.QueueName, nil
 	}
@@ -73,7 +75,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.
 		if err := p.enqueueSweepSources(payload.Track, deferredIDs); err != nil {
-			logCacheDebug(fmt.Sprintf("sweep continuation enqueue failed: %v", err))
+			p.logf(fmt.Sprintf("sweep continuation enqueue failed: %v", err))
 		} else {
 			continuationQueued = true
 		}
@@ -102,7 +104,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 
 // runSweep walks every enabled source for one track and caches each result, so the
 // per-song source picker (Phase B) can list every source that returned lyrics.
-func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
+func (p *Provider) runSweep(track lyrics.TrackInfo) string {
 	status, _, _ := p.runSweepDetailed(track, nil)
 	return status
 }
@@ -118,7 +120,7 @@ func sweepDoneMarkerKey(track lyrics.TrackInfo, order []source.Source) string {
 // doneMarkerKey is the provider-view done key: it also carries the credential
 // fingerprint so re-authorizing after a recorded miss re-runs the sweep.
 // Credential changes must invalidate negative coverage.
-func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []source.Source) string {
+func (p *Provider) doneMarkerKey(track lyrics.TrackInfo, order []source.Source) string {
 	return fmt.Sprintf("%s:cred:%s", sweepDoneMarkerKey(track, order), p.lyricsCredentialsFingerprint())
 }
 
@@ -136,12 +138,12 @@ func cacheTTLForCoveredCandidate(candidate lyric.Candidate) int64 {
 // runSweepSources walks the sources for one track, optionally restricted to the
 // ids carried by a continuation task. It returns the status string and the ids of
 // sources deferred because the budget ran out (so the task can resume them).
-func (p *lyricsProvider) runSweepSources(track lyrics.TrackInfo, allowed []string) (string, []string) {
+func (p *Provider) runSweepSources(track lyrics.TrackInfo, allowed []string) (string, []string) {
 	status, deferredIDs, _ := p.runSweepDetailed(track, allowed)
 	return status, deferredIDs
 }
 
-func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []source.Source) {
+func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []source.Source) {
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
 		return "ignored (incomplete track metadata)", nil, nil
 	}
@@ -337,7 +339,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 // the hosts it shares with sibling sources (families such as the Better Lyrics
 // endpoints share cooldowns by design — including the v3 keys the legacy
 // fetchers recorded before this registry existed).
-func (p *lyricsProvider) sourceInCooldown(src source.Source) bool {
+func (p *Provider) sourceInCooldown(src source.Source) bool {
 	if p.Cooldown(source.GlobalCooldownKey(src.ID)) > 0 {
 		return true
 	}
@@ -371,7 +373,7 @@ func sharesBetterLyricsHost(src source.Source) bool {
 // runs. Source cooldowns observed during the stage-one pass are honored here too:
 // sources behind those cooldowns benefit from the same deviating skip logic in the
 // sweep, so enqueuing without a marker check could cause duplicate work.
-func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
+func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if _, done, _ := p.cache.Get(p.doneMarkerKey(track, p.activeSources())); done {
 		return false
 	}
@@ -391,7 +393,7 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 		// Release the spot early with a 1-second TTL so the next lookup can retry
 		// the sweep rather than waiting out the whole dedupe window.
 		_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
-		logCacheDebug(fmt.Sprintf("sweep enqueue failed: %v", err))
+		p.logf(fmt.Sprintf("sweep enqueue failed: %v", err))
 		return false
 	}
 	return true
@@ -400,7 +402,7 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 // sweepPendingMarkerKey namespaces the dedupe marker by source order and
 // credential state: reconfiguring sources must not delay a fresh sweep for
 // the old marker window.
-func (p *lyricsProvider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
+func (p *Provider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
 	digest := sha256.Sum256([]byte(strings.Join(source.IDs(p.activeSources()), "|")))
 	return fmt.Sprintf("%s%s:%x:%s", sweepMarkerPrefix, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)
 }

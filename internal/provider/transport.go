@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 
 // Do performs one host HTTP call through the runtime, bounding it by both the
 // per-request ceiling and the caller-provided lookup deadline.
-func (p *lyricsProvider) Do(source, method, requestURL string, body []byte, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
+func (p *Provider) Do(source, method, requestURL string, body []byte, headers map[string]string, deadline time.Time) (*host.HTTPResponse, error) {
 	timeout, err := p.requestTimeoutMilliseconds(deadline)
 	if err != nil {
 		return nil, err

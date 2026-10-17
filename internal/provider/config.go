@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"encoding/json"
@@ -7,7 +7,8 @@ import (
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
-type configLookup func(key string) (string, bool)
+// ConfigLookup reads one raw plugin-config property.
+type ConfigLookup func(key string) (string, bool)
 
 // providerConfig is the resolved runtime configuration: enabled sources in saved
 // order plus the optional secrets administrators may paste into the plugins page.
@@ -32,7 +33,7 @@ func (selection sourceSelection) isEnabled() bool {
 // readProviderConfig resolves the plugin config blob. The Navidrome config service
 // hands a JSON-marshaled blob for the top-level `sources` property, so nothing here
 // can query nested properties directly.
-func readProviderConfig(lookup configLookup) providerConfig {
+func readProviderConfig(lookup ConfigLookup) providerConfig {
 	if lookup == nil {
 		lookup = func(string) (string, bool) { return "", false }
 	}

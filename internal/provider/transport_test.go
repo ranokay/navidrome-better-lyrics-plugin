@@ -1,8 +1,7 @@
-package main
+package provider
 
 import (
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,8 +56,8 @@ func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	if _, present := request.Headers["X-API-Key"]; present {
 		t.Error("X-API-Key header is present, want unauthenticated request")
 	}
-	if !strings.Contains(request.Headers["User-Agent"], "NavidromeBetterLyricsPlugin/0.3.0") {
-		t.Errorf("User-Agent header = %q, want plugin name and version", request.Headers["User-Agent"])
+	if request.Headers["User-Agent"] != testUserAgent {
+		t.Errorf("User-Agent header = %q, want the injected identifier", request.Headers["User-Agent"])
 	}
 	if request.TimeoutMs != httpTimeoutMilliseconds {
 		t.Errorf("timeout = %d, want %d", request.TimeoutMs, httpTimeoutMilliseconds)
@@ -70,7 +69,7 @@ func TestLyricsProvider_UsesRemainingLookupBudgetForRequestTimeout(t *testing.T)
 
 	now := time.Date(2026, time.August, 23, 7, 0, 0, 0, time.UTC)
 	current := now
-	provider := newLyricsProviderWithDependencies(nil, newFakeLyricsCache(), func() time.Time { return current })
+	provider := newTestProviderWithDependencies(nil, newFakeLyricsCache(), func() time.Time { return current })
 	deadline := now.Add(stageOneLookupBudget)
 
 	if got, err := provider.requestTimeoutMilliseconds(deadline); err != nil || got != httpTimeoutMilliseconds {

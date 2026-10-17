@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"encoding/json"
@@ -25,7 +25,7 @@ func TestGetLyrics_EnqueuesSweepWhenCoverageIsIncomplete(t *testing.T) {
 	cache := newFakeLyricsCache()
 	syllable := stubFetchedCandidate("first", "stub", "ttml", "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">x</tt>")
 	second := stubFetchedCandidate("second", "stub", "plain", "")
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{syllable, second}, func(lyrics.TrackInfo) error {
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{syllable, second}, func(lyrics.TrackInfo) error {
 		enqueued++
 		return nil
 	})
@@ -55,7 +55,7 @@ func TestGetLyrics_NegativeWinnerDefersToFreshPerSourceResults(t *testing.T) {
 	cache := newFakeLyricsCache()
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 
-	walker := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	walker := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	if _, err := walker.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
 		t.Fatalf("first GetLyrics() error = %v, want nil", err)
 	}
@@ -64,7 +64,7 @@ func TestGetLyrics_NegativeWinnerDefersToFreshPerSourceResults(t *testing.T) {
 	// write and the next lookup.
 	walker.cacheSourceCandidate(track, "two", lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]sweep line"}, "stub", "lrc"))
 
-	reread := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	reread := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	result, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
 		t.Fatalf("second GetLyrics() error = %v, want nil", err)
@@ -91,7 +91,7 @@ func TestGetLyrics_NegativeWinnerStillShieldsWhenNoPerSourceResults(t *testing.T
 	cache := newFakeLyricsCache()
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 
-	walker := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	walker := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	if _, err := walker.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
 		t.Fatalf("first GetLyrics() error = %v, want nil", err)
 	}
@@ -108,7 +108,7 @@ func TestSweep_CompletionWritesDoneMarker(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	one, two := 0, 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", &one, true, nil),
 		sweepSource("two", &two, true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -128,7 +128,7 @@ func TestSweep_FailuresKeepTheTrackReSweepable(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	one := 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("broken", &one, false, errors.New("down")),
 	}, func(lyrics.TrackInfo) error {
 		t.Fatal("a sweep that failed to complete must not mark the track done")
@@ -158,7 +158,7 @@ func TestSweep_MissesMarkDoneCovered(t *testing.T) {
 	// sources cleanly miss, so every lookup kept re-enqueueing the sweep.
 	cache := newFakeLyricsCache()
 	one, two := new(int), new(int)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		sweepSource("one", one, false, nil),
 		sweepSource("two", two, false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -179,7 +179,7 @@ func TestSweep_RefusedWritesStayUncovered(t *testing.T) {
 	// cached outcome.
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("kv at quota")
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		sweepSource("only", new(int), true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
 
@@ -196,7 +196,7 @@ func TestGetLyrics_CachedMissStillSchedulesIncompleteSweep(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	enqueued := 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, nil),
 		sweepSource("two", new(int), false, nil),
 		sweepSource("three", new(int), false, nil),
@@ -238,7 +238,7 @@ func TestGetLyrics_AllDisabledSkipsScheduling(t *testing.T) {
 
 	// An injected empty catalog must serve nothing without network or queue
 	// traffic.
-	emptyInjected := newLyricsProviderWithSourcesAt(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	emptyInjected := newTestProviderWithSourcesAt(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		t.Errorf("unexpected network request with an empty catalog: %q", request.URL)
 		return nil, nil
 	}, newFakeLyricsCache(), time.Now, []source.Source{}, func(lyrics.TrackInfo) error {
@@ -271,7 +271,7 @@ func TestGetLyrics_ConfigWithEverySourceDisabledSkipsScheduling(t *testing.T) {
 	}
 
 	enqueued := 0
-	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newTestProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		t.Errorf("unexpected network request with every source disabled: %q", request.URL)
 		return nil, nil
 	}, newFakeLyricsCache(), time.Now, func(key string) (string, bool) {
@@ -322,7 +322,7 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 				lead = stubFetchedCandidate("lead", "lead", "lrc", "[00:01.00]lead timed")
 				tailFormat = "lrc"
 			}
-			provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+			provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 				lead,
 				stubFetchedCandidate("tail", "tail", tailFormat, tc.text),
 			}, func(lyrics.TrackInfo) error { return nil })
@@ -349,7 +349,7 @@ func TestSweep_ContinuationCompletionFingerprintsFullOrder(t *testing.T) {
 
 	t.Run("uncovered siblings block the marker", func(t *testing.T) {
 		cache := newFakeLyricsCache()
-		provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+		provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 			sweepSource("one", new(int), false, nil),
 			sweepSource("two", new(int), false, nil),
 		}, func(lyrics.TrackInfo) error { return nil })
@@ -362,7 +362,7 @@ func TestSweep_ContinuationCompletionFingerprintsFullOrder(t *testing.T) {
 
 	t.Run("cached siblings complete the full order", func(t *testing.T) {
 		cache := newFakeLyricsCache()
-		provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+		provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 			sweepSource("one", new(int), false, nil),
 			sweepSource("two", new(int), false, nil),
 		}, func(lyrics.TrackInfo) error { return nil })
@@ -386,7 +386,7 @@ func TestGetLyrics_CoveredNegativePassSkipsSweep(t *testing.T) {
 	// return none, the negative winner already records complete coverage;
 	// queueing a sweep would refetch the same misses.
 	cache := newFakeLyricsCache()
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, nil),
 		sweepSource("two", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error {
@@ -406,7 +406,7 @@ func TestGetLyrics_CoveredNegativePassSkipsSweep(t *testing.T) {
 	}
 }
 
-func winnerKeyForTest(t *testing.T, cache lyricsCacheStore, order []source.Source, track lyrics.TrackInfo) string {
+func winnerKeyForTest(t *testing.T, cache Store, order []source.Source, track lyrics.TrackInfo) string {
 	t.Helper()
 	key, ok := lyricsWinnerCacheKey(track, source.IDs(order))
 	if !ok {
@@ -423,7 +423,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 	// full sweeps every dedupe cycle.
 	cache := newFakeLyricsCache()
 	one, two := new(int), new(int)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				*one++
@@ -448,7 +448,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 	}
 
 	provider.sweepBudget = 0
-	provider2 := newLyricsProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
+	provider2 := newTestProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
 	provider2.runSweepSources(track, []string{"two"})
 
 	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); !exists {
@@ -470,7 +470,7 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "plain words"}, "plain", "plain")}, source.Healthy, nil
 		}}
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		plainSource,
 		sweepSource("tail", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -482,7 +482,7 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 		t.Fatalf("status/deferred = %q/%v; expected the tail to defer, not complete", status, deferred)
 	}
 
-	provider2 := newLyricsProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
+	provider2 := newTestProviderWithSourcesAt(nil, cache, time.Now, provider.sources, func(lyrics.TrackInfo) error { return nil })
 	provider2.sweepBudget = 0
 	provider2.runSweepSources(track, []string{"tail"})
 
@@ -501,7 +501,7 @@ func TestGetLyrics_EnqueuesSweepOnStageOneError(t *testing.T) {
 	// Stage-one errors must not hide the tail: the join error is retained but
 	// the incomplete walk still schedules the background sweep.
 	enqueued := 0
-	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{
 		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				return nil, source.Degraded, errors.New("head source down")
@@ -549,7 +549,7 @@ func TestStageOneMissesCoverTheSweepAndTheWalk(t *testing.T) {
 				return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]tail line"}, "tail", "lrc")}, source.Healthy, nil
 			}},
 	}
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 
 	// Stage one walks the three misses and never reaches the tail.
@@ -575,7 +575,7 @@ func TestStageOneMissesCoverTheSweepAndTheWalk(t *testing.T) {
 	}
 	cache.mu.Unlock()
 
-	reread := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	reread := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	result, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
 		t.Fatalf("re-read GetLyrics() error = %v, want nil", err)
@@ -600,7 +600,7 @@ func TestCoverageCredChangeInvalidatesMisses(t *testing.T) {
 	}
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 
-	first := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	first := newTestProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, sources, nil)
 	first.runSweep(track)
 	if missCalls != 1 {
 		t.Fatalf("first sweep fetches = %d, want a single miss fetch", missCalls)
@@ -608,7 +608,7 @@ func TestCoverageCredChangeInvalidatesMisses(t *testing.T) {
 
 	// The credential arrives: the miss entry must no longer suppress the
 	// source, and the new-credentials done marker is a fresh key.
-	reauthorized := newLyricsProviderWithSourcesAt(nil, first.cache, time.Now, sources, nil)
+	reauthorized := newTestProviderWithSourcesAt(nil, first.cache, time.Now, sources, nil)
 	reauthorized.configLookup = func(key string) (string, bool) {
 		if key == "betterLyricsApiKey" {
 			return "secret", true
@@ -627,7 +627,7 @@ func TestSweep_DefersDeadlineExhaustedSources(t *testing.T) {
 	// A search that finishes against the deadline leaves no budget for the
 	// lyrics request; its error is budget exhaustion, not a failure — the
 	// source belongs in the continuation.
-	provider := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []source.Source{
 		{ID: "late", Display: "late", Hosts: []string{"late.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				return nil, source.Degraded, fmt.Errorf("request lyrics: %w", errLyricsLookupBudgetExhausted)
@@ -653,7 +653,7 @@ func TestAnonymous401sKeepBoundedCoverage(t *testing.T) {
 	// Anonymous Better Lyrics/Portato 401s are cache-only misses: they bound
 	// the sweep (one hour, credential-fingerprinted keys) instead of blocking
 	// completion every dedupe cycle.
-	provider := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []source.Source{
 		{ID: "anon1", Display: "anon1", Hosts: []string{"anon1.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				return nil, source.Uncertain, nil
@@ -686,7 +686,7 @@ func TestSweepMarkerBoundedByRemainingLifetime(t *testing.T) {
 	// A cached entry with 60 s left must bound the done marker to those 60 s,
 	// not a fresh full TTL.
 	cache := newFakeLyricsCache()
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
@@ -716,7 +716,7 @@ func TestSweepRefetchesUnstampedCoverage(t *testing.T) {
 	// refetches them once to leave stamped coverage behind.
 	cache := newFakeLyricsCache()
 	one := new(int)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		sweepSource("one", one, false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
@@ -753,14 +753,14 @@ func TestSweepPendingMarkerFollowsSourceOrder(t *testing.T) {
 	}
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 
-	first := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	first := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, nil),
 	}, enqueue)
 	if !first.maybeEnqueueSweep(track) {
 		t.Fatal("first enqueue refused")
 	}
 
-	second := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	second := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, nil),
 		sweepSource("two", new(int), false, nil),
 	}, enqueue)
@@ -778,7 +778,7 @@ func TestTemporarySkipsDoNotCompleteForegroundCoverage(t *testing.T) {
 	// A tempSkip source is not covered work: the pass must stay incomplete,
 	// enqueue the sweep, and not write a complete negative winner.
 	enqueued := 0
-	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{
 		{ID: "skip", Display: "skip", Hosts: []string{"skip.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				return nil, source.TemporarilySkipped, nil
@@ -803,7 +803,7 @@ func TestSweepQueueMarkerCoversBacklog(t *testing.T) {
 	// The enqueue-time marker must cover the queued interval, not just the
 	// execution window.
 	cache := newFakeLyricsCache()
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, nil),
 	}, nil)
 
@@ -828,7 +828,7 @@ func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
 	// cannot enqueue a parallel full sweep while it waits.
 	cache := newFakeLyricsCache()
 	continuations := 0
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		{ID: "late", Display: "late", Hosts: []string{"late.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				return nil, source.Degraded, fmt.Errorf("request lyrics: %w", errLyricsLookupBudgetExhausted)
@@ -874,7 +874,7 @@ func TestSweepContinuationDoneCheckUsesFullOrder(t *testing.T) {
 	// nothing had been covered.
 	cache := newFakeLyricsCache()
 	head := new(int)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{
 		{ID: "head", Display: "head", Hosts: []string{"head.example.test"}, DefaultEnabled: true,
 			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 				*head++
@@ -924,7 +924,7 @@ func TestSweep_EnqueuesContinuationForDeferredSources(t *testing.T) {
 	var deferredPassed []string
 	// A negative budget defers every source deterministically (no parallel
 	// package var mutation).
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	provider.sweepBudget = -time.Second
 	provider.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string) error {
 		deferredPassed = ids
@@ -949,7 +949,7 @@ func TestSweep_MarksCachedOnlyAfterRealStore(t *testing.T) {
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("kv down")
 	healthy := sweepSource("one", new(int), true, nil)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []source.Source{healthy}, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, []source.Source{healthy}, func(lyrics.TrackInfo) error { return nil })
 
 	status := provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 	assertContains(t, status, "cached=0")
@@ -967,11 +967,11 @@ func TestSweep_DoneMarkerFingesprintsSourceOrder(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	sourcesA := []source.Source{sweepSource("one", new(int), true, nil), sweepSource("two", new(int), true, nil)}
-	providerA := newLyricsProviderWithSourcesAt(nil, cache, time.Now, sourcesA, func(lyrics.TrackInfo) error { return nil })
+	providerA := newTestProviderWithSourcesAt(nil, cache, time.Now, sourcesA, func(lyrics.TrackInfo) error { return nil })
 	providerA.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 
 	reordered := []source.Source{sourcesA[1], sourcesA[0]}
-	providerB := newLyricsProviderWithSourcesAt(nil, cache, time.Now, reordered, func(lyrics.TrackInfo) error { return nil })
+	providerB := newTestProviderWithSourcesAt(nil, cache, time.Now, reordered, func(lyrics.TrackInfo) error { return nil })
 	if providerB.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) == false {
 		t.Fatal("a reorder fingerprint key inherits the old done marker; the newly ranked source would never be swept")
 	}
@@ -981,7 +981,7 @@ func TestGetLyrics_SweepEnqueueFailureReleasesSlot(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", new(int), false, errors.New("miss")),
 	}, func(lyrics.TrackInfo) error {
 		return errors.New("queue unavailable")

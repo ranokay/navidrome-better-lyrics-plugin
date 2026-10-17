@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"errors"
@@ -148,7 +148,7 @@ func TestLyricsProvider_CooldownPreservesFractionalDeadline(t *testing.T) {
 	now := time.Date(2026, time.August, 23, 6, 0, 0, int(900*time.Millisecond), time.UTC)
 	currentTime := now
 	cache := newFakeLyricsCache()
-	provider := newLyricsProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
+	provider := newTestProviderWithDependencies(nil, cache, func() time.Time { return currentTime })
 	key := source.BetterLyricsGlobalCooldownKey
 	provider.RememberCooldown(key, time.Second)
 

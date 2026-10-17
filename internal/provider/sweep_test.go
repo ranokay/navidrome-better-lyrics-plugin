@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"encoding/json"
@@ -47,7 +47,7 @@ func TestSweep_CachesEveryEnabledSourceResult(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	one, two := 0, 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", &one, true, nil),
 		sweepSource("two", &two, true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -72,7 +72,7 @@ func TestSweep_SkipsFreshEntriesAndCooledDownSources(t *testing.T) {
 	calls := 0
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("fresh", &calls, true, nil),
 		sweepSource("cool", &calls, true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -95,7 +95,7 @@ func TestSweep_ContinuesAfterSourceFailure(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	one, two := 0, 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("broken", &one, false, errors.New("down")),
 		sweepSource("healthy", &two, true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
@@ -113,7 +113,7 @@ func TestSweep_ContinuesAfterSourceFailure(t *testing.T) {
 func TestOnInit_FailsOpenWhenQueueCreationIsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, nil, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, nil, func(lyrics.TrackInfo) error { return nil })
 	if err := provider.OnInit(); err != nil {
 		t.Fatalf("OnInit() error = %v, want nil (fail open)", err)
 	}
@@ -124,7 +124,7 @@ func TestOnTaskExecute_IgnoresForeignQueuesAndRunsSweeps(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	calls := 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", &calls, true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
 
@@ -157,7 +157,7 @@ func TestGetLyrics_EnqueuesSweepOncePerTrack(t *testing.T) {
 	cache := newFakeLyricsCache()
 	enqueued := 0
 	one, two, three, four := 0, 0, 0, 0
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
 		sweepSource("one", &one, false, nil),
 		sweepSource("two", &two, false, nil),
 		sweepSource("three", &three, false, nil),
@@ -204,7 +204,7 @@ func TestSweep_RetainsInMemoryHostCooldowns(t *testing.T) {
 			Body:       []byte(`{"error":"exhausted"}`),
 		}, nil
 	}
-	provider := newLyricsProviderWithSourcesAt(send, cache, time.Now, []source.Source{first, shared}, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSourcesAt(send, cache, time.Now, []source.Source{first, shared}, func(lyrics.TrackInfo) error { return nil })
 
 	status := provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 	assertContains(t, status, "failed=1")
@@ -224,7 +224,7 @@ func TestSourceInCooldown_KeepsMirrorRotatingSourcesWalkable(t *testing.T) {
 
 	// lyricsplus hosts are independent mirrors: a per-host cooldown must not
 	// suppress the whole source pre-fetch because its fetch rotates mirrors.
-	provider := newLyricsProviderWithDependencies(nil, newFakeLyricsCache(), time.Now)
+	provider := newTestProviderWithDependencies(nil, newFakeLyricsCache(), time.Now)
 	lyricsPlus, ok := source.ByID("lyricsplus")
 	if !ok {
 		t.Fatal("lyricsplus missing from the catalog")
@@ -266,7 +266,7 @@ func TestStageOneSkipsSourceInCooldown(t *testing.T) {
 	}
 	cache := newFakeLyricsCache()
 	now := time.Unix(1000, 0)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, func() time.Time { return now }, []source.Source{cooled, healthy}, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSourcesAt(nil, cache, func() time.Time { return now }, []source.Source{cooled, healthy}, func(lyrics.TrackInfo) error { return nil })
 
 	if err := cache.SetWithTTL(source.GlobalCooldownKey("cooled"), []byte(strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10)), 600); err != nil {
 		t.Fatalf("seed cooldown: %v", err)
@@ -291,7 +291,7 @@ func TestSweep_SkipsBetterLyricsFamilyOnSharedCooldown(t *testing.T) {
 	cache := newFakeLyricsCache()
 	calls := 0
 	now := time.Unix(2000, 0)
-	provider := newLyricsProviderWithSourcesAt(nil, cache, func() time.Time { return now }, []source.Source{
+	provider := newTestProviderWithSourcesAt(nil, cache, func() time.Time { return now }, []source.Source{
 		{
 			ID: "better-lyrics-portato", Display: "Better Lyrics Portato",
 			Hosts:          []string{"lyrics-api.boidu.dev"},

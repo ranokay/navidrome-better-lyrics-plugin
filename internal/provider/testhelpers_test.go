@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"encoding/base64"
@@ -12,6 +12,44 @@ import (
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
+// testUserAgent stands in for the entrypoint's versioned User-Agent.
+const testUserAgent = "NavidromeBetterLyricsPlugin/test (+https://example.test)"
+
+// newTestProvider builds a provider over an injected transport.
+func newTestProvider(send requestSender) *Provider {
+	return newTestProviderWithDeps(send, nil, nil, nil, nil)
+}
+
+// newTestProviderWithDeps builds a provider with every dependency injectable;
+// nil falls back to the inert defaults New applies.
+func newTestProviderWithDeps(send requestSender, cache Store, now func() time.Time, config ConfigLookup, enqueue func(lyrics.TrackInfo) error) *Provider {
+	p := New(Deps{Send: send, Store: cache, Now: now, Config: config, UserAgent: testUserAgent})
+	if enqueue != nil {
+		p.enqueueSweep = enqueue
+	}
+	return p
+}
+
+// newTestProviderWithSources bypasses the config service for source-walk tests
+// and injects stub sources directly.
+func newTestProviderWithSources(send requestSender, cache Store, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *Provider {
+	p := newTestProviderWithDeps(send, cache, now, nil, enqueue)
+	p.sources = sources
+	return p
+}
+
+// newTestProviderWithSourcesAt is newTestProviderWithSources with an
+// injectable clock (tests that pin time-dependent query parameters).
+func newTestProviderWithSourcesAt(send requestSender, cache Store, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *Provider {
+	return newTestProviderWithSources(send, cache, now, sources, enqueue)
+}
+
+// newTestProviderWithDependencies builds a provider over the production-shaped
+// defaults for tests driving the config and sweep-enqueue paths.
+func newTestProviderWithDependencies(send requestSender, cache Store, now func() time.Time) *Provider {
+	return newTestProviderWithDeps(send, cache, now, nil, nil)
+}
+
 // catalogSources resolves catalog ids into walkable sources, skipping unknown
 // ids so tests stay deterministic as the catalog changes.
 func catalogSources(ids []string) []source.Source {
@@ -22,42 +60,6 @@ func catalogSources(ids []string) []source.Source {
 		}
 	}
 	return sources
-}
-
-// newLyricsProviderWithSources bypasses the config service for source-walk tests
-// and injects stub sources directly.
-func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
-	provider := newLyricsProviderWithDeps(send, cache, now, nil, enqueue)
-	provider.sources = sources
-	return provider
-}
-
-// newLyricsProviderWithSourcesAt is newLyricsProviderWithSources with an
-// injectable clock (tests that pin time-dependent query parameters).
-func newLyricsProviderWithSourcesAt(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
-	if cache == nil {
-		cache = noopLyricsCache{}
-	}
-	if now == nil {
-		now = time.Now
-	}
-	provider := &lyricsProvider{send: send, cache: cache, now: now, enqueueSweep: enqueue}
-	if provider.enqueueSweep == nil {
-		provider.enqueueSweep = func(lyrics.TrackInfo) error { return nil }
-	}
-	provider.sources = sources
-	return provider
-}
-
-// newLyricsProviderWithDependencies builds a provider over the real config
-// lookup and sweep enqueuer for tests driving those paths.
-func newLyricsProviderWithDependencies(send requestSender, cache lyricsCacheStore, now func() time.Time) *lyricsProvider {
-	provider := newLyricsProviderWithDeps(send, cache, now, defaultConfigLookup(), defaultSweepEnqueuer())
-	if cache == nil {
-		cache = noopLyricsCache{}
-		provider.cache = cache
-	}
-	return provider
 }
 
 // hostXMLResponse is the 200/XML response shape the source tests serve.
@@ -77,25 +79,25 @@ var defaultCatalogIDs = []string{"better-lyrics", "unison", "better-lyrics-legat
 // providerForCatalog builds a provider walking exactly the named catalog ids
 // (falling back to the classic stage-one trio) so tests stay deterministic as new
 // sources join the default config.
-func providerForCatalog(send requestSender, ids ...string) *lyricsProvider {
+func providerForCatalog(send requestSender, ids ...string) *Provider {
 	return providerForCatalogWithCache(send, newFakeLyricsCache(), time.Now, ids...)
 }
 
 // providerForCatalogWithCache is providerForCatalog with an explicit cache and
 // clock for TTL and clock assertions.
-func providerForCatalogWithCache(send requestSender, cache lyricsCacheStore, now func() time.Time, ids ...string) *lyricsProvider {
+func providerForCatalogWithCache(send requestSender, cache Store, now func() time.Time, ids ...string) *Provider {
 	if len(ids) == 0 {
 		ids = defaultCatalogIDs
 	}
 	sources := make([]source.Source, 0, len(ids))
 	for _, id := range ids {
-		source, ok := source.ByID(id)
+		src, ok := source.ByID(id)
 		if !ok {
 			panic("unknown source id " + id)
 		}
-		sources = append(sources, source)
+		sources = append(sources, src)
 	}
-	return newLyricsProviderWithSources(send, cache, now, sources, func(lyrics.TrackInfo) error { return nil })
+	return newTestProviderWithSources(send, cache, now, sources, func(lyrics.TrackInfo) error { return nil })
 }
 
 func assertRequestEndpoint(t *testing.T, request host.HTTPRequest, want string) {

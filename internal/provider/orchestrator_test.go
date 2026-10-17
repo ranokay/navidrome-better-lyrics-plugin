@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"errors"
@@ -56,7 +56,7 @@ func TestLyricsProvider_StageOneWalksFirstThreeImplementedSources(t *testing.T) 
 		}),
 	}
 
-	provider := newLyricsProviderWithSources(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newTestProviderWithSources(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{}, nil
 	}, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 
@@ -87,7 +87,7 @@ func TestLyricsProvider_StageOneStopsEarlyOnSyllable(t *testing.T) {
 			return nil, source.Healthy, nil
 		}),
 	}
-	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 
 	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
@@ -109,7 +109,7 @@ func TestLyricsProvider_MergesSourceErrorsIntoJoinedLookupError(t *testing.T) {
 			return nil, source.Degraded, errors.New("two down")
 		}),
 	}
-	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 
 	_, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
 	if err == nil {
@@ -133,7 +133,7 @@ func TestLyricsProvider_MergesHealthFromSourceStatuses(t *testing.T) {
 			return []lyric.Candidate{lrcCandidate(false)}, source.Healthy, nil
 		}),
 	}
-	provider := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 
 	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
 	if err != nil {
@@ -149,7 +149,7 @@ func TestLyricsProvider_SkipsIncompleteTrackMetadata(t *testing.T) {
 	t.Parallel()
 
 	requests := 0
-	provider := newLyricsProviderWithSources(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+	provider := newTestProviderWithSources(func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 200}, nil
 	}, newFakeLyricsCache(), time.Now, []source.Source{

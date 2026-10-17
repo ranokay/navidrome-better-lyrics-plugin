@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"errors"
@@ -276,7 +276,7 @@ func TestLyricsProvider_ReservesKVHeadroomForCooldowns(t *testing.T) {
 	t.Parallel()
 
 	cache := &usageAwareLyricsCache{used: lyricsCacheMaxBytes - lyricsCacheReservedBytes}
-	provider := newLyricsProviderWithDependencies(nil, cache, time.Now)
+	provider := newTestProviderWithDependencies(nil, cache, time.Now)
 	// Mint the credential salt first: it is installation metadata, not
 	// lyrics data, and the headroom rule governs lyric writes only.
 	_ = provider.lyricsCredentialsFingerprint()
