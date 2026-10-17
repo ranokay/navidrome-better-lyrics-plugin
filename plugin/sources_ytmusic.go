@@ -57,7 +57,12 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if err := p.checkInnertubeOK("YouTube Music search", response); err != nil {
 		return nil, lookupDegraded, err
 	}
-	videoID := pickYTMusicVideo(response.Body, track)
+	videoID, searchErr := pickYTMusicVideo(response.Body, track)
+	if searchErr != nil {
+		// A malformed 200 is a provider failure, not a cacheable miss
+		// (Codex): the sweep must not mark the source covered on it.
+		return nil, lookupDegraded, fmt.Errorf("decode YouTube Music search response: %w", searchErr)
+	}
 	if videoID == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -163,14 +168,18 @@ type ytmusicSearchHit struct {
 // field order (arrays between videoId and lengthText) must not matter (Devin).
 // A hit must match the requested identity before its duration qualifies; the
 // first qualifying hit wins and unmatched searches stay misses.
-func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) string {
+func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 	target := int64(0)
 	if track.Duration > 0 {
 		target = int64(float64(track.Duration)*1000.0 + 0.5)
 	}
 	titleTokens := normalizedLyricTokens(track.Title)
 	artistTokens := normalizedLyricTokens(trackArtist(track))
-	for _, hit := range ytmusicSearchHits(body) {
+	hits, err := ytmusicSearchHits(body)
+	if err != nil {
+		return "", err
+	}
+	for _, hit := range hits {
 		if hit.videoID == "" || hit.durationMs <= 0 {
 			continue
 		}
@@ -186,9 +195,9 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) string {
 				continue
 			}
 		}
-		return hit.videoID
+		return hit.videoID, nil
 	}
-	return ""
+	return "", nil
 }
 
 // ytmusicArtistsMatch accepts any entry from the renderer's artist string when
@@ -208,10 +217,10 @@ func ytmusicArtistsMatch(artists string, wanted []string) bool {
 // ytmusicSearchHits decodes the payload and collects song renderers in
 // deterministic order: arrays keep index order and map keys are visited in
 // sorted order, so the traversal cannot drift between runs.
-func ytmusicSearchHits(body []byte) []ytmusicSearchHit {
+func ytmusicSearchHits(body []byte) ([]ytmusicSearchHit, error) {
 	var tree any
 	if err := json.Unmarshal(body, &tree); err != nil {
-		return nil
+		return nil, err
 	}
 	hits := []ytmusicSearchHit{}
 	ytmusicWalk(tree, func(renderer map[string]any) {
@@ -230,7 +239,7 @@ func ytmusicSearchHits(body []byte) []ytmusicSearchHit {
 			hits = append(hits, ytmusicRenderHit(row))
 		}
 	})
-	return hits
+	return hits, nil
 }
 
 func ytmusicWalk(node any, visit func(map[string]any)) {

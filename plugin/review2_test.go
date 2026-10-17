@@ -1953,3 +1953,167 @@ func TestLRCLibMalformedExactRecordStaysDegraded(t *testing.T) {
 		t.Fatalf("result = (%v, %v); want a degraded decode failure", err, health)
 	}
 }
+
+func TestMusixmatchSkipsEmptySubtitleBodies(t *testing.T) {
+	t.Parallel()
+
+	// Restricted lyrics arrive as an empty first subtitle; the plain-lyrics
+	// fallback must serve instead of a blank line candidate (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "/ws/1.1/token.get"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+		case strings.Contains(request.URL, "/ws/1.1/track.search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":10}}]}}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.subtitles.get":{"header":{"status_code":200},"body":{"subtitle_list":[{"subtitle_body":""}]}},"track.lyrics.get":{"header":{"status_code":200},"body":{"lyrics_body":"[00:01.00]plain words"}}}}}}`)}, nil
+		}
+	})
+
+	candidates, _, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchMusixmatchLyricsCandidates() error = %v, want nil", err)
+	}
+	if len(candidates) != 1 || candidates[0].quality != timingUnsynced {
+		t.Fatalf("candidates = %#v, want the plain fallback rather than the empty subtitle", candidates)
+	}
+	if !strings.Contains(candidates[0].response.Lyrics[0].Text, "plain words") {
+		t.Fatalf("text = %q, want the plain fallback served", candidates[0].response.Lyrics[0].Text)
+	}
+}
+
+func TestBinimumMatchesWithoutDuration(t *testing.T) {
+	t.Parallel()
+
+	// Durationless library entries still match on identity (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "binimum.org") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"track_name":"Song","artist_name":"Artist","duration":240,"lyricsUrl":"https://lrc.red/s/X.ttml"}]}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+	})
+
+	candidates, _, err := fetchBinimumLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchBinimumLyricsCandidates() error = %v, want nil", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want the identity match without a duration gate", candidates)
+	}
+}
+
+func TestMusixmatchConfiguredTokenRejectionGetsCooldown(t *testing.T) {
+	t.Parallel()
+
+	// A rejected configured token is the only credential available; retries
+	// must be bounded instead of hammering it every lookup (Codex).
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "/ws/1.1/track.search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":401,"hint":"captcha"}}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{}`)}, nil
+		}
+	}, cache, time.Now, func(key string) (string, bool) {
+		if key == "musixmatchUserToken" {
+			return "configured-token", true
+		}
+		return "", false
+	}, nil)
+
+	_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || health == lookupHealthy {
+		t.Fatalf("result = (%v, %v); want a temporary skip", err, health)
+	}
+	if provider.activeCooldown(sourceGlobalCooldownKey("musixmatch")) <= 0 {
+		t.Fatal("no cooldown recorded for the rejected configured token")
+	}
+}
+
+func TestAppleSearch429RecordsCooldown(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 429, Headers: map[string]string{"Retry-After": "9"}}, nil
+	}, cache, time.Now, nil, nil)
+
+	_, _, err := fetchLyricallyLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil {
+		t.Fatal("429 converted to a miss; want a degraded error")
+	}
+	if cooldown := provider.activeCooldown(sourceGlobalCooldownKey("apple-lyrically")); cooldown < 9*time.Second || cooldown > 10*time.Second {
+		t.Fatalf("cooldown = %v, want the Retry-After value honored", cooldown)
+	}
+}
+
+func TestLyricsPlusRotatesPastAThrottledMirror(t *testing.T) {
+	t.Parallel()
+
+	// The mirrors are independent deployments: a 429 on the primary must not
+	// discard a healthy secondary (Codex).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, lyricsPlusEndpoint) {
+			return &host.HTTPResponse{StatusCode: 429, Headers: map[string]string{"Retry-After": "30"}}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"type":"Line","lyrics":[{"time":1000,"duration":500,"text":"mirror line"}]}`)}, nil
+	})
+
+	candidates, health, err := fetchLyricsPlusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || health != lookupHealthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v/%v, want the secondary mirror to serve", candidates, health, err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want the throttled primary then the secondary", requests)
+	}
+}
+
+func TestMalformedProviderJSONStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	// A 200 carrying garbage is a provider failure for each new source, not
+	// cacheable coverage (Codex).
+	cases := []struct {
+		name  string
+		fetch func(*lyricsProvider) (lookupHealth, error)
+	}{
+		{
+			name: "youtube music search",
+			fetch: func(p *lyricsProvider) (lookupHealth, error) {
+				_, health, err := fetchYTMusicLyricsCandidates(p, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+				return health, err
+			},
+		},
+		{
+			name: "genius search",
+			fetch: func(p *lyricsProvider) (lookupHealth, error) {
+				_, health, err := fetchGeniusLyricsCandidates(p, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+				return health, err
+			},
+		},
+		{
+			name: "lyricify lyrics",
+			fetch: func(p *lyricsProvider) (lookupHealth, error) {
+				_, health, err := fetchLyricifyLyricsCandidates(p, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+				return health, err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"broken": tru`)}, nil
+			})
+			health, err := tc.fetch(provider)
+			if err == nil || health != lookupDegraded {
+				t.Fatalf("result = (%v, %v); want a degraded decode failure", err, health)
+			}
+		})
+	}
+}

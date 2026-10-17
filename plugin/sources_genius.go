@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"html"
 	"net/url"
 	"regexp"
@@ -55,7 +56,12 @@ func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 		return nil, lookupDegraded, providerResponseError("Genius search", response)
 	}
 
-	pageURL := pickGeniusSongURL(response.Body, track)
+	pageURL, searchErr := pickGeniusSongURL(response.Body, track)
+	if searchErr != nil {
+		// Malformed 200s (transient HTML challenges, truncated replies) are
+		// provider failures, not cacheable misses (Codex).
+		return nil, lookupDegraded, fmt.Errorf("decode Genius search response: %w", searchErr)
+	}
 	if pageURL == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -106,10 +112,10 @@ type geniusSearchEnvelope struct {
 // collapsed title and artist name both match the request. Genius search is
 // famously fuzzy; the metadata gate keeps unrelated songs out of the plain
 // cache.
-func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) string {
+func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 	var envelope geniusSearchEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return ""
+		return "", err
 	}
 	titleTokens := normalizedLyricTokens(track.Title)
 	artistTokens := normalizedLyricTokens(trackArtist(track))
@@ -127,9 +133,9 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) string {
 		if !geniusArtistsMatch(hit.Result.ArtistNames, artistTokens) {
 			continue
 		}
-		return hit.Result.URL
+		return hit.Result.URL, nil
 	}
-	return ""
+	return "", nil
 }
 
 // geniusArtistsMatch accepts the request when any returned artist name matches

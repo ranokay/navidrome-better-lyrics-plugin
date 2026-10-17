@@ -212,6 +212,12 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		// pass to the payload decode
 	case 404:
 		return nil, lookupHealthy, nil
+	case 429:
+		// Apple throttles too; persist the cooldown so repeated lookups stop
+		// contacting the throttled endpoint (Codex).
+		retryAfter := retryAfterDuration(response.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("apple-lyrically"), retryAfter)
+		return nil, lookupDegraded, rateLimitResponseError("Apple search", response, retryAfter)
 	default:
 		return nil, lookupDegraded, providerResponseError("Apple search", response)
 	}

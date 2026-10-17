@@ -138,12 +138,20 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 		if !binimumLyricsURLAllowed(candidateResult.LyricsURL) {
 			continue
 		}
-		delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
-		if delta > 2 {
+		if track.Duration > 0 {
+			// The duration gate applies only when the request carries one:
+			// durationless library entries still match on identity (Codex).
+			delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
+			if delta > 2 {
+				continue
+			}
+			if delta < bestDelta {
+				best, bestDelta, found = candidateResult, delta, true
+			}
 			continue
 		}
-		if delta < bestDelta {
-			best, bestDelta, found = candidateResult, delta, true
+		if !found {
+			best, bestDelta, found = candidateResult, 0, true
 		}
 	}
 	return best, found

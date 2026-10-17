@@ -62,9 +62,14 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 			// generally.
 			return nil, lookupHealthy, nil
 		case 429:
+			// The mirrors are separate deployments: cool the THROTTLED HOST
+			// down and let the next mirror serve this lookup (Codex).
 			retryAfter := retryAfterDuration(response.Headers, p.now())
-			p.rememberCooldown(sourceGlobalCooldownKey("lyricsplus"), retryAfter)
-			return nil, lookupDegraded, rateLimitResponseError("LyricsPlus", response, retryAfter)
+			if parsed, parseErr := url.Parse(requestURL); parseErr == nil && parsed.Host != "" {
+				p.rememberCooldown(sourceGlobalCooldownKey(parsed.Hostname()), retryAfter)
+			}
+			lookupErrors = append(lookupErrors, rateLimitResponseError("LyricsPlus", response, retryAfter))
+			continue
 		default:
 			// A mirror-level failure rotates onward; mirrors ride separate
 			// deployments.

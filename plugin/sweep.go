@@ -62,6 +62,13 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		return "", fmt.Errorf("decode sweep payload: %w", err)
 	}
+	// The task may have queued behind a backlog longer than the marker's TTL;
+	// refresh it now so the dedupe window starts when execution does and a
+	// duplicate sweep cannot slip in while this one runs (Codex).
+	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
+		markerKey := p.sweepPendingMarkerKey(payload.Track, trackKey)
+		_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL)
+	}
 	status, deferredIDs, _ := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.

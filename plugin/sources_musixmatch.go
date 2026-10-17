@@ -62,7 +62,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// The cached token went stale: drop it and try one fresh mint next
 		// lookup. A temporary skip must not persist as a clean miss, or this
 		// source stays suppressed when its token simply aged out (Greptile).
-		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		p.noteMusixmatchTokenRejection()
 		return nil, lookupTemporarilySkipped, nil
 	case 404:
 		return nil, lookupHealthy, nil
@@ -75,7 +75,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	}
 	if searchResponse.StatusCode == 401 {
 		// The cached token went stale: drop it and try one fresh mint next lookup.
-		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		p.noteMusixmatchTokenRejection()
 		return nil, lookupHealthy, nil
 	}
 
@@ -87,7 +87,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// Musixmatch sometimes reports the rejected token only in the JSON
 		// envelope; drop it so the next lookup remints instead of missing for up
 		// to ten days. A temporary skip must not persist as a missed song.
-		_ = p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		p.noteMusixmatchTokenRejection()
 		return nil, lookupTemporarilySkipped, nil
 	}
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch track.search", searchEnvelope.Message.Header.StatusCode); err != nil {
@@ -125,7 +125,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		return nil, lookupDegraded, fmt.Errorf("decode Musixmatch subtitles response: %w", err)
 	}
 	if musixmatchTokenRejected(macroEnvelope.Message.Header) {
-		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+		p.noteMusixmatchTokenRejection()
 		return nil, lookupTemporarilySkipped, nil
 	}
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro.subtitles.get", macroEnvelope.Message.Header.StatusCode); err != nil {
@@ -135,7 +135,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// The richsync/subtitles responses can reject the token while the outer
 		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
 		if musixmatchTokenRejected(macro.Header) {
-			p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+			p.noteMusixmatchTokenRejection()
 			return nil, lookupTemporarilySkipped, nil
 		}
 		if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
@@ -164,6 +164,21 @@ func (p *lyricsProvider) musixmatchEnvelopeStatusFailure(source string, status i
 	}
 }
 
+// noteMusixmatchTokenRejection bounds retry pressure when a rejection hit:
+// anonymous tokens are dropped so the next lookup remints, while a configured
+// token — the only credential available — records a short provider cooldown
+// so foreground lookups stop hammering the rejected setting (Codex). The
+// cooldown lapses quickly, and changing the setting re-authorizes the source
+// as soon as it does.
+func (p *lyricsProvider) noteMusixmatchTokenRejection() {
+	config := readProviderConfig(p.configLookup)
+	if config.MusixmatchUserToken != "" {
+		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), defaultRateLimitCooldown)
+		return
+	}
+	_ = p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
+}
+
 func musixmatchTokenRejected(header struct {
 	StatusCode int    `json:"status_code"`
 	Hint       string `json:"hint"`
@@ -184,8 +199,13 @@ func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCan
 		}
 	}
 	if subtitles := macroCalls["track.subtitles.get"].Body.SubtitleList; len(subtitles) > 0 {
-		if candidate := newLyricsCandidate(lyrics.LyricsText{Text: subtitles[0].SubtitleBody}, musixmatchProviderName, "lrc"); candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		// Restricted or unavailable subtitles arrive with an empty body;
+		// serving them would cache a blank lyric ahead of usable fallbacks
+		// (Codex).
+		if body := strings.TrimSpace(subtitles[0].SubtitleBody); body != "" {
+			if candidate := newLyricsCandidate(lyrics.LyricsText{Text: body}, musixmatchProviderName, "lrc"); candidate.present() {
+				return []lyricsCandidate{candidate}, lookupHealthy, nil
+			}
 		}
 	}
 	if plainLyrics := macroCalls["track.lyrics.get"].Body.LyricsBody; strings.TrimSpace(plainLyrics) != "" {
