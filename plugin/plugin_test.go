@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/provider"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 func TestPluginVersion(t *testing.T) {
@@ -10,6 +14,17 @@ func TestPluginVersion(t *testing.T) {
 
 	if got := pluginVersion(); got != "0.3.0" {
 		t.Fatalf("pluginVersion() = %q, want 0.2.0", got)
+	}
+}
+
+func TestPluginUserAgentIdentifiesThePlugin(t *testing.T) {
+	t.Parallel()
+
+	// Providers that throttle unidentified clients (LRCLib) rely on this
+	// string naming the plugin, its version, and the repository.
+	userAgent := pluginUserAgent()
+	if !strings.Contains(userAgent, "NavidromeBetterLyricsPlugin/"+pluginVersion()) || !strings.Contains(userAgent, pluginRepository) {
+		t.Fatalf("pluginUserAgent() = %q, want the name, version, and repository", userAgent)
 	}
 }
 
@@ -40,15 +55,15 @@ func TestManifestAllowlistsEverySourceHost(t *testing.T) {
 	for _, host := range manifest.Permissions.HTTP.RequiredHosts {
 		allowed[host] = true
 	}
-	for _, source := range allSources {
-		for _, host := range source.Hosts {
+	for _, src := range source.Catalog {
+		for _, host := range src.Hosts {
 			if !allowed[host] {
-				t.Fatalf("source %q needs host %q that the manifest does not allowlist", source.ID, host)
+				t.Fatalf("source %q needs host %q that the manifest does not allowlist", src.ID, host)
 			}
 		}
 	}
-	if got := manifest.Permissions.KVStore.MaxSize; got != lyricsCacheMaxSize {
-		t.Fatalf("manifest KV store maxSize = %q, want %q", got, lyricsCacheMaxSize)
+	if got := manifest.Permissions.KVStore.MaxSize; got != provider.CacheMaxSize {
+		t.Fatalf("manifest KV store maxSize = %q, want %q", got, provider.CacheMaxSize)
 	}
 	if got := manifest.Permissions.TaskQueue.MaxConcurrency; got != 1 {
 		t.Fatalf("manifest taskqueue maxConcurrency = %d, want 1 for the sweep queue", got)
@@ -119,52 +134,26 @@ func TestManifestConfigDefaultsMatchCatalog(t *testing.T) {
 	}
 
 	enum := configSchema.Properties.Sources.Items.Properties.ID.Enum
-	if len(enum) != len(allSources) {
-		t.Fatalf("source enum has %d entries, want %d", len(enum), len(allSources))
+	if len(enum) != len(source.Catalog) {
+		t.Fatalf("source enum has %d entries, want %d", len(enum), len(source.Catalog))
 	}
-	for i, source := range allSources {
-		if got := enum[i]; got != source.ID {
-			t.Fatalf("enum[%d] = %q, want %q", i, got, source.ID)
+	for i, src := range source.Catalog {
+		if got := enum[i]; got != src.ID {
+			t.Fatalf("enum[%d] = %q, want %q", i, got, src.ID)
 		}
 	}
 
 	defaults := configSchema.Properties.Sources.Defaults
-	if len(defaults) != len(allSources) {
+	if len(defaults) != len(source.Catalog) {
 		t.Fatalf("defaults have %d entries, want one per catalog source", len(defaults))
 	}
 	for i, wantDefault := range defaults {
-		wantOn := allSources[i].DefaultEnabled
-		if wantDefault.ID != allSources[i].ID {
-			t.Fatalf("defaults[%d] = %q, want %q", i, wantDefault.ID, allSources[i].ID)
+		wantOn := source.Catalog[i].DefaultEnabled
+		if wantDefault.ID != source.Catalog[i].ID {
+			t.Fatalf("defaults[%d] = %q, want %q", i, wantDefault.ID, source.Catalog[i].ID)
 		}
 		if wantDefault.Enabled != wantOn {
 			t.Fatalf("defaults[%d].enabled = %v, want %v", i, wantDefault.Enabled, wantOn)
 		}
-	}
-}
-
-func TestConfigSelectionOmittingEnabledUsesSchemaDefault(t *testing.T) {
-	t.Parallel()
-
-	// `{"id":"better-lyrics"}` must keep the source enabled (schema default
-	// true) instead of silently dropping it and appending the other defaults.
-	lookup := func(key string) (string, bool) {
-		if key == "sources" {
-			return `[{"id":"better-lyrics"}]`, true
-		}
-		return "", false
-	}
-	resolved := readProviderConfig(lookup)
-	ids := sourceIDs(resolved.Sources)
-	// The upgrade-compat pass still appends unlisted default sources, but the
-	// listed entry itself must not vanish (it decoded as disabled pre-fix).
-	found := false
-	for _, id := range ids {
-		if id == "better-lyrics" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("resolved = %v, want the listed source kept enabled by the schema default", ids)
 	}
 }
