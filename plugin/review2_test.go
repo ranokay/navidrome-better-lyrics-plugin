@@ -13,6 +13,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 )
 
 // Codex round 2: live-fixture wire-shape fixes and sweep/lookup semantics.
@@ -2329,5 +2330,49 @@ func TestLyricsPlusHostCooldownsStayMirrorScoped(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want only the non-cooled mirror queried", requests)
+	}
+}
+
+func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
+	t.Parallel()
+
+	// A queued continuation must keep the pending marker alive so replays
+	// cannot enqueue a parallel full sweep while it waits (Greptile).
+	cache := newFakeLyricsCache()
+	continuations := 0
+	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+		{ID: "late", Display: "late", Hosts: []string{"late.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return nil, lookupDegraded, fmt.Errorf("request lyrics: %w", errLyricsLookupBudgetExhausted)
+			}},
+		sweepSource("tail", new(int), false, nil),
+	}, func(lyrics.TrackInfo) error { return nil })
+	provider.enqueueSweepSources = func(lyrics.TrackInfo, []string) error {
+		continuations++
+		return nil
+	}
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	payload, err := json.Marshal(sweepTaskPayload{Track: track})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := provider.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, Payload: payload}); err != nil {
+		t.Fatalf("OnTaskExecute() error = %v, want nil", err)
+	}
+	if continuations != 1 {
+		t.Fatalf("continuations = %d, want the deferred tail enqueued", continuations)
+	}
+	trackKey, _ := lyricsTrackKey(track)
+	raw, exists, _ := cache.Get(provider.sweepPendingMarkerKey(track, trackKey))
+	if !exists {
+		t.Fatal("pending marker vanished although a continuation is queued")
+	}
+	if string(raw) == "release" {
+		t.Fatal("pending marker was released to a 1-second TTL although a continuation is queued")
+	}
+	ttl := cache.ttlsForKey[provider.sweepPendingMarkerKey(track, trackKey)]
+	if ttl != sweepQueuedMarkerTTL {
+		t.Fatalf("marker TTL = %d, want the queued window %d while the continuation waits", ttl, sweepQueuedMarkerTTL)
 	}
 }

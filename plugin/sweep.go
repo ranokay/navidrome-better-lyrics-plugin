@@ -77,15 +77,29 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 		_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL)
 	}
 	status, deferredIDs, sources := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
-	if markerKey != "" {
-		if _, done, _ := p.cache.Get(p.doneMarkerKey(payload.Track, sources)); !done {
-			_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
-		}
-	}
+	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.
 		if err := p.enqueueSweepSources(payload.Track, deferredIDs); err != nil {
 			logCacheDebug(fmt.Sprintf("sweep continuation enqueue failed: %v", err))
+		} else {
+			continuationQueued = true
+		}
+	}
+	if markerKey != "" {
+		_, done, _ := p.cache.Get(p.doneMarkerKey(payload.Track, sources))
+		switch {
+		case done:
+			// The completed marker gates duplicates now.
+		case continuationQueued:
+			// A continuation still works this track: keep the queued marker
+			// alive so replays cannot enqueue a parallel full sweep while it
+			// waits behind other songs (Greptile).
+			_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepQueuedMarkerTTL)
+		default:
+			// Nothing is pending: release the slot so the next lookup can
+			// retry the incomplete sweep promptly.
+			_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
 		}
 	}
 	return status, nil
