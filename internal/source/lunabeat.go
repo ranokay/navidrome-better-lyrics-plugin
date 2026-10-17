@@ -134,7 +134,7 @@ func readLunaBeatIndex(rt Runtime, deadline time.Time) (lunaBeatIndexEnvelope, e
 	if json.Unmarshal(indexResponse.Body, &envelope) != nil || envelope.Revision == "" {
 		return lunaBeatIndexEnvelope{}, errors.New("decode LunaBeat index response")
 	}
-	if raw := gzipString(indexResponse.Body); len(raw) <= maxCachedLyricsEntryBytes {
+	if raw := gzipString(indexResponse.Body); len(raw) <= MaxCacheEntryBytes {
 		rt.Cache().SetWithTTL(lunaBeatIndexKey, raw, lunaBeatIndexTTL)
 		return envelope, nil
 	}

@@ -166,7 +166,7 @@ func TestLyricsProvider_PerSourceCacheSkipsOversizedResults(t *testing.T) {
 
 	cache := newFakeLyricsCache()
 	oversized := "[00:01.00]" + string(make([]byte, 1024))
-	for len(oversized) <= maxCachedLyricsEntryBytes {
+	for len(oversized) <= source.MaxCacheEntryBytes {
 		oversized += oversized
 	}
 	src := source.Source{
@@ -209,7 +209,7 @@ func TestGetLyrics_TieReRankRespectsConfiguredOrder(t *testing.T) {
 	}
 	cache := newFakeLyricsCache()
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
-	provider := newTestProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 
 	first, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
@@ -222,7 +222,7 @@ func TestGetLyrics_TieReRankRespectsConfiguredOrder(t *testing.T) {
 		t.Fatal("expected the earlier-source candidate to be stored")
 	}
 
-	reread := newTestProviderWithSourcesAt(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	reread := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	reRanked, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
 		t.Fatalf("re-read GetLyrics() error = %v, want nil", err)
@@ -310,7 +310,7 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 	cache := newFakeLyricsCache()
 	now := time.Unix(5000, 0)
 	sources := []source.Source{line, syllable}
-	walkProvider := newTestProviderWithSourcesAt(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })
+	walkProvider := newTestProviderWithSources(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })
 
 	// Cooldown-gate source two so the stage-one walk cannot cover it, keeping the
 	// winner incomplete at line quality.
@@ -330,7 +330,7 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 		lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"},
 		"stub", "ttml"))
 
-	reread := newTestProviderWithSourcesAt(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })
+	reread := newTestProviderWithSources(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })
 	result, err := reread.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
 		t.Fatalf("second GetLyrics() error = %v, want nil", err)

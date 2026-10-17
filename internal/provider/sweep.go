@@ -231,7 +231,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 		}
 		candidates, fetchHealth, err := src.Fetch(p, track, deadline)
 		if err != nil {
-			if errors.Is(err, errLyricsLookupBudgetExhausted) {
+			if errors.Is(err, source.ErrLookupBudgetExhausted) {
 				// The search finished against the budget and the lyrics hop
 				// could not start: this source belongs in the continuation,
 				// not in the failure count.

@@ -3,7 +3,6 @@ package source
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -71,11 +70,12 @@ func (r *fakeRuntime) Do(sourceName, method, requestURL string, body []byte, hea
 }
 
 // requestTimeoutMilliseconds mirrors the provider's per-request bound: the
-// remaining lookup budget, capped by the plugin's per-request ceiling.
+// remaining lookup budget, capped by the plugin's per-request ceiling. An
+// exhausted budget returns the shared sentinel the sweep defers on.
 func (r *fakeRuntime) requestTimeoutMilliseconds(deadline time.Time) (int32, error) {
 	remaining := deadline.Sub(r.Now())
 	if remaining <= 0 {
-		return 0, errors.New("lyrics lookup time budget exhausted")
+		return 0, ErrLookupBudgetExhausted
 	}
 	perRequest := 6 * time.Second
 	if remaining < perRequest {

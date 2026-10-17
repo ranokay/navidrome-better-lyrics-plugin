@@ -21,8 +21,6 @@ const (
 	stageOneLookupBudget       = 8 * time.Second
 )
 
-var errLyricsLookupBudgetExhausted = errors.New("lyrics lookup time budget exhausted")
-
 type requestSender func(host.HTTPRequest) (*host.HTTPResponse, error)
 
 // Store is the provider's view of the plugin KV store; StorageUsed feeds the
@@ -34,7 +32,9 @@ type Store interface {
 
 // Deps is the plugin surface the provider runs against: host HTTP, the KV
 // store, the clock, config, the sweep queue, logging, and the identifying
-// User-Agent. Nil fields fall back to inert defaults.
+// User-Agent. The entrypoint supplies the host-backed implementations; nil
+// fields fall back to inert defaults (a transport that fails every request, a
+// no-op store performing no writes).
 type Deps struct {
 	Send        requestSender
 	Store       Store
@@ -85,6 +85,11 @@ func New(deps Deps) *Provider {
 	}
 	if p.cache == nil {
 		p.cache = noopLyricsCache{}
+	}
+	if p.send == nil {
+		p.send = func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return nil, errors.New("no transport configured")
+		}
 	}
 	if p.now == nil {
 		p.now = time.Now
@@ -326,7 +331,7 @@ func coldHostFor(src source.Source, coldHosts map[string]bool) string {
 func (p *Provider) requestTimeoutMilliseconds(deadline time.Time) (int32, error) {
 	remaining := deadline.Sub(p.now())
 	if remaining <= 0 {
-		return 0, errLyricsLookupBudgetExhausted
+		return 0, source.ErrLookupBudgetExhausted
 	}
 	perRequest := time.Duration(httpTimeoutMilliseconds) * time.Millisecond
 	if remaining < perRequest {

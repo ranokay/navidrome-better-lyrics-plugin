@@ -204,7 +204,7 @@ func TestSweep_RetainsInMemoryHostCooldowns(t *testing.T) {
 			Body:       []byte(`{"error":"exhausted"}`),
 		}, nil
 	}
-	provider := newTestProviderWithSourcesAt(send, cache, time.Now, []source.Source{first, shared}, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(send, cache, time.Now, []source.Source{first, shared}, func(lyrics.TrackInfo) error { return nil })
 
 	status := provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 	assertContains(t, status, "failed=1")
@@ -266,7 +266,7 @@ func TestStageOneSkipsSourceInCooldown(t *testing.T) {
 	}
 	cache := newFakeLyricsCache()
 	now := time.Unix(1000, 0)
-	provider := newTestProviderWithSourcesAt(nil, cache, func() time.Time { return now }, []source.Source{cooled, healthy}, func(lyrics.TrackInfo) error { return nil })
+	provider := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{cooled, healthy}, func(lyrics.TrackInfo) error { return nil })
 
 	if err := cache.SetWithTTL(source.GlobalCooldownKey("cooled"), []byte(strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10)), 600); err != nil {
 		t.Fatalf("seed cooldown: %v", err)
@@ -291,7 +291,7 @@ func TestSweep_SkipsBetterLyricsFamilyOnSharedCooldown(t *testing.T) {
 	cache := newFakeLyricsCache()
 	calls := 0
 	now := time.Unix(2000, 0)
-	provider := newTestProviderWithSourcesAt(nil, cache, func() time.Time { return now }, []source.Source{
+	provider := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{
 		{
 			ID: "better-lyrics-portato", Display: "Better Lyrics Portato",
 			Hosts:          []string{"lyrics-api.boidu.dev"},

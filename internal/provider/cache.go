@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	CacheMaxSize                    = "32MB"
-	lyricsCacheMaxBytes       int64 = 32 * 1024 * 1024
-	lyricsCacheReservedBytes  int64 = 1 * 1024 * 1024
-	maxCachedLyricsEntryBytes       = 1 * 1024 * 1024
+	CacheMaxSize                   = "32MB"
+	lyricsCacheMaxBytes      int64 = 32 * 1024 * 1024
+	lyricsCacheReservedBytes int64 = 1 * 1024 * 1024
+	MaxCacheEntryBytes             = 1 * 1024 * 1024
 	// syncedLyricsCacheTTLSeconds covers synchronized winner entries and the
 	// per-source cache of synchronized results.
 	syncedLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
@@ -134,14 +134,14 @@ func (p *Provider) storeCandidateValue(key string, candidate lyric.Candidate, tt
 		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return false
 	}
-	return p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, ttl)
+	return p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, ttl)
 }
 
 // storeCandidateBytes writes an already-marshaled envelope with the shared
 // per-entry cap and KV headroom guards.
 func (p *Provider) storeCandidateBytes(key string, value []byte, oversized bool, ttl int64) bool {
 	if oversized {
-		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), maxCachedLyricsEntryBytes))
+		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), MaxCacheEntryBytes))
 		return false
 	}
 	if usageStore, ok := p.cache.(lyricsCacheUsageStore); ok {
@@ -282,7 +282,7 @@ func (p *Provider) cacheWinner(track lyrics.TrackInfo, order []source.Source, ca
 		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return
 	}
-	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, winnerCacheTTLSeconds(candidate.Quality))
+	p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, winnerCacheTTLSeconds(candidate.Quality))
 }
 
 func (p *Provider) cacheNegativeWinner(track lyrics.TrackInfo, order []source.Source, sweepComplete bool) {
@@ -299,5 +299,5 @@ func (p *Provider) cacheNegativeWinner(track lyrics.TrackInfo, order []source.So
 		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return
 	}
-	p.storeCandidateBytes(key, value, len(value) > maxCachedLyricsEntryBytes, negativeLyricsCacheTTLSeconds)
+	p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, negativeLyricsCacheTTLSeconds)
 }

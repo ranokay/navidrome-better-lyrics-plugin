@@ -1,12 +1,22 @@
 package source
 
 import (
+	"errors"
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
+
+// ErrLookupBudgetExhausted reports a Runtime call whose lookup deadline had
+// already passed before the request started. The sweep treats it as deferred
+// work rather than a source failure.
+var ErrLookupBudgetExhausted = errors.New("lyrics lookup time budget exhausted")
+
+// MaxCacheEntryBytes bounds one KV entry; both the provider's write guard and
+// source-owned writes honor it.
+const MaxCacheEntryBytes = 1 * 1024 * 1024
 
 // Store is the plugin KV view a source may use for its own caching.
 type Store interface {

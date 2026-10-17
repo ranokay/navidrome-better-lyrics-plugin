@@ -11,6 +11,18 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
+func TestNewWithoutTransportFailsRequestsInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+
+	// Deps documents nil defaults; an omitted transport must surface an error,
+	// never a nil-func panic.
+	p := New(Deps{})
+	p.sources = catalogSources([]string{"better-lyrics"})
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err == nil {
+		t.Fatal("GetLyrics() error = nil, want a transport failure from the inert default")
+	}
+}
+
 func TestLyricsProvider_GetLyrics(t *testing.T) {
 	t.Parallel()
 

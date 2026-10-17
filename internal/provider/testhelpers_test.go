@@ -15,11 +15,6 @@ import (
 // testUserAgent stands in for the entrypoint's versioned User-Agent.
 const testUserAgent = "NavidromeBetterLyricsPlugin/test (+https://example.test)"
 
-// newTestProvider builds a provider over an injected transport.
-func newTestProvider(send requestSender) *Provider {
-	return newTestProviderWithDeps(send, nil, nil, nil, nil)
-}
-
 // newTestProviderWithDeps builds a provider with every dependency injectable;
 // nil falls back to the inert defaults New applies.
 func newTestProviderWithDeps(send requestSender, cache Store, now func() time.Time, config ConfigLookup, enqueue func(lyrics.TrackInfo) error) *Provider {
@@ -36,12 +31,6 @@ func newTestProviderWithSources(send requestSender, cache Store, now func() time
 	p := newTestProviderWithDeps(send, cache, now, nil, enqueue)
 	p.sources = sources
 	return p
-}
-
-// newTestProviderWithSourcesAt is newTestProviderWithSources with an
-// injectable clock (tests that pin time-dependent query parameters).
-func newTestProviderWithSourcesAt(send requestSender, cache Store, now func() time.Time, sources []source.Source, enqueue func(lyrics.TrackInfo) error) *Provider {
-	return newTestProviderWithSources(send, cache, now, sources, enqueue)
 }
 
 // newTestProviderWithDependencies builds a provider over the production-shaped
