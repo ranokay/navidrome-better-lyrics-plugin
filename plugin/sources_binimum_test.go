@@ -113,7 +113,7 @@ func TestBinimumCandidates_LyricsFetchFailureReturnsError(t *testing.T) {
 		if strings.Contains(request.URL, "lrc.red/s/") {
 			return &host.HTTPResponse{StatusCode: 503, Body: []byte(`{"error":"unavailable"}`)}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"duration":281,"lyricsUrl":"https://lrc.red/s/GBBQY9502039.ttml","timing_type":"line","track_name":"Live"}]}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"duration":281,"artist_name":"Oasis","lyricsUrl":"https://lrc.red/s/GBBQY9502039.ttml","timing_type":"line","track_name":"Live"}]}`)}, nil
 	})
 
 	candidates, health, err := fetchBinimumLyricsCandidates(provider, lyrics.TrackInfo{Title: "Live", Artist: "Oasis", Duration: 281}, time.Now().Add(stageOneLookupBudget))

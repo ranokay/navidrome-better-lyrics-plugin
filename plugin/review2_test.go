@@ -152,6 +152,8 @@ func TestGetLyrics_CachedMissStillSchedulesIncompleteSweep(t *testing.T) {
 	provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{
 		sweepSource("one", new(int), false, nil),
 		sweepSource("two", new(int), false, nil),
+		sweepSource("three", new(int), false, nil),
+		sweepSource("tail", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error {
 		enqueued++
 		return nil
@@ -332,4 +334,243 @@ func jsonUnmarshal[T any](t *testing.T, name string) T {
 		t.Fatalf("decode %s: %v", name, err)
 	}
 	return value
+}
+
+func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
+	t.Parallel()
+
+	// A plain tail result lives one hour per source and five minutes as a
+	// winner; the done marker must not suppress re-sweeps for 24 hours after
+	// that (Codex): the marker cannot outlive the shortest cached result.
+	for _, tc := range []struct {
+		name   string
+		text   string
+		format string
+		want   int64
+	}{
+		{name: "plain tail result bounds the marker to one hour", text: "some plain words", format: "plain", want: unsyncedLyricsCacheTTLSeconds},
+		{name: "line result bounds the marker to a day", text: "[00:01.00]timed", format: "lrc", want: syncedLyricsCacheTTLSeconds},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cache := newFakeLyricsCache()
+			provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+				sweepSource("lead", new(int), false, nil),
+				stubFetchedCandidate("tail", "tail", tc.format, tc.text),
+			}, func(lyrics.TrackInfo) error { return nil })
+
+			provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
+
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			key := sweepDoneMarkerKey(track, provider.activeSources())
+			ttl, ok := cache.ttlsForKey[key]
+			if !ok {
+				t.Fatalf("done marker missing for %s coverage", tc.format)
+			}
+			if ttl != tc.want {
+				t.Fatalf("done marker TTL = %d, want %d", ttl, tc.want)
+			}
+		})
+	}
+}
+
+func TestSweep_ContinuationCompletionFingerprintsFullOrder(t *testing.T) {
+	t.Parallel()
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+
+	t.Run("uncovered siblings block the marker", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+			sweepSource("one", new(int), false, nil),
+			sweepSource("two", new(int), false, nil),
+		}, func(lyrics.TrackInfo) error { return nil })
+
+		status, _ := provider.runSweepSources(track, []string{"two"})
+		if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); exists {
+			t.Fatalf("continuation wrote a done marker although source one was never covered; status = %q", status)
+		}
+	})
+
+	t.Run("cached siblings complete the full order", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
+			sweepSource("one", new(int), false, nil),
+			sweepSource("two", new(int), false, nil),
+		}, func(lyrics.TrackInfo) error { return nil })
+
+		candidate := newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]line"}, "one", "lrc")
+		if !provider.cacheSourceCandidate(track, "one", candidate) {
+			t.Fatal("expected source one's candidate to be stored")
+		}
+		provider.runSweepSources(track, []string{"two"})
+
+		if _, exists, _ := cache.Get(sweepDoneMarkerKey(track, provider.activeSources())); !exists {
+			t.Fatal("full-order coverage is satisfied by the cached sibling plus the continuation; the done marker must be recorded")
+		}
+	})
+}
+
+func TestGetLyrics_CoveredNegativePassSkipsSweep(t *testing.T) {
+	t.Parallel()
+
+	// When every implemented source fits in the stage-one walk and all of them
+	// return none, the negative winner already records complete coverage;
+	// queueing a sweep would refetch the same misses (Codex).
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{
+		sweepSource("one", new(int), false, nil),
+		sweepSource("two", new(int), false, nil),
+	}, func(lyrics.TrackInfo) error {
+		t.Error("unexpected sweep enqueue after a fully covered negative pass")
+		return nil
+	})
+
+	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	if len(result.Lyrics) != 0 {
+		t.Fatalf("lyrics = %#v, want empty", result.Lyrics)
+	}
+	if _, ok, _ := cache.Get(winnerKeyForTest(t, cache, provider.activeSources(), lyrics.TrackInfo{Title: "Song", Artist: "Artist"})); !ok {
+		t.Fatal("expected the covered negative winner to be cached")
+	}
+}
+
+func winnerKeyForTest(t *testing.T, cache lyricsCacheStore, order []lyricsSource, track lyrics.TrackInfo) string {
+	t.Helper()
+	key, ok := lyricsWinnerCacheKey(track, sourceIDs(order))
+	if !ok {
+		t.Fatal("expected a winner cache key")
+	}
+	return key
+}
+
+func TestLunaTrackID_PreservesLargeNumericIDs(t *testing.T) {
+	t.Parallel()
+
+	var numeric lunaTrackID
+	if err := numeric.UnmarshalJSON([]byte(`7425699317225293865`)); err != nil {
+		t.Fatalf("UnmarshalJSON(numeric) error = %v, want nil", err)
+	}
+	if numeric != "7425699317225293865" {
+		t.Fatalf("numeric id = %q, want the exact digit string (no float64 rounding)", string(numeric))
+	}
+
+	var quoted lunaTrackID
+	if err := quoted.UnmarshalJSON([]byte(`"7425699317225293865"`)); err != nil {
+		t.Fatalf("UnmarshalJSON(quoted) error = %v, want nil", err)
+	}
+	if quoted != "7425699317225293865" {
+		t.Fatalf("quoted id = %q, want the stripped value", string(quoted))
+	}
+}
+
+func TestLRCLibWordSeparatorsSurviveParsing(t *testing.T) {
+	t.Parallel()
+
+	// LRCLib stores spacing only in the line text; token rendering must not
+	// fuse the words into "firstline" (Codex).
+	const yamlDoc = "version: '1.0'\n" +
+		"lines:\n" +
+		"- start_ms: 1000\n" +
+		"  end_ms: 2500\n" +
+		"  text: first line\n" +
+		"  words:\n" +
+		"  - text: first\n" +
+		"    start_ms: 1000\n" +
+		"    end_ms: 1500\n" +
+		"  - text: line\n" +
+		"    start_ms: 1500\n" +
+		"    end_ms: 2500\n"
+
+	lines, err := parseLRCLibLyricsFile([]byte(yamlDoc))
+	if err != nil {
+		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+	}
+	rendered := enhancedLRCFromTimedLines(lines)
+	if !strings.Contains(rendered, "<00:01.00>first <00:01.50>line") {
+		t.Fatalf("rendered = %q, want the separator restored between the word tokens", rendered)
+	}
+	if strings.Contains(rendered, "firstline") {
+		t.Fatalf("rendered = %q, fused the word tokens", rendered)
+	}
+}
+
+func TestMusixmatchMintFailuresStayDegraded(t *testing.T) {
+	t.Parallel()
+
+	t.Run("transport failure propagates", func(t *testing.T) {
+		provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			return nil, errors.New("segmentation unreachable in the token.get")
+		})
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("transport failure converted to a healthy clean miss; want a degraded error")
+		}
+		if health == lookupHealthy {
+			t.Fatalf("health = %v, want degraded on an operational failure", health)
+		}
+	})
+
+	t.Run("http error propagates", func(t *testing.T) {
+		provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 503, Body: []byte("kaput")}, nil
+		})
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+		if err == nil {
+			t.Fatal("5xx mint converted to a healthy clean miss; want a degraded error")
+		}
+		if health == lookupHealthy {
+			t.Fatalf("health = %v, want degraded on an operational failure", health)
+		}
+	})
+
+	t.Run("token challenge stays quiet", func(t *testing.T) {
+		provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 401, Body: []byte("denied")}, nil
+		})
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health != lookupHealthy {
+			t.Fatalf("challenge = (%v, %v); want a healthy quiet miss", err, health)
+		}
+	})
+}
+
+func TestBinimumRejectsMetadataMismatch(t *testing.T) {
+	t.Parallel()
+
+	// The live search for "Live Forever"/Oasis also carries an unrelated row
+	// with a matching 340 s duration (Codex); the selector must not pick it.
+	rcalcioResults := []binimumResult{
+		{
+			TrackName:  "I Could Sing of Your Love Forever (Live)",
+			ArtistName: "Oasis Worship",
+			AlbumName:  "Cutting Edge",
+			Duration:   340,
+			LyricsURL:  "https://lrc.red/s/WRONG.ttml",
+		},
+		{
+			TrackName:  "Live Forever (Remastered)",
+			ArtistName: "Oasis",
+			AlbumName:  "Time Flies",
+			Duration:   339,
+			LyricsURL:  "https://lrc.red/s/RIGHT.ttml",
+		},
+	}
+
+	best, found := pickBinimumResult(rcalcioResults, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 340})
+	if !found {
+		t.Fatal("pickBinimumResult() found nothing, want the metadata-matching row")
+	}
+	if best.LyricsURL != "https://lrc.red/s/RIGHT.ttml" {
+		t.Fatalf("picked = %q %q, want the row with matching metadata", best.TrackName, best.ArtistName)
+	}
+
+	// Nothing matches metadata at all: from a mismatched-only catalog there is
+	// no candidate, even though durations line up.
+	if _, found := pickBinimumResult(rcalcioResults[:1], lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 340}); found {
+		t.Fatal("duration-only metadata match accepted an unrelated song")
+	}
 }

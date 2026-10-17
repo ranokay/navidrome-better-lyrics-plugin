@@ -16,8 +16,9 @@ const (
 	sweepQueueName    = "lyrics-sweep"
 	sweepMarkerPrefix = "sweep:"
 	sweepDonePrefix   = "sweep-done:"
-	// sweepDoneTTL outlives the per-source entries (24 h for synchronized
-	// results) so a completed sweep prevents pointless re-sweeps for a day.
+	// sweepDoneTTL is the ceiling for a completed sweep's marker; the write
+	// clamps it to the shortest cached-result TTL the sweep actually covered
+	// so a marker never outlives the results it stands for.
 	sweepDoneTTL = int64(24 * time.Hour / time.Second)
 	// sweepMarkerTTL matches the negative winner TTL so a fresh miss lookup can
 	// re-trigger a sweep once its marker expires.
@@ -85,6 +86,16 @@ func sweepDoneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
 	return fmt.Sprintf("%s%x:%s", sweepDonePrefix, digest, trackKey)
 }
 
+// cacheTTLForCoveredCandidate maps a covered candidate to its per-source cache
+// TTL so a done marker can only outlive the results it stands for as long as
+// the shortest of those results does.
+func cacheTTLForCoveredCandidate(candidate lyricsCandidate) int64 {
+	if !candidate.present() {
+		return 0
+	}
+	return sourceCacheTTLSeconds(candidate.quality)
+}
+
 // runSweepSources walks the sources for one track, optionally restricted to the
 // ids carried by a continuation task. It returns the status string and the ids of
 // sources deferred because the budget ran out (so the task can resume them).
@@ -109,8 +120,9 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 	deadline := p.now().Add(budget)
 
 	sources := p.activeSources()
+	var allowedSet map[string]bool
 	if len(allowed) > 0 {
-		allowedSet := make(map[string]bool, len(allowed))
+		allowedSet = make(map[string]bool, len(allowed))
 		for _, id := range allowed {
 			allowedSet[id] = true
 		}
@@ -122,12 +134,22 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 		sources = filtered
 	}
+	// Continuations hand the done marker back to the full configured order:
+	// caching against the deferred subset alone would never satisfy a fresh
+	// full-order check and repeat the whole pass (Codex).
+	fullOrder := sources
+	if allowedSet != nil {
+		fullOrder = p.activeSources()
+	}
 	cached, failed, skipped, deferred := 0, 0, 0, 0
 	cooldownSkipped, implemented := 0, 0
 	// missed counts clean "no lyrics here" responses: real covered work that
 	// must terminate the sweep. notCovered counts fetches that succeeded but
 	// could not store anything (e.g. quota-refused writes).
 	missed, notCovered := 0, 0
+	// coverageTTL bounds the done marker by the shortest cached-result TTL it
+	// covers, so a marker never outlives the results it stands for (Codex).
+	coverageTTL := sweepDoneTTL
 	var deferredIDs []string
 	localCold := map[string]bool{}
 	for _, source := range sources {
@@ -139,8 +161,11 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		if source.Fetch == nil {
 			continue
 		}
-		if _, ok := p.readCachedSourceCandidate(track, source.ID); ok {
+		if cachedCandidate, ok := p.readCachedSourceCandidate(track, source.ID); ok {
 			skipped++
+			if covered := cacheTTLForCoveredCandidate(cachedCandidate); covered > 0 && covered < coverageTTL {
+				coverageTTL = covered
+			}
 			continue
 		}
 		if cooledDown := p.sourceInCooldown(source); cooledDown {
@@ -188,6 +213,11 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		switch {
 		case storedAny:
 			cached++
+			for _, candidate := range candidates {
+				if covered := cacheTTLForCoveredCandidate(candidate); covered > 0 && covered < coverageTTL {
+					coverageTTL = covered
+				}
+			}
 		case hadCandidates:
 			// Every write was refused (oversized/quota): this pass cannot
 			// honestly claim the source is covered.
@@ -198,9 +228,23 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			missed++
 		}
 	}
-	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && cached+missed+skipped == implemented && implemented > 0 {
-		key := sweepDoneMarkerKey(track, sources)
-		if p.cache.SetWithTTL(key, []byte(p.now().Format(time.RFC3339)), sweepDoneTTL) == nil {
+	// For a continuation pass, the sources outside the deferred subset must
+	// already be cached from the original sweep; otherwise the full order is
+	// not covered yet and no marker may be written.
+	coveredOthers := true
+	for _, source := range fullOrder {
+		if allowedSet == nil || source.Fetch == nil || allowedSet[source.ID] {
+			continue
+		}
+		if _, ok := p.readCachedSourceCandidate(track, source.ID); ok {
+			continue
+		}
+		coveredOthers = false
+		break
+	}
+	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && coveredOthers && cached+missed+skipped == implemented && implemented > 0 {
+		key := sweepDoneMarkerKey(track, fullOrder)
+		if p.cache.SetWithTTL(key, []byte(p.now().Format(time.RFC3339)), coverageTTL) == nil {
 			// Also verify the write actually stayed (an oversized write is
 			// dropped); re-read to be sure.
 			if _, exists, _ := p.cache.Get(key); !exists {

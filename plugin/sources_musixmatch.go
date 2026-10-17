@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -34,9 +35,14 @@ const musixmatchProviderName = "Musixmatch"
 func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
 	token, err := p.musixmatchToken(deadline)
 	if err != nil {
-		// Minting is best-effort; a challenge means this lookup skips Musixmatch
-		// quietly and the next lookup can try again.
-		return nil, lookupHealthy, nil
+		// A mint challenge means this lookup skips Musixmatch quietly and the
+		// next lookup can try again. Operational failures (transport, timeout,
+		// HTTP 5xx) must stay degraded so sweep coverage cannot mark the
+		// source done while minting is actually down (Codex).
+		if errors.Is(err, errMusixmatchTokenChallenge) {
+			return nil, lookupHealthy, nil
+		}
+		return nil, lookupDegraded, err
 	}
 
 	searchURL, ok := musixmatchSearchURL(track, token)
@@ -182,7 +188,7 @@ func (p *lyricsProvider) musixmatchToken(deadline time.Time) (string, error) {
 		return "", err
 	}
 	if response.StatusCode == 401 {
-		return "", fmt.Errorf("musixmatch token challenge")
+		return "", errMusixmatchTokenChallenge
 	}
 	if response.StatusCode != 200 && response.StatusCode != 201 {
 		return "", providerResponseError("Musixmatch token", response)
@@ -191,6 +197,9 @@ func (p *lyricsProvider) musixmatchToken(deadline time.Time) (string, error) {
 	var envelope musixmatchTokenEnvelope
 	if err := json.Unmarshal(response.Body, &envelope); err != nil {
 		return "", fmt.Errorf("decode Musixmatch token response: %w", err)
+	}
+	if musixmatchTokenRejected(envelope.Message.Header) {
+		return "", errMusixmatchTokenChallenge
 	}
 	token := strings.TrimSpace(envelope.Message.Body.UserToken)
 	if token == "" {
@@ -297,6 +306,11 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 	return best, found
 }
 
+// errMusixmatchTokenChallenge marks the anti-bot captcha/rejection the desktop
+// endpoint answers with when anonymous minting is blocked; unlike transport or
+// HTTP errors it is a deliberate skip, not an operational failure.
+var errMusixmatchTokenChallenge = errors.New("musixmatch token challenge")
+
 type musixmatchEnvelope struct {
 	Message struct {
 		Header struct {
@@ -310,7 +324,8 @@ type musixmatchEnvelope struct {
 type musixmatchTokenEnvelope struct {
 	Message struct {
 		Header struct {
-			StatusCode int `json:"status_code"`
+			StatusCode int    `json:"status_code"`
+			Hint       string `json:"hint"`
 		} `json:"header"`
 		Body struct {
 			UserToken string `json:"user_token"`

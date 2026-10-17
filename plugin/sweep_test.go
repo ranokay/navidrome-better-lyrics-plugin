@@ -147,12 +147,17 @@ func TestOnTaskExecute_IgnoresForeignQueuesAndRunsSweeps(t *testing.T) {
 func TestGetLyrics_EnqueuesSweepOncePerTrack(t *testing.T) {
 	t.Parallel()
 
+	// Four implemented sources: stage one walks three, so the tail is
+	// uncovered and the sweep must fire exactly once per track regardless of
+	// how often the client replays the (negative) winner.
 	cache := newFakeLyricsCache()
 	enqueued := 0
-	one, two := 0, 0
+	one, two, three, four := 0, 0, 0, 0
 	provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{
 		sweepSource("one", &one, false, nil),
 		sweepSource("two", &two, false, nil),
+		sweepSource("three", &three, false, nil),
+		sweepSource("four", &four, false, nil),
 	}, func(lyrics.TrackInfo) error {
 		enqueued++
 		return nil

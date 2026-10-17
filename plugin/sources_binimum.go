@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
@@ -94,12 +95,44 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	return []lyricsCandidate{candidate}, lookupHealthy, nil
 }
 
+// normalizedLyricTokens lowercases and keeps only alphanumeric tokens so
+// metadata comparisons resist punctuation and casing drift.
+func normalizedLyricTokens(value string) []string {
+	return strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+// lyricTokensMatch reports whether one normalized token list is a prefix of the
+// other at least one token long: so "Live Forever (Remastered)" matches a
+// request for "Live Forever", while an unrelated same-duration song with a
+// different title/artist never qualifies (Codex).
+func lyricTokensMatch(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	for i, token := range a {
+		if token != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimumResult, bool) {
 	target := int64(math.Round(float64(track.Duration)))
+	title, artist := normalizedLyricTokens(track.Title), normalizedLyricTokens(trackArtist(track))
 	var best binimumResult
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, candidateResult := range results {
+		if !lyricTokensMatch(normalizedLyricTokens(candidateResult.TrackName), title) ||
+			!lyricTokensMatch(normalizedLyricTokens(candidateResult.ArtistName), artist) {
+			continue
+		}
 		delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
 		if delta > 2 {
 			continue

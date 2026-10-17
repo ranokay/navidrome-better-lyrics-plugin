@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -127,16 +128,22 @@ type lunaGroupDatum struct {
 type lunaTrackID string
 
 func (id *lunaTrackID) UnmarshalJSON(data []byte) error {
-	var raw any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	text := bytes.TrimSpace(data)
+	if len(text) > 0 && text[0] == '"' {
+		var quoted string
+		if err := json.Unmarshal(text, &quoted); err != nil {
+			return err
+		}
+		*id = lunaTrackID(strings.TrimSpace(quoted))
+		return nil
+	}
+	// json.Number keeps the original digits: unmarshalling through `any`
+	// would round ids above 2^53 onto a neighboring float64 (Codex).
+	var digits json.Number
+	if err := json.Unmarshal(text, &digits); err != nil {
 		return err
 	}
-	switch value := raw.(type) {
-	case string:
-		*id = lunaTrackID(strings.TrimSpace(value))
-	case float64:
-		*id = lunaTrackID(strconv.FormatInt(int64(value), 10))
-	}
+	*id = lunaTrackID(strings.TrimSpace(digits.String()))
 	return nil
 }
 

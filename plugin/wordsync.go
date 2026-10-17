@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -374,12 +375,64 @@ func parseLRCLibLyricsFile(data []byte) ([]timedLine, error) {
 			}
 			line.Words = append(line.Words, timedWord{StartMs: word.StartMs, EndMs: word.EndMs, Text: word.Text})
 		}
+		// LRCLib stores the spacing between words only in the line text, so
+		// token texts interleave the separators to avoid fused renders
+		// ("firstline" for "first line") without repeating the whole line
+		// (Codex).
+		line.Words = lrclibWordSeparators(row.Text, line.Words)
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
 		return nil, errEmptyWordSyncInput
 	}
 	return lines, nil
+}
+
+// lrclibWordSeparators realigns word tokens against the line text: LRCLib's
+// word tokens carry only their own text while the separators live in
+// `text`, so rendering straight from the tokens fuses the words. Each gap
+// between consecutive token spans becomes trailing text of the preceding
+// token; leading and trailing text outside the spans is preserved as well.
+// Tokens that cannot be located in the text fall back to single-space
+// separation between unwrapped boundaries.
+func lrclibWordSeparators(text string, words []timedWord) []timedWord {
+	if len(words) == 0 {
+		return words
+	}
+	cursor := 0
+	for i := range words {
+		token := words[i].Text
+		if token == "" {
+			continue
+		}
+		if idx := strings.Index(text[cursor:], token); idx >= 0 {
+			gap := text[cursor : cursor+idx]
+			cursor += idx + len(token)
+			if i == 0 {
+				words[i].Text = gap + token
+				continue
+			}
+			words[i-1].Text += gap
+			continue
+		}
+		if i > 0 && !endsWithWhitespace(words[i-1].Text) && !startsWithWhitespace(token) {
+			words[i-1].Text += " "
+		}
+	}
+	if remaining := text[cursor:]; remaining != "" {
+		words[len(words)-1].Text += remaining
+	}
+	return words
+}
+
+func endsWithWhitespace(value string) bool {
+	runes := []rune(value)
+	return len(runes) > 0 && unicode.IsSpace(runes[len(runes)-1])
+}
+
+func startsWithWhitespace(value string) bool {
+	runes := []rune(value)
+	return len(runes) > 0 && unicode.IsSpace(runes[0])
 }
 
 type lrclibLyricsLine struct {

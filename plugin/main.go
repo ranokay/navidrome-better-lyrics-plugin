@@ -170,7 +170,11 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 	}
 	if err == nil {
 		p.cacheNegativeWinner(track, sources, coveredAll)
-		p.maybeEnqueueSweep(track)
+		if !coveredAll {
+			// A fully covered negative pass needs no sweep: every implemented
+			// source already answered inside stage one (Codex).
+			p.maybeEnqueueSweep(track)
+		}
 	}
 	return candidate.response, err
 }
@@ -262,7 +266,9 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 	if len(lookupErrors) > 0 {
 		return lyricsCandidate{}, health, false, errors.Join(lookupErrors...)
 	}
-	return lyricsCandidate{}, health, false, nil
+	// A clean all-miss walk with full coverage is real: the negative winner
+	// must record that no sweep needs re-walking the same misses (Codex).
+	return lyricsCandidate{}, health, walkedTotal >= implementedTotal, nil
 }
 
 func coldHostFor(source lyricsSource, coldHosts map[string]bool) string {
