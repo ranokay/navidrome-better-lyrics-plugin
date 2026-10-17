@@ -156,7 +156,6 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 // the request; the album breaks ties between otherwise-qualified rows.
 func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 	titleTokens := normalizedLyricTokens(track.Title)
-	artistTokens := normalizedLyricTokens(trackArtist(track))
 	album := strings.TrimSpace(track.Album)
 
 	var best amllItem
@@ -166,7 +165,7 @@ func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 		if !amllNamesMatch(item.MusicNames, titleTokens) {
 			continue
 		}
-		if !amllArtistsMatch(item.ArtistNames, artistTokens) {
+		if !amllArtistsMatch(item.ArtistNames, trackArtist(track)) {
 			continue
 		}
 		albumMatch := album != "" && amllNamesContain(item.AlbumNames, normalizedLyricTokens(album))
@@ -193,12 +192,12 @@ func amllNamesMatch(names []string, wanted []string) bool {
 }
 
 // amllArtistsMatch applies complete-name semantics to the artist column.
-func amllArtistsMatch(names []string, wanted []string) bool {
-	if len(wanted) == 0 {
+func amllArtistsMatch(names []string, wanted string) bool {
+	if strings.TrimSpace(wanted) == "" {
 		return true
 	}
 	for _, name := range names {
-		if artistTokensMatch(name, strings.Join(wanted, " ")) {
+		if artistTokensMatch(name, wanted) {
 			return true
 		}
 	}

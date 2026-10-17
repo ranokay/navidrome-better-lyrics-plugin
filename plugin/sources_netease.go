@@ -163,7 +163,7 @@ func neteaseEnvelopeStatusFailure(p *lyricsProvider, code int) (lookupHealth, er
 
 func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
-	title, artist := normalizedLyricTokens(track.Title), normalizedLyricTokens(trackArtist(track))
+	title := normalizedLyricTokens(track.Title)
 	for _, song := range songs {
 		if song.ID <= 0 {
 			continue
@@ -174,7 +174,7 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 		if !lyricTokensMatch(normalizedLyricTokens(song.Name), title) {
 			continue
 		}
-		if !neteaseArtistsMatch(song.Artists, artist) {
+		if !neteaseArtistsMatch(song.Artists, trackArtist(track)) {
 			continue
 		}
 		if track.Duration > 0 {
@@ -193,12 +193,12 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 // neteaseArtistsMatch reports whether any returned artist name matches the
 // requested artist completely: the cloudsearch payload can carry collaborating
 // artists, so one matching row suffices.
-func neteaseArtistsMatch(song []neteaseArtist, wanted []string) bool {
-	if len(wanted) == 0 {
+func neteaseArtistsMatch(song []neteaseArtist, wanted string) bool {
+	if strings.TrimSpace(wanted) == "" {
 		return true
 	}
 	for _, candidateArtist := range song {
-		if artistTokensMatch(candidateArtist.Name, strings.Join(wanted, " ")) {
+		if artistTokensMatch(candidateArtist.Name, wanted) {
 			return true
 		}
 	}

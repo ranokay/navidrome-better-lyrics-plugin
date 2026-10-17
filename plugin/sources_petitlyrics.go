@@ -182,11 +182,8 @@ type petitlyricsSongEntry struct {
 
 // appleLyricallyArtistMatches accepts any collaborating artist entry whose
 // complete name matches the requested artist.
-func appleLyricallyArtistMatches(artistName string, wanted []string) bool {
-	if len(wanted) == 0 {
-		return true
-	}
-	return artistTokensMatch(artistName, strings.Join(wanted, " "))
+func appleLyricallyArtistMatches(artistName, wanted string) bool {
+	return artistTokensMatch(artistName, wanted)
 }
 
 func petitLyricsHeaders() map[string]string {
@@ -247,7 +244,6 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 	}
 	target := int64(math.Round(float64(track.Duration) * 1000.0))
 	titleTokens := normalizedLyricTokens(track.Title)
-	artistTokens := normalizedLyricTokens(trackArtist(track))
 	var trackID int64
 	bestDelta := int64(math.MaxInt64)
 	found := false
@@ -261,7 +257,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		if !lyricTokensMatch(normalizedLyricTokens(result.TrackName), titleTokens) {
 			continue
 		}
-		if !appleLyricallyArtistMatches(result.ArtistName, artistTokens) {
+		if !appleLyricallyArtistMatches(result.ArtistName, trackArtist(track)) {
 			continue
 		}
 		if track.Duration > 0 {

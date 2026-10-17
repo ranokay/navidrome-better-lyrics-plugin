@@ -887,7 +887,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
 			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
 				*one++
-				time.Sleep(3 * time.Millisecond)
+				time.Sleep(20 * time.Millisecond)
 				return nil, lookupHealthy, nil
 			}},
 		{ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
@@ -896,7 +896,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 				return nil, lookupHealthy, nil
 			}},
 	}, func(lyrics.TrackInfo) error { return nil })
-	provider.sweepBudget = time.Millisecond
+	provider.sweepBudget = 2 * time.Millisecond
 
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 	status, deferredIDs := provider.runSweepSources(track, nil)
@@ -927,14 +927,14 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 	cache := newFakeLyricsCache()
 	plainSource := lyricsSource{ID: "plain", Display: "plain", Hosts: []string{"plain.example.test"}, DefaultEnabled: true,
 		Fetch: func(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
-			time.Sleep(3 * time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 			return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "plain words"}, "plain", "plain")}, lookupHealthy, nil
 		}}
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
 		plainSource,
 		sweepSource("tail", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
-	provider.sweepBudget = time.Millisecond
+	provider.sweepBudget = 2 * time.Millisecond
 
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 	status, deferred := provider.runSweepSources(track, nil)
@@ -2705,5 +2705,43 @@ func TestYTMusicMalformedWatchDegrades(t *testing.T) {
 	_, health, err := fetchYTMusicLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 238}, time.Now().Add(stageOneLookupBudget))
 	if err == nil || health != lookupDegraded {
 		t.Fatalf("result = (%v, %v); want the malformed watch body to degrade", err, health)
+	}
+}
+
+func TestPunctuatedArtistNamesStillMatch(t *testing.T) {
+	t.Parallel()
+
+	// Whole-name equality must precede collaborator splitting: AC/DC and
+	// Simon & Garfunkel collapse to single names and matched before the
+	// shared matcher arrived (Greptile P1).
+	cases := []struct{ returned, wanted string }{
+		{"AC/DC", "AC/DC"},
+		{"Simon & Garfunkel", "Simon & Garfunkel"},
+		{"Simon & Garfunkel", "Garfunkel"},
+		// Variant punctuation: the whole-name path catches what splitting
+		// would miss (Greptile).
+		{"ACDC", "AC/DC"},
+	}
+	for _, tc := range cases {
+		if !artistTokensMatch(tc.returned, tc.wanted) {
+			t.Fatalf("artistTokensMatch(%q, %q) = false, want true", tc.returned, tc.wanted)
+		}
+	}
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "v1/lyrics/search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"items":[{"id":"111","musicNames":["Thunderstruck"],"artistNames":["AC/DC"],"albumNames":["B"]}]}}`)}, nil
+		case strings.Contains(request.URL, "v1/lyrics/get"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"status":200,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\"><body><p begin=\"1\">line</p></body></tt>"}}`)}, nil
+		default:
+			t.Errorf("unexpected request %q", request.URL)
+			return nil, nil
+		}
+	})
+
+	candidates, _, err := fetchAMLLyricsCandidates(provider, lyrics.TrackInfo{Title: "Thunderstruck", Artist: "AC/DC", Album: "B"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates = %#v/%v, want the exact punctuated artist matched", candidates, err)
 	}
 }

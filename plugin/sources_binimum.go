@@ -139,6 +139,12 @@ func artistTokensMatch(returned, wanted string) bool {
 	if returned == "" {
 		return false
 	}
+	// Whole-name equality first: "AC/DC" collapses to one name, while the
+	// collaborator split below would break it into "ac" and "dc" that can
+	// never equal "acdc" (Greptile).
+	if onlyLettersAndDigits(strings.ToLower(returned)) == onlyLettersAndDigits(strings.ToLower(wanted)) {
+		return true
+	}
 	wantNames := splitArtistNames(wanted)
 	if len(wantNames) == 0 {
 		return true

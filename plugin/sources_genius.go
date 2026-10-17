@@ -118,7 +118,6 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 		return "", err
 	}
 	titleTokens := normalizedLyricTokens(track.Title)
-	artistTokens := normalizedLyricTokens(trackArtist(track))
 	for _, hit := range envelope.Response.Hits {
 		if hit.Type != "song" {
 			continue
@@ -130,7 +129,7 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 			!lyricTokensMatch(normalizedLyricTokens(hit.Result.Title), titleTokens) {
 			continue
 		}
-		if !geniusArtistsMatch(hit.Result.ArtistNames, artistTokens) {
+		if !geniusArtistsMatch(hit.Result.ArtistNames, trackArtist(track)) {
 			continue
 		}
 		return hit.Result.URL, nil
@@ -140,16 +139,8 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 
 // geniusArtistsMatch accepts the request when any returned artist name matches
 // the track artist completely, with collaboration splitting on both sides.
-func geniusArtistsMatch(returned string, wanted []string) bool {
-	if len(wanted) == 0 {
-		return true
-	}
-	for _, name := range strings.Split(returned, " & ") {
-		if artistTokensMatch(name, strings.Join(wanted, " ")) {
-			return true
-		}
-	}
-	return false
+func geniusArtistsMatch(returned, wanted string) bool {
+	return artistTokensMatch(returned, wanted)
 }
 
 func geniusPageHeaders() map[string]string {

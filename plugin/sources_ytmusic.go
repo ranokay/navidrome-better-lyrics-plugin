@@ -197,7 +197,6 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 		target = int64(float64(track.Duration)*1000.0 + 0.5)
 	}
 	titleTokens := normalizedLyricTokens(track.Title)
-	artistTokens := normalizedLyricTokens(trackArtist(track))
 	hits, err := ytmusicSearchHits(body)
 	if err != nil {
 		return "", err
@@ -209,7 +208,7 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 		if !lyricTokensMatch(normalizedLyricTokens(hit.title), titleTokens) {
 			continue
 		}
-		if !ytmusicArtistsMatch(hit.artists, artistTokens) {
+		if !ytmusicArtistsMatch(hit.artists, trackArtist(track)) {
 			continue
 		}
 		if target > 0 {
@@ -225,11 +224,8 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 
 // ytmusicArtistsMatch accepts the renderer when any listed artist matches the
 // request completely.
-func ytmusicArtistsMatch(artists string, wanted []string) bool {
-	if len(wanted) == 0 {
-		return true
-	}
-	return artistTokensMatch(strings.ReplaceAll(artists, " • ", " & "), strings.Join(wanted, " "))
+func ytmusicArtistsMatch(artists, wanted string) bool {
+	return artistTokensMatch(strings.ReplaceAll(artists, " • ", " & "), wanted)
 }
 
 // ytmusicSearchHits decodes the payload and collects song renderers in

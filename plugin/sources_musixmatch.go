@@ -367,7 +367,6 @@ func musixmatchMacroURL(trackID, token string) (string, bool) {
 func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackInfo) (int64, bool) {
 	target := int64(math.Round(float64(track.Duration)))
 	titleTokens := normalizedLyricTokens(track.Title)
-	artistTokens := normalizedLyricTokens(trackArtist(track))
 	var best int64
 	bestDelta := int64(math.MaxInt64)
 	found := false
@@ -381,7 +380,7 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 		if !lyricTokensMatch(normalizedLyricTokens(candidate.Track.TrackName), titleTokens) {
 			continue
 		}
-		if !musixmatchArtistsMatch(candidate.Track.ArtistName, artistTokens) {
+		if !musixmatchArtistsMatch(candidate.Track.ArtistName, trackArtist(track)) {
 			continue
 		}
 		if track.Duration <= 0 {
@@ -407,11 +406,8 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 
 // musixmatchArtistsMatch accepts the row when any collaborating artist name
 // matches the requested artist completely.
-func musixmatchArtistsMatch(artistName string, wanted []string) bool {
-	if len(wanted) == 0 {
-		return true
-	}
-	return artistTokensMatch(artistName, strings.Join(wanted, " "))
+func musixmatchArtistsMatch(artistName, wanted string) bool {
+	return artistTokensMatch(artistName, wanted)
 }
 
 // errMusixmatchTokenChallenge marks the anti-bot captcha/rejection the desktop
