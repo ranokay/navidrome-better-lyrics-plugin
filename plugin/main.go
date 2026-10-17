@@ -86,31 +86,6 @@ func newLyricsProviderWithDeps(send requestSender, cache lyricsCacheStore, now f
 	return provider
 }
 
-// newLyricsProviderWithSourcesAt is newLyricsProviderWithSources with an
-// injectable clock (tests that pin time-dependent query parameters).
-func newLyricsProviderWithSourcesAt(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
-	if cache == nil {
-		cache = noopLyricsCache{}
-	}
-	if now == nil {
-		now = time.Now
-	}
-	provider := &lyricsProvider{send: send, cache: cache, now: now, enqueueSweep: enqueue}
-	if provider.enqueueSweep == nil {
-		provider.enqueueSweep = func(lyrics.TrackInfo) error { return nil }
-	}
-	provider.sources = sources
-	return provider
-}
-
-// newLyricsProviderWithSources bypasses the config service for source-walk tests
-// and injects stub sources directly.
-func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
-	provider := newLyricsProviderWithDeps(send, cache, now, nil, enqueue)
-	provider.sources = sources
-	return provider
-}
-
 // GetLyrics prefers rich TTML, then synchronized provider/community results, while
 // retaining plain text as the final fallback.
 func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {

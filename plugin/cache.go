@@ -101,15 +101,6 @@ func (noopLyricsCache) SetWithTTL(string, []byte, int64) error {
 	return nil
 }
 
-func newLyricsProviderWithDependencies(send requestSender, cache lyricsCacheStore, now func() time.Time) *lyricsProvider {
-	provider := newLyricsProviderWithDeps(send, cache, now, defaultConfigLookup(), defaultSweepEnqueuer())
-	if cache == nil {
-		cache = noopLyricsCache{}
-		provider.cache = cache
-	}
-	return provider
-}
-
 func lyricsTrackKey(track lyrics.TrackInfo) (string, bool) {
 	title := strings.ToLower(strings.TrimSpace(track.Title))
 	artist := strings.ToLower(trackArtist(track))

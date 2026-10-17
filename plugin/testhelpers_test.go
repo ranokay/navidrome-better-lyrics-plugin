@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/url"
 	"sync"
 	"testing"
@@ -9,6 +10,52 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
+
+// newLyricsProviderWithSources bypasses the config service for source-walk tests
+// and injects stub sources directly.
+func newLyricsProviderWithSources(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
+	provider := newLyricsProviderWithDeps(send, cache, now, nil, enqueue)
+	provider.sources = sources
+	return provider
+}
+
+// newLyricsProviderWithSourcesAt is newLyricsProviderWithSources with an
+// injectable clock (tests that pin time-dependent query parameters).
+func newLyricsProviderWithSourcesAt(send requestSender, cache lyricsCacheStore, now func() time.Time, sources []lyricsSource, enqueue func(lyrics.TrackInfo) error) *lyricsProvider {
+	if cache == nil {
+		cache = noopLyricsCache{}
+	}
+	if now == nil {
+		now = time.Now
+	}
+	provider := &lyricsProvider{send: send, cache: cache, now: now, enqueueSweep: enqueue}
+	if provider.enqueueSweep == nil {
+		provider.enqueueSweep = func(lyrics.TrackInfo) error { return nil }
+	}
+	provider.sources = sources
+	return provider
+}
+
+// newLyricsProviderWithDependencies builds a provider over the real config
+// lookup and sweep enqueuer for tests driving those paths.
+func newLyricsProviderWithDependencies(send requestSender, cache lyricsCacheStore, now func() time.Time) *lyricsProvider {
+	provider := newLyricsProviderWithDeps(send, cache, now, defaultConfigLookup(), defaultSweepEnqueuer())
+	if cache == nil {
+		cache = noopLyricsCache{}
+		provider.cache = cache
+	}
+	return provider
+}
+
+// hostXMLResponse is the 200/XML response shape the source tests serve.
+func hostXMLResponse(body string) *host.HTTPResponse {
+	return &host.HTTPResponse{StatusCode: 200, Body: []byte(body)}
+}
+
+// base64Encode encodes fixture payloads the way the providers ship them.
+func base64Encode(value string) string {
+	return base64.StdEncoding.EncodeToString([]byte(value))
+}
 
 // defaultCatalogIDs is the stage-one ordering the deterministic provider tests
 // walk when a test does not name a catalog.

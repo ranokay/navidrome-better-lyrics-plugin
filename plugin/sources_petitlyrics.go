@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
@@ -353,12 +352,4 @@ func lyricallyHeaders() map[string]string {
 		"Accept":     "application/json",
 		"User-Agent": pluginUserAgent(),
 	}
-}
-
-func hostXMLResponse(body string) *host.HTTPResponse {
-	return &host.HTTPResponse{StatusCode: 200, Body: []byte(body)}
-}
-
-func base64Encode(value string) string {
-	return base64.StdEncoding.EncodeToString([]byte(value))
 }

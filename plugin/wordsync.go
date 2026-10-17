@@ -301,8 +301,9 @@ func parseRichsync(body string) ([]timedLine, error) {
 			if wordEnd < wordStart+richsyncMinimumTokenMs {
 				wordEnd = wordStart + richsyncMinimumTokenMs
 			}
-			// Musixmatch sometimes encodes a space as its own token; dropping
-			// whitespace-only tokens joins the surrounding words (Devin).
+			// Musixmatch sometimes emits an empty-text token; dropping it
+			// keeps the neighbouring words' windows intact. A whitespace token
+			// stays: rendered word texts concatenate, so it carries the space.
 			if token.Text == "" {
 				continue
 			}

@@ -82,6 +82,27 @@ func TestParseRichsync_WordWindows(t *testing.T) {
 	}
 }
 
+func TestParseRichsyncTokenTextContract(t *testing.T) {
+	t.Parallel()
+
+	// An empty-text token is dropped; a whitespace token is kept because the
+	// renderer concatenates word texts, so the space has to live somewhere.
+	lines, err := parseRichsync(`[{"ts":1.0,"te":2.0,"l":[{"c":"He","o":0},{"c":"","o":0.2},{"c":" ","o":0.4},{"c":"llo","o":0.6}]}]`)
+	if err != nil {
+		t.Fatalf("parseRichsync() error = %v, want nil", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("lines = %#v, want one", lines)
+	}
+	words := lines[0].Words
+	if len(words) != 3 {
+		t.Fatalf("words = %#v, want the empty token dropped and the space kept", words)
+	}
+	if words[0].Text != "He" || words[1].Text != " " || words[2].Text != "llo" {
+		t.Fatalf("word texts = %q/%q/%q, want He/ /llo", words[0].Text, words[1].Text, words[2].Text)
+	}
+}
+
 func TestParseRichsyncFixtureSmoke(t *testing.T) {
 	t.Parallel()
 

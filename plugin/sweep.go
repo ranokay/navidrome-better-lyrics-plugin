@@ -49,11 +49,7 @@ func sourceGlobalCooldownKey(identity string) string {
 // OnInit creates the permanent sweep queue. Failing here is non-fatal: lyrics keep
 // working and the queue lifecycle can be repaired by reloading the plugin.
 func (p *lyricsProvider) OnInit() error {
-	return suppressSweepQueueError(createSweepQueue())
-}
-
-func suppressSweepQueueError(err error) error {
-	_ = err // logged at the host if queue creation fails
+	_ = createSweepQueue()
 	return nil
 }
 
@@ -76,7 +72,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
 		_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL)
 	}
-	status, deferredIDs, markerOrder := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
+	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources)
 	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.
@@ -111,7 +107,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 // runSweep walks every enabled source for one track and caches each result, so the
 // per-song source picker (Phase B) can list every source that returned lyrics.
 func (p *lyricsProvider) runSweep(track lyrics.TrackInfo) string {
-	status, _, _ := p.runSweepSourcesDetailed(track, nil)
+	status, _, _ := p.runSweepDetailed(track, nil)
 	return status
 }
 
@@ -147,10 +143,6 @@ func cacheTTLForCoveredCandidate(candidate lyricsCandidate) int64 {
 func (p *lyricsProvider) runSweepSources(track lyrics.TrackInfo, allowed []string) (string, []string) {
 	status, deferredIDs, _ := p.runSweepDetailed(track, allowed)
 	return status, deferredIDs
-}
-
-func (p *lyricsProvider) runSweepSourcesDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []lyricsSource) {
-	return p.runSweepDetailed(track, allowed)
 }
 
 func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []lyricsSource) {
@@ -344,31 +336,6 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 	}
 	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, fullOrder
-}
-
-// cacheSourceMissIfAbsent records a healthy source's "no lyrics here" as a
-// negative per-source entry (shortest miss TTL wins nothing: it bounds neither
-// the done marker nor any positive result) so continuations and later passes
-// can count the source covered without refetching it.
-func (p *lyricsProvider) cacheSourceMissIfAbsent(track lyrics.TrackInfo, sourceID string) bool {
-	key, ok := lyricsCacheKeyForSource(track, sourceID)
-	if !ok {
-		return false
-	}
-	if _, exists, _ := p.cache.Get(key); exists {
-		// A concurrent or previous pass already stored a positive result.
-		return true
-	}
-	value, err := json.Marshal(cachedLyricsEnvelope{Quality: timingUnsynced})
-	if err != nil {
-		return false
-	}
-	if p.cache.SetWithTTL(key, value, unsyncedLyricsCacheTTLSeconds) != nil {
-		return false
-	}
-	// An oversized/evicted write must not count as coverage.
-	_, exists, _ := p.cache.Get(key)
-	return exists
 }
 
 // sourceInCooldown reports provider-wide cooldown state for a source's own id and

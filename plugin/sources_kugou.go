@@ -74,12 +74,3 @@ func kugouRequestURL(track lyrics.TrackInfo) (string, bool) {
 	}
 	return kugouEndpoint + "?" + query.Encode(), true
 }
-
-// betterLyricsSharedHeaders is the common header set for endpoints served by the
-// Better Lyrics API service.
-func betterLyricsSharedHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
-}

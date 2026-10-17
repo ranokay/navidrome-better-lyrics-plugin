@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
@@ -217,19 +216,6 @@ func lunaBeatArtistNames(trackArtist string) []string {
 // whitespace and punctuation. Good enough to match the hub's index rows.
 func normalizeLunaBeatTitle(title, artist string) string {
 	return strings.ToLower(onlyLettersAndDigits(title)) + "|" + strings.ToLower(onlyLettersAndDigits(artist))
-}
-
-// onlyLettersAndDigits keeps letters and digits for matching while dropping
-// whitespace and punctuation. It is unicode-aware because the hub index is
-// mostly non-Latin titles (CJK), which ASCII range checks would erase entirely.
-func onlyLettersAndDigits(value string) string {
-	var kept []rune
-	for _, letter := range value {
-		if unicode.IsLetter(letter) || unicode.IsDigit(letter) {
-			kept = append(kept, letter)
-		}
-	}
-	return string(kept)
 }
 
 func lunaBeatHeaders() map[string]string {
