@@ -110,13 +110,13 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 			continue
 		}
 		// Provider-supplied URLs are untrusted: only the known lyrics hosts
-		// may be fetched through the server's HTTP client (Devin: SSRF).
+		// may be fetched through the server's HTTP client (SSRF).
 		if !binimumLyricsURLAllowed(candidateResult.LyricsURL) {
 			continue
 		}
 		if track.Duration > 0 {
 			// The duration gate applies only when the request carries one:
-			// durationless library entries still match on identity (Codex).
+			// durationless library entries still match on identity.
 			delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
 			if delta > 2 {
 				continue

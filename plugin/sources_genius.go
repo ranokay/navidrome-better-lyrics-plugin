@@ -59,7 +59,7 @@ func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	pageURL, searchErr := pickGeniusSongURL(response.Body, track)
 	if searchErr != nil {
 		// Malformed 200s (transient HTML challenges, truncated replies) are
-		// provider failures, not cacheable misses (Codex).
+		// provider failures, not cacheable misses.
 		return nil, lookupDegraded, fmt.Errorf("decode Genius search response: %w", searchErr)
 	}
 	if pageURL == "" {
@@ -154,7 +154,7 @@ func geniusPageHeaders() map[string]string {
 // leaf `data-lyrics-container` elements inside the lyrics root. Extracting the
 // containers themselves (rather than rendering everything between the first
 // container and the footer) keeps recommendation sidebars and other page
-// chrome out of the body (Devin), while the header container — whose first
+// chrome out of the body, while the header container — whose first
 // line is the contributors chip — is dropped wholesale.
 func geniusLyricsText(page []byte, title string) string {
 	document := string(page)
@@ -257,7 +257,7 @@ func geniusFragmentLines(fragment string) []string {
 // geniusChromePattern matches the class attributes of the pure-chrome
 // containers: the contributors/language header, the song-bio expansion, and
 // the editor rails. Removal is element-scoped (balanced scan) so real lyric
-// words are never filtered by substring (Greptile).
+// words are never filtered by substring.
 var geniusChromePattern = regexp.MustCompile(`class="[^"]*(?:LyricsHeader__Container|SongBioPreview|LyricsEdit-desktop|LyricsEditExplainer|ContributorsCreditSong)`)
 
 // removeGeniusChromeByElements cuts every geniusChromePattern `<div>` subtree

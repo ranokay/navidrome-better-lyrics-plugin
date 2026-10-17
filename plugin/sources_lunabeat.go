@@ -33,8 +33,8 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	if err != nil {
 		// Index acquisition is operational: a timeout, HTTP error, malformed
 		// payload, or oversized index must stay a degraded lookup so sweeps
-		// cannot mark the source covered while the hub is actually down
-		// (Codex). A valid index with no matching song stays the only healthy
+		// cannot mark the source covered while the hub is actually down.
+		// A valid index with no matching song stays the only healthy
 		// miss.
 		return nil, lookupDegraded, err
 	}
@@ -98,7 +98,7 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 // readLunaBeatIndex returns the cached songs index when the live manifest revision
 // matches, otherwise refetches the index (and re-caches it gzipped). Manifest
 // failures fall through to a direct index refetch (best-effort revision
-// tracking); index acquisition failures themselves degrade the lookup (Codex).
+// tracking); index acquisition failures themselves degrade the lookup.
 func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnvelope, error) {
 	manifestResponse, err := p.sendRequest("LunaBeat manifest", lunaBeatBase+"/api/v1/manifest.json", lunaBeatHeaders(), deadline)
 	if err == nil && manifestResponse.StatusCode == 200 {
@@ -161,7 +161,7 @@ type lunaBeatSong struct {
 // lunaBeatRowMatches compares the collapsed title and artist aliases
 // individually with complete-name equality: the hub index lists several alias
 // names for one artist (赵雷/趙雷/Lei Zhao), so joining them would never match a
-// track tagged with a single alias (Greptile). Substring matching would flag
+// track tagged with a single alias. Substring matching would flag
 // unrelated artists ("pink|" inside "blackpink|"), so only full names compare;
 // multi-artist tracks split on common separators so every member can
 // alias-match a hub row.
@@ -189,8 +189,8 @@ func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, trackArtist string)
 
 // lunaBeatArtistNames offers the track's normalized whole name first (an
 // artist like "AC/DC" collapses to one alias token; splitting would compare
-// its separator pieces instead and turn exact matches into misses —
-// Greptile), then each collaboration member individually so multi-artist
+// its separator pieces instead and turn exact matches into misses),
+// then each collaboration member individually so multi-artist
 // tracks can alias-match hub rows.
 func lunaBeatArtistNames(trackArtist string) []string {
 	names := make([]string, 0, 3)

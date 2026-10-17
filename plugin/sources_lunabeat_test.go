@@ -71,7 +71,7 @@ func TestLunaBeatCandidates_IndexFailureSkipsSource(t *testing.T) {
 	t.Parallel()
 
 	// Index acquisition is an operational failure, not a clean miss: sweeps
-	// must not mark the source covered while the hub is down (Codex).
+	// must not mark the source covered while the hub is down.
 	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "api/v1/manifest.json") || strings.Contains(request.URL, "api/v1/songs.json") {
 			return &host.HTTPResponse{StatusCode: 503, Body: []byte(`unavailable`)}, nil

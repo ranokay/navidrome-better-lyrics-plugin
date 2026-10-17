@@ -32,8 +32,7 @@ type lyricsCandidate struct {
 func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsCandidate {
 	if !lyricsTextHasContent(text.Text, format) {
 		// A well-formed but empty or metadata-only payload (e.g. `<tt></tt>`)
-		// must not become a present candidate that outranks usable fallbacks
-		// (Codex).
+		// must not become a present candidate that outranks usable fallbacks.
 		return lyricsCandidate{}
 	}
 	quality := timingUnsynced
@@ -63,7 +62,7 @@ func newLyricsCandidate(text lyrics.LyricsText, provider, format string) lyricsC
 func lyricsTextHasContent(value, format string) bool {
 	if format == "ttml" {
 		// Only text inside lyric-bearing nodes counts: metadata/head text in
-		// an otherwise empty body must not pass (Codex round 13). Documents
+		// an otherwise empty body must not pass. Documents
 		// without a <body> fall back to any character data so bare lyric
 		// roots keep working.
 		decoder := xml.NewDecoder(strings.NewReader(value))

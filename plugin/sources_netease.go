@@ -47,7 +47,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	}
 	// Classify the application-level status the HTTP layer already answered
 	// 200 for: an envelope failure disguised as HTTP 200 must not become a
-	// healthy miss that a sweep marks covered (Codex).
+	// healthy miss that a sweep marks covered.
 	if health, err := neteaseEnvelopeStatusFailure(p, search.Code); err != nil {
 		return nil, health, err
 	}
@@ -83,8 +83,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		return nil, lookupDegraded, fmt.Errorf("decode NetEase lyric response: %w", err)
 	}
 	// The live lyric envelope also carries an application-level code; a
-	// transient failure must not fall through as cacheable negative coverage
-	// (Codex).
+	// transient failure must not fall through as cacheable negative coverage.
 	if health, err := neteaseEnvelopeStatusFailure(p, lyricEnvelope.Code); err != nil {
 		return nil, health, err
 	}
@@ -108,7 +107,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	}
 	if yrcParseErr != nil {
 		// Nonempty YRC that failed to parse with no usable LRC fallback is a
-		// provider failure, not cacheable negative coverage (Codex).
+		// provider failure, not cacheable negative coverage.
 		return nil, lookupDegraded, fmt.Errorf("parse NetEase YRC payload: %w", yrcParseErr)
 	}
 	return nil, lookupHealthy, nil
@@ -148,7 +147,7 @@ type neteaseArtist struct {
 // neteaseEnvelopeStatusFailure classifies the cloudsearch JSON code the HTTP
 // layer already answered 200 for: 0/200 pass, no-match 404 keeps the quiet
 // miss contract, 429 activates the provider cooldown, other non-success
-// statuses degrade the lookup instead of reporting a healthy miss (Codex).
+// statuses degrade the lookup instead of reporting a healthy miss.
 func neteaseEnvelopeStatusFailure(p *lyricsProvider, code int) (lookupHealth, error) {
 	switch code {
 	case 0, 200, 404:
@@ -170,7 +169,7 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 		}
 		// Require a normalized metadata match before the duration gate: the
 		// fuzzy cloud search can return unrelated rows with similar durations,
-		// and their lyrics would then outrank correct candidates (Codex).
+		// and their lyrics would then outrank correct candidates.
 		if !lyricTokensMatch(normalizedLyricTokens(song.Name), title) {
 			continue
 		}
@@ -179,7 +178,7 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 		}
 		if track.Duration > 0 {
 			// The duration gate applies only when the request carries one;
-			// durationless entries still match on identity (Codex).
+			// durationless entries still match on identity.
 			delta := song.Duration - target
 			if delta >= 2000 || delta <= -2000 {
 				continue

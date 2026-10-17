@@ -31,12 +31,12 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	if len(response) > 0 {
 		// The exact endpoint uses fuzzy metadata too: its reply is not
 		// guaranteed to describe the requested recording, so the returned
-		// identity must match before the record can win (Devin: an unrelated
+		// identity must match before the record can win (an unrelated
 		// same-shape record would otherwise become the cached winner).
 		matched, gateErr := lrclibRecordMatches(response, track)
 		if gateErr != nil {
 			// A malformed 200 must stay a retryable provider failure, not
-			// melt into a cacheable miss (Greptile).
+			// melt into a cacheable miss.
 			return nil, lookupDegraded, gateErr
 		}
 		if matched {
@@ -75,8 +75,8 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	found := false
 	for _, result := range results {
 		// Fuzzy search rows only qualify when their identity matches; the
-		// duration gate then ranks the qualifying candidates (Devin), and
-		// only applies when the request carries a duration (Codex).
+		// duration gate then ranks the qualifying candidates, and
+		// only applies when the request carries a duration.
 		if !lrclibRecordMetadataMatches(result, track) {
 			continue
 		}
@@ -164,8 +164,7 @@ func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) 
 				return candidate, nil
 			}
 		}
-		// A malformed lyricsfile stays retryable when no fallback exists
-		// (Codex round 13).
+		// A malformed lyricsfile stays retryable when no fallback exists.
 		lyricsFileErr = err
 	}
 	if strings.TrimSpace(payload.SyncedLyrics) != "" {
@@ -219,7 +218,7 @@ type lrclibRecord struct {
 
 // lrclibRecordMatches gates a raw /api/get payload on the returned identity
 // and duration before its lyrics may win. Decode failures return an error so
-// broken replies stay retryable instead of becoming cached misses (Greptile).
+// broken replies stay retryable instead of becoming cached misses.
 func lrclibRecordMatches(record []byte, track lyrics.TrackInfo) (bool, error) {
 	var payload struct {
 		TrackName  string  `json:"trackName"`

@@ -139,7 +139,7 @@ type cachedLyricsEnvelope struct {
 	SweepComplete bool                     `json:"sweepComplete,omitempty"`
 	Credentials   string                   `json:"credentials,omitempty"`
 	// ExpiresAt is the write-time expiry (unix seconds) so readers can bound
-	// derived TTLs by the entry's remaining life (Devin). Entries without it
+	// derived TTLs by the entry's remaining life. Entries without it
 	// are treated as unsafely-aged and refreshed.
 	ExpiresAt int64 `json:"expiresAt,omitempty"`
 }
@@ -170,7 +170,7 @@ func (p *lyricsProvider) readCachedCandidate(key string) (lyricsCandidate, bool)
 
 // readCachedCandidateWithExpiry also returns the write-time expiry so callers
 // that derive their own TTLs (the sweep's marker bounds) can use the REMAINING
-// lifetime instead of the original one (Devin). Zero means the entry predates
+// lifetime instead of the original one. Zero means the entry predates
 // expiry stamping and cannot be trusted for derived TTLs.
 func (p *lyricsProvider) readCachedCandidateWithExpiry(key string) (lyricsCandidate, int64, bool) {
 	value, exists, err := p.cache.Get(key)
@@ -240,12 +240,12 @@ const credentialSaltTTL = int64(10 * 365 * 24 * time.Hour / time.Second)
 
 // credentialSalt returns the per-installation HMAC salt, minting one on first
 // use and persisting it in the plugin KV store. A public constant would let
-// anyone who reads cached entries test credential guesses offline (Devin,
-// CWE-760); a per-installation salt removes that verifiability. The constant
+// anyone who reads cached entries test credential guesses offline (CWE-760);
+// a per-installation salt removes that verifiability. The constant
 // remains only as a last resort so fingerprinting never blocks lyrics when the
 // store refuses writes.
 // credentialSaltMutex serializes first-use salt initialization so concurrent
-// callers mint and persist one salt instead of racing (Codex).
+// callers mint and persist one salt instead of racing.
 var credentialSaltMutex sync.Mutex
 
 func (p *lyricsProvider) credentialSalt() []byte {
@@ -265,7 +265,7 @@ func (p *lyricsProvider) credentialSalt() []byte {
 	if p.cache.SetWithTTL(credentialSaltKey, salt, credentialSaltTTL) != nil {
 		// Keep the fallback consistent while the store refuses writes: the
 		// next call retries the mint so a recovered store gets one stable
-		// salt instead of splitting fingerprints mid-process (Greptile).
+		// salt instead of splitting fingerprints mid-process.
 		return cacheCredentialPepper
 	}
 	p.credentialSaltBytes = salt
@@ -275,7 +275,7 @@ func (p *lyricsProvider) credentialSalt() []byte {
 // lyricsCredentialsFingerprint distinguishes negative coverage stamped under
 // different Better Lyrics API key / Musixmatch token configurations: adding or
 // replacing a credential must re-authorize sources whose misses were recorded
-// anonymously (Codex).
+// anonymously.
 func (p *lyricsProvider) lyricsCredentialsFingerprint() string {
 	config := readProviderConfig(p.configLookup)
 	mac := hmac.New(sha256.New, p.credentialSalt())
@@ -383,7 +383,7 @@ func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyrics
 	}
 	if envelope.Credentials != p.lyricsCredentialsFingerprint() {
 		// Winner coverage recorded under different credentials does not
-		// authorise the current lookup: re-adding a key must re-walk (Greptile).
+		// authorise the current lookup: re-adding a key must re-walk.
 		return lyricsCandidate{}, false, false
 	}
 	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, true, envelope.SweepComplete

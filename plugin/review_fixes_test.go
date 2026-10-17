@@ -13,7 +13,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 )
 
-// Review round fixes: CodeRabbit 4 inline findings + Codex P1/P2 batch.
+// Regression coverage for cached-winner upgrades, source budgets, and sweep coverage.
 
 func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 	t.Parallel()
@@ -158,7 +158,7 @@ func TestMusixmatchCandidates_MintStageStaysInsideCallerDeadline(t *testing.T) {
 		t.Fatalf("fetchMusixmatchLyricsCandidates() error = %v, want nil", err)
 	}
 	if mintTimeout == 0 || mintTimeout > 3000 {
-		t.Fatalf("mint request timeout = %d, want <= caller deadline (3000, Codex: the mint must honor the lookup budget)", mintTimeout)
+		t.Fatalf("mint request timeout = %d, want <= caller deadline (3000, the mint must honor the lookup budget)", mintTimeout)
 	}
 }
 
@@ -361,7 +361,7 @@ func TestEnhancedLRCWordlessAndWordRenderings(t *testing.T) {
 		t.Fatalf("output = %q, want wordless text retained", out)
 	}
 	if strings.Contains(out, "duplicated in words") {
-		t.Fatalf("output = %q, want line text suppressed for word-bearing lines (Codex: no duplication)", out)
+		t.Fatalf("output = %q, want line text suppressed for word-bearing lines (no duplication)", out)
 	}
 }
 

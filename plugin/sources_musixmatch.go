@@ -38,10 +38,10 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// A mint challenge means this lookup skips Musixmatch quietly and the
 		// next lookup can try again. Operational failures (transport, timeout,
 		// HTTP 5xx) must stay degraded so sweep coverage cannot mark the
-		// source done while minting is actually down (Codex).
+		// source done while minting is actually down.
 		if errors.Is(err, errMusixmatchTokenChallenge) {
 			// The challenge answer can clear itself next lookup; skip quietly
-			// without letting the walkers persist it as a miss (Greptile).
+			// without letting the walkers persist it as a miss.
 			return nil, lookupTemporarilySkipped, nil
 		}
 		return nil, lookupDegraded, err
@@ -61,7 +61,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	case 401:
 		// The cached token went stale: drop it and try one fresh mint next
 		// lookup. A temporary skip must not persist as a clean miss, or this
-		// source stays suppressed when its token simply aged out (Greptile).
+		// source stays suppressed when its token simply aged out.
 		p.noteMusixmatchTokenRejection()
 		return nil, lookupTemporarilySkipped, nil
 	case 404:
@@ -134,14 +134,14 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	var macroFailures []error
 	for name, macro := range macroEnvelope.Message.Body.MacroCalls {
 		// The richsync/subtitles responses can reject the token while the outer
-		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
+		// envelope still says HTTP 200 (stale tokens must be dropped).
 		if musixmatchTokenRejected(macro.Header) {
 			p.noteMusixmatchTokenRejection()
 			return nil, lookupTemporarilySkipped, nil
 		}
 		if _, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
 			// One failed optional macro must not discard the usable payloads
-			// the same response carries (Codex): record it and let the
+			// the same response carries: record it and let the
 			// candidate ranking below decide.
 			macroFailures = append(macroFailures, fmt.Errorf("musixmatch macro %s: %w", name, err))
 			continue
@@ -163,7 +163,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 // layer already answered 200 for. Token rejections are handled by the caller and
 // plain no-match (404) keeps the quiet miss contract; an envelope rate limit
 // activates the provider cooldown, and any other non-success status is a
-// degraded failure instead of a healthy miss (Codex/CodeRabbit).
+// degraded failure instead of a healthy miss.
 func (p *lyricsProvider) musixmatchEnvelopeStatusFailure(source string, status int) (lookupHealth, error) {
 	switch status {
 	case 0, 200, 201, 204, 404:
@@ -179,7 +179,7 @@ func (p *lyricsProvider) musixmatchEnvelopeStatusFailure(source string, status i
 // noteMusixmatchTokenRejection bounds retry pressure when a rejection hit:
 // anonymous tokens are dropped so the next lookup remints, while a configured
 // token — the only credential available — records a short provider cooldown
-// so foreground lookups stop hammering the rejected setting (Codex). The
+// so foreground lookups stop hammering the rejected setting. The
 // cooldown lapses quickly, and changing the setting re-authorizes the source
 // as soon as it does.
 func (p *lyricsProvider) noteMusixmatchTokenRejection() {
@@ -215,8 +215,7 @@ func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCan
 	}
 	if subtitles := macroCalls["track.subtitles.get"].Body.SubtitleList; len(subtitles) > 0 {
 		// Restricted or unavailable subtitles arrive with an empty body;
-		// serving them would cache a blank lyric ahead of usable fallbacks
-		// (Codex).
+		// serving them would cache a blank lyric ahead of usable fallbacks.
 		if body := strings.TrimSpace(subtitles[0].SubtitleBody); body != "" {
 			if candidate := newLyricsCandidate(lyrics.LyricsText{Text: body}, musixmatchProviderName, "lrc"); candidate.present() {
 				return []lyricsCandidate{candidate}, lookupHealthy, nil
@@ -231,7 +230,7 @@ func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCan
 	}
 	if richsyncParseErr != nil {
 		// Malformed richsync with no usable fallback is a provider failure,
-		// not cacheable coverage (Codex round 13).
+		// not cacheable coverage.
 		return nil, lookupDegraded, fmt.Errorf("parse Musixmatch richsync: %w", richsyncParseErr)
 	}
 	return nil, lookupHealthy, nil
@@ -262,7 +261,7 @@ func (p *lyricsProvider) musixmatchToken(deadline time.Time) (string, error) {
 	}
 	if response.StatusCode == 429 {
 		// Rate-limited minting must cool the provider down; hammering token.get
-		// while it throttles only extends the block (Greptile).
+		// while it throttles only extends the block.
 		retryAfter := retryAfterDuration(response.Headers, p.now())
 		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), retryAfter)
 		return "", rateLimitResponseError("Musixmatch token", response, retryAfter)
@@ -376,7 +375,7 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 			continue
 		}
 		// The fuzzy track.search rows only qualify when their identity
-		// matches; duration then ranks the qualifying rows (Devin).
+		// matches; duration then ranks the qualifying rows.
 		if !lyricTokensMatch(normalizedLyricTokens(candidate.Track.TrackName), titleTokens) {
 			continue
 		}
@@ -386,7 +385,7 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 		if track.Duration <= 0 {
 			// The duration gate applies only when the request carries one:
 			// the search already omitted q_duration, so the broader result
-			// set must stay usable (Codex).
+			// set must stay usable.
 			if !found {
 				best, bestDelta, found = id, 0, true
 			}

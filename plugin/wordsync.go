@@ -76,7 +76,7 @@ func parseKFamilyLyrics(mode wordSyncMode, input string) ([]timedLine, error) {
 
 // kFamilyGlobalOffset scans metadata rows for the last `[offset:±ms]` tag: KRC,
 // QRC, and YRC payloads use it to resynchronise every timing window, and the
-// bracket parser would otherwise discard it silently (Codex).
+// bracket parser would otherwise discard it silently.
 func kFamilyGlobalOffset(input string) int64 {
 	var offset int64
 	for _, raw := range strings.Split(input, "\n") {
@@ -292,7 +292,7 @@ func parseRichsync(body string) ([]timedLine, error) {
 		for k, token := range chunk.Tokens {
 			// `o` is a fractional seconds offset relative to the chunk's ts:
 			// decoding it as milliseconds shifted windows 1000x and fractional
-			// values broke the whole decode (Codex P1).
+			// values broke the whole decode.
 			wordStart := start + int64(math.Round(token.Offset*1000))
 			wordEnd := end
 			if k+1 < len(chunk.Tokens) {
@@ -426,8 +426,7 @@ func parseLRCLibLyricsFile(data []byte) ([]timedLine, error) {
 		}
 		// LRCLib stores the spacing between words only in the line text, so
 		// token texts interleave the separators to avoid fused renders
-		// ("firstline" for "first line") without repeating the whole line
-		// (Codex).
+		// ("firstline" for "first line") without repeating the whole line.
 		line.Words = lrclibWordSeparators(row.Text, line.Words)
 		lines = append(lines, line)
 	}
@@ -470,7 +469,7 @@ func lrclibWordSeparators(text string, words []timedWord) []timedWord {
 		}
 		// One failed lookup forfeits the remainder append: the unaligned
 		// token's text still lives in the remaining slice, so appending it
-		// would duplicate the line (Codex).
+		// would duplicate the line.
 		aligned = false
 	}
 	if aligned {

@@ -46,7 +46,7 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	cooledMirrors := 0
 	for i, endpoint := range []string{lyricsPlusEndpoint, lyricsPlusMirrorOne} {
 		// Host-scoped cooldowns only remove the affected mirror from this
-		// lookup; the healthy sibling still serves (Codex).
+		// lookup; the healthy sibling still serves.
 		if host := lyricsPlusEndpointHost(endpoint); p.activeCooldown(sourceGlobalCooldownKey(host)) > 0 {
 			cooledMirrors++
 			continue
@@ -70,7 +70,7 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 			return nil, lookupHealthy, nil
 		case 429:
 			// The mirrors are separate deployments: cool the THROTTLED HOST
-			// down and let the next mirror serve this lookup (Codex).
+			// down and let the next mirror serve this lookup.
 			retryAfter := retryAfterDuration(response.Headers, p.now())
 			if parsed, parseErr := url.Parse(requestURL); parseErr == nil && parsed.Host != "" {
 				p.rememberCooldown(sourceGlobalCooldownKey(parsed.Hostname()), retryAfter)
@@ -93,7 +93,7 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		if len(candidates) == 0 {
 			// A decoded 200 payload with nothing usable is the mirror's own
 			// clean miss: rotating to the next mirror would turn it into a
-			// provider failure (Devin).
+			// provider failure.
 			return nil, lookupHealthy, nil
 		}
 		return candidates, lookupHealthy, nil

@@ -16,7 +16,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 )
 
-// Codex round 2: live-fixture wire-shape fixes and sweep/lookup semantics.
+// Live-fixture wire-shape fixes and sweep/lookup semantics.
 
 func TestNetEaseCandidates_MatchesLiveDTDuration(t *testing.T) {
 	t.Parallel()
@@ -133,7 +133,7 @@ func TestSweep_RefusedWritesStayUncovered(t *testing.T) {
 
 	// Candidates that could not be stored (quota-refused writes) are not
 	// covered work; marking the sweep done would freeze the track without any
-	// cached outcome (Codex, "M marks cached-only-after-real-store").
+	// cached outcome.
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("kv at quota")
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
@@ -172,7 +172,7 @@ func TestGetLyrics_CachedMissStillSchedulesIncompleteSweep(t *testing.T) {
 	}
 
 	// Simulate the dedupe marker expiring after a short sweep so the next
-	// lookup can retry: the negative winner must not block it (Codex).
+	// lookup can retry: the negative winner must not block it.
 	trackKey, _ := lyricsTrackKey(track)
 	markerKey := provider.sweepPendingMarkerKey(track, trackKey)
 	if _, ok, _ := cache.Get(markerKey); !ok {
@@ -345,7 +345,7 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 
 	// A plain tail result lives one hour per source and five minutes as a
 	// winner; the done marker must not suppress re-sweeps for 24 hours after
-	// that (Codex): the marker cannot outlive the shortest cached result.
+	// that: the marker cannot outlive the shortest cached result.
 	for _, tc := range []struct {
 		name   string
 		text   string
@@ -428,7 +428,7 @@ func TestGetLyrics_CoveredNegativePassSkipsSweep(t *testing.T) {
 
 	// When every implemented source fits in the stage-one walk and all of them
 	// return none, the negative winner already records complete coverage;
-	// queueing a sweep would refetch the same misses (Codex).
+	// queueing a sweep would refetch the same misses.
 	cache := newFakeLyricsCache()
 	provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{
 		sweepSource("one", new(int), false, nil),
@@ -483,7 +483,7 @@ func TestLRCLibWordSeparatorsSurviveParsing(t *testing.T) {
 	t.Parallel()
 
 	// LRCLib stores spacing only in the line text; token rendering must not
-	// fuse the words into "firstline" (Codex).
+	// fuse the words into "firstline".
 	const yamlDoc = "version: '1.0'\n" +
 		"lines:\n" +
 		"- start_ms: 1000\n" +
@@ -554,7 +554,7 @@ func TestBinimumRejectsMetadataMismatch(t *testing.T) {
 	t.Parallel()
 
 	// The live search for "Live Forever"/Oasis also carries an unrelated row
-	// with a matching 340 s duration (Codex); the selector must not pick it.
+	// with a matching 340 s duration; the selector must not pick it.
 	rcalcioResults := []binimumResult{
 		{
 			TrackName:  "I Could Sing of Your Love Forever (Live)",
@@ -647,7 +647,7 @@ func TestKFamilyOffsetShiftsTimings(t *testing.T) {
 	t.Parallel()
 
 	// KRC/QRC/YRC carry a global `[offset:±ms]` tag; dropping it left every
-	// line and word window unshifted (Codex).
+	// line and word window unshifted.
 	positive, err := parseKFamilyLyrics(wordSyncQRC, "[offset:500]\n[1000,400]word(0,400)\n")
 	if err != nil {
 		t.Fatalf("parseKFamilyLyrics(offset +500) error = %v, want nil", err)
@@ -678,7 +678,7 @@ func TestPortatoQRCEnvelopeExtraction(t *testing.T) {
 
 	// The QQ response wraps QRC inside an XML attribute: literal newlines let
 	// the bracket parser see the rows, but XML entities stay escaped and
-	// entity-encoded line breaks break parsing entirely (Codex).
+	// entity-encoded line breaks break parsing entirely.
 	requests := 0
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
@@ -880,7 +880,7 @@ func TestSweep_ContinuationsSeeCleanMissCoverage(t *testing.T) {
 
 	// The first pass records a clean miss and defers the tail source; the
 	// continuation must recognize the earlier miss instead of re-enqueueing
-	// full sweeps every dedupe cycle (Codex).
+	// full sweeps every dedupe cycle.
 	cache := newFakeLyricsCache()
 	one, two := new(int), new(int)
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
@@ -923,7 +923,7 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 	t.Parallel()
 
 	// A plain sibling's per-source entry expires after an hour; the marker a
-	// continuation writes over the full order must not outlive it (Codex).
+	// continuation writes over the full order must not outlive it.
 	cache := newFakeLyricsCache()
 	plainSource := lyricsSource{ID: "plain", Display: "plain", Hosts: []string{"plain.example.test"}, DefaultEnabled: true,
 		Fetch: func(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
@@ -959,7 +959,7 @@ func TestGetLyrics_EnqueuesSweepOnStageOneError(t *testing.T) {
 	t.Parallel()
 
 	// Stage-one errors must not hide the tail: the join error is retained but
-	// the incomplete walk still schedules the background sweep (Codex P1).
+	// the incomplete walk still schedules the background sweep.
 	enqueued := 0
 	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
 		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
@@ -984,8 +984,7 @@ func TestStageOneMissesCoverTheSweepAndTheWalk(t *testing.T) {
 	t.Parallel()
 
 	// Healthy stage-one misses must persist as negative per-source entries so
-	// the sweep skips them, and a later lookup must not refetch them either
-	// (Codex P2).
+	// the sweep skips them, and a later lookup must not refetch them either.
 	cache := newFakeLyricsCache()
 	one, two, three, tail := new(int), new(int), new(int), new(int)
 	sources := []lyricsSource{
@@ -1043,7 +1042,7 @@ func TestStageOneMissesCoverTheSweepAndTheWalk(t *testing.T) {
 	}
 	assertLyricsSource(t, result.Source, "tail", "lrc")
 	if *one != 1 || *two != 1 || *three != 1 {
-		t.Fatalf("miss fetch counts after winner reset = %d/%d/%d, want the misses to stay cached (Codex)", *one, *two, *three)
+		t.Fatalf("miss fetch counts after winner reset = %d/%d/%d, want the misses to stay cached", *one, *two, *three)
 	}
 }
 
@@ -1141,7 +1140,7 @@ func TestParseRichsync_FractionalSecondOffsets(t *testing.T) {
 
 	// Musixmatch richsync `o` offsets are fractional seconds relative to the
 	// chunk: decrypted as ms they shift words 1000x and fractional values
-	// crashed the whole decode (Codex P1).
+	// crashed the whole decode.
 	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":"llo","o":0.12}]}]`)
 	if err != nil {
 		t.Fatalf("parseRichsync() error = %v, want nil with fractional offsets", err)
@@ -1164,7 +1163,7 @@ func TestCoverageCredChangeInvalidatesMisses(t *testing.T) {
 	t.Parallel()
 
 	// Negative coverage records unauthenticated misses; adding or replacing a
-	// credential must re-authorize those sources (Codex).
+	// credential must re-authorize those sources.
 	missCalls := 0
 	sources := []lyricsSource{
 		{ID: "liner", Display: "liner", Hosts: []string{"liner.example.test"}, Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
@@ -1200,7 +1199,7 @@ func TestSweep_DefersDeadlineExhaustedSources(t *testing.T) {
 
 	// A search that finishes against the deadline leaves no budget for the
 	// lyrics request; its error is budget exhaustion, not a failure — the
-	// source belongs in the continuation (Greptile).
+	// source belongs in the continuation.
 	provider := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
 		{ID: "late", Display: "late", Hosts: []string{"late.example.test"}, DefaultEnabled: true,
 			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
@@ -1226,7 +1225,7 @@ func TestMusixmatchTokenRejectionsStaySkippable(t *testing.T) {
 
 	// Expired-token rejections must not persist as clean misses: the next
 	// lookup has to remint and retry, and the sweep must not mark the source
-	// covered (Greptile).
+	// covered.
 	facade := func(t *testing.T, searchBody, macroBody string) func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 			switch {
@@ -1272,7 +1271,7 @@ func TestLunaBeatMatchesArtistAliases(t *testing.T) {
 
 	// The hub index lists several aliases per artist (`赵雷`, `趙雷`, `Lei Zhao`);
 	// joining them into one string never matches a track tagged with a single
-	// alias (Greptile).
+	// alias.
 	index := []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"e","title":"阿刁","artists":["赵雷","趙雷","Lei Zhao"],"album":"剃刀","path":"lyrics/cjk.ttml"}]}`)
 	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
@@ -1316,7 +1315,7 @@ func TestWinnerEntriesRespectCredentialChanges(t *testing.T) {
 	t.Parallel()
 
 	// A completed winner recorded without a credential must not stay served
-	// once an administrator provides one (Greptile): the re-walk reaches the
+	// once an administrator provides one: the re-walk reaches the
 	// newly authorized source instead of the cached miss.
 	requests := 0
 	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -1356,7 +1355,7 @@ func TestLunaBeatRejectsUnrelatedArtistSubstrings(t *testing.T) {
 	t.Parallel()
 
 	// Complete-name comparison only: "blackpink|" must never alias-match a
-	// "Pink" request (Greptile P1).
+	// "Pink" request.
 	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "api/v1/manifest.json"):
@@ -1399,7 +1398,7 @@ func TestAnonymous401sKeepBoundedCoverage(t *testing.T) {
 
 	// Anonymous Better Lyrics/Portato 401s are cache-only misses: they bound
 	// the sweep (one hour, credential-fingerprinted keys) instead of blocking
-	// completion every dedupe cycle (Greptile P2).
+	// completion every dedupe cycle.
 	provider := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
 		{ID: "anon1", Display: "anon1", Hosts: []string{"anon1.example.test"}, DefaultEnabled: true,
 			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
@@ -1431,7 +1430,7 @@ func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
 	t.Parallel()
 
 	// The whole collapsed name is a match option too: "AC/DC" split pieces
-	// ("ac","dc") would never equal the hub alias "acdc" (Greptile P1).
+	// ("ac","dc") would never equal the hub alias "acdc".
 	var ttmlRequest string
 	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
@@ -1515,7 +1514,7 @@ func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
 		case strings.Contains(request.URL, "v1/search"):
 			// Realistic renderer shape: identity columns and arrays sit
 			// between the video id and the rendered length, and the first
-			// row is an unrelated song with the requested runtime (Devin).
+			// row is an unrelated song with the requested runtime.
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"sectionListRenderer":{"contents":[{"musicShelfRenderer":{"contents":[
 				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"AAAAAAAAA01"}}},
 				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"JGwWNGJdvx8"}}}
@@ -1616,7 +1615,7 @@ func TestGeniusSearchEscapesQueryPunctuation(t *testing.T) {
 
 	// Song metadata reaches the query verbatim: "&", "#", and "+" in titles
 	// break or truncate the search, so every new provider must encode its
-	// query (Greptile). The raw query must carry exactly the one encoded
+	// query. The raw query must carry exactly the one encoded
 	// parameter, or the old concatenation could pass unnoticed.
 	var capturedURL string
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -1647,7 +1646,7 @@ func TestGeniusKeepsLyricLinesWithChromeWords(t *testing.T) {
 	t.Parallel()
 
 	// Chrome removal works on elements, not lyric words: a line containing
-	// "Genius" is real lyrical content and must survive (Greptile P2).
+	// "Genius" is real lyrical content and must survive.
 	page := []byte(`<!DOCTYPE html><html><body><div data-lyrics-container="true" class="Lyrics__Container">
 		<div class="LyricsHeader__Container"><button class="ContributorsCreditSong__Container">441 Contributors</button>
 		<h1>Love &amp; Hate Lyrics</h1>
@@ -1675,7 +1674,7 @@ func TestGeniusExcludesRecommendationSidebarText(t *testing.T) {
 	t.Parallel()
 
 	// The first container's byte range spans recommendation sidebars; only
-	// the lyric containers may contribute text (Devin).
+	// the lyric containers may contribute text.
 	page := []byte(`<!DOCTYPE html><html><body>
 	<div data-lyrics-container="true" class="Lyrics__Root">
 	<div class="RightSidebar__Container"><h2>You might also like</h2><p>Other Song</p></div>
@@ -1710,7 +1709,7 @@ func TestBininumRejectsHostileLyricsURLs(t *testing.T) {
 	t.Parallel()
 
 	// Provider-supplied URLs are untrusted: a hostile search row must never
-	// be fetched through the server's HTTP client (Devin SSRF).
+	// be fetched through the server's HTTP client (SSRF).
 	requests := 0
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
@@ -1733,7 +1732,7 @@ func TestSweepMarkerBoundedByRemainingLifetime(t *testing.T) {
 	t.Parallel()
 
 	// A cached entry with 60 s left must bound the done marker to those 60 s,
-	// not a fresh full TTL (Devin).
+	// not a fresh full TTL.
 	cache := newFakeLyricsCache()
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
 		sweepSource("one", new(int), false, nil),
@@ -1762,7 +1761,7 @@ func TestSweepRefetchesUnstampedCoverage(t *testing.T) {
 	t.Parallel()
 
 	// Entries without an expiry stamp cannot bound a marker, so the sweep
-	// refetches them once to leave stamped coverage behind (Devin).
+	// refetches them once to leave stamped coverage behind.
 	cache := newFakeLyricsCache()
 	one := new(int)
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
@@ -1793,7 +1792,7 @@ func TestSweepPendingMarkerFollowsSourceOrder(t *testing.T) {
 	t.Parallel()
 
 	// Reconfiguring sources must not delay a fresh sweep for the old
-	// track-only marker window (Devin).
+	// track-only marker window.
 	cache := newFakeLyricsCache()
 	enqueued := 0
 	enqueue := func(lyrics.TrackInfo) error {
@@ -1824,8 +1823,8 @@ func TestSweepPendingMarkerFollowsSourceOrder(t *testing.T) {
 func TestLyricsPlusDurationRounds(t *testing.T) {
 	t.Parallel()
 
-	// Fractional seconds must not round up into the next whole second
-	// (Devin); 234.2 belongs to 234.
+	// Fractional seconds must not round up into the next whole second.
+	// 234.2 belongs to 234.
 	var captured string
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		captured = request.URL
@@ -1841,7 +1840,7 @@ func TestLyricsPlusEmptyPrimaryIsCleanMiss(t *testing.T) {
 	t.Parallel()
 
 	// A decoded empty 200 payload is the mirror's clean miss; a mirror failure
-	// must not turn it into a degraded lookup (Devin).
+	// must not turn it into a degraded lookup.
 	requests := 0
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
@@ -1864,7 +1863,7 @@ func TestParseRichsyncKeepsWhitespaceTokens(t *testing.T) {
 	t.Parallel()
 
 	// Musixmatch can encode a space as its own richsync token; dropping it
-	// joins the surrounding words (Devin).
+	// joins the surrounding words.
 	lines, err := parseRichsync(`[{"ts":12.4,"te":13.9,"l":[{"c":"He","o":0},{"c":" ","o":0.4},{"c":"llo","o":0.45}]}]`)
 	if err != nil {
 		t.Fatalf("parseRichsync() error = %v, want nil", err)
@@ -1880,7 +1879,7 @@ func TestLRCLibIgnoresMismatchedExactRecord(t *testing.T) {
 	t.Parallel()
 
 	// /api/get is fuzzy too: an unrelated usable record must not become the
-	// winner; the flow falls through to search (Devin).
+	// winner; the flow falls through to search.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/api/get") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Other Song","artistName":"Other Artist","duration":280,"plainLyrics":"wrong","syncedLyrics":"[00:01.00]wrong"}`)}, nil
@@ -1920,7 +1919,7 @@ func TestCredentialSaltFallbackStaysConsistent(t *testing.T) {
 
 	// When the store refuses the salt write, every fingerprint in this
 	// process must share the same fallback — memoizing an unsaved random salt
-	// would split fingerprints mid-process (Greptile).
+	// would split fingerprints mid-process.
 	cache := newFakeLyricsCache()
 	cache.setError = errors.New("kv read-only")
 	provider := newLyricsProviderWithDeps(nil, cache, time.Now, func(key string) (string, bool) {
@@ -1941,7 +1940,7 @@ func TestLRCLibMalformedExactRecordStaysDegraded(t *testing.T) {
 	t.Parallel()
 
 	// A malformed 200 from /api/get is a retryable provider failure, not a
-	// metadata mismatch that melts into a cached miss (Greptile).
+	// metadata mismatch that melts into a cached miss.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/api/get") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName": oops`)}, nil
@@ -1959,7 +1958,7 @@ func TestMusixmatchSkipsEmptySubtitleBodies(t *testing.T) {
 	t.Parallel()
 
 	// Restricted lyrics arrive as an empty first subtitle; the plain-lyrics
-	// fallback must serve instead of a blank line candidate (Codex).
+	// fallback must serve instead of a blank line candidate.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "/ws/1.1/token.get"):
@@ -1986,7 +1985,7 @@ func TestMusixmatchSkipsEmptySubtitleBodies(t *testing.T) {
 func TestBinimumMatchesWithoutDuration(t *testing.T) {
 	t.Parallel()
 
-	// Durationless library entries still match on identity (Codex).
+	// Durationless library entries still match on identity.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "binimum.org") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"track_name":"Song","artist_name":"Artist","duration":240,"lyricsUrl":"https://lrc.red/s/X.ttml"}]}`)}, nil
@@ -2007,7 +2006,7 @@ func TestMusixmatchConfiguredTokenRejectionGetsCooldown(t *testing.T) {
 	t.Parallel()
 
 	// A rejected configured token is the only credential available; retries
-	// must be bounded instead of hammering it every lookup (Codex).
+	// must be bounded instead of hammering it every lookup.
 	cache := newFakeLyricsCache()
 	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
@@ -2053,7 +2052,7 @@ func TestLyricsPlusRotatesPastAThrottledMirror(t *testing.T) {
 	t.Parallel()
 
 	// The mirrors are independent deployments: a 429 on the primary must not
-	// discard a healthy secondary (Codex).
+	// discard a healthy secondary.
 	requests := 0
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
@@ -2076,7 +2075,7 @@ func TestMalformedProviderJSONStaysDegraded(t *testing.T) {
 	t.Parallel()
 
 	// A 200 carrying garbage is a provider failure for each new source, not
-	// cacheable coverage (Codex).
+	// cacheable coverage.
 	cases := []struct {
 		name  string
 		fetch func(*lyricsProvider) (lookupHealth, error)
@@ -2116,7 +2115,7 @@ func TestMalformedLYLPayloadStaysDegraded(t *testing.T) {
 	t.Parallel()
 
 	// The lyricify case must reach the LYL parser: a valid resolve (ISRC) and
-	// a valid lyrics envelope with an invalid LYL body (Greptile).
+	// a valid lyrics envelope with an invalid LYL body.
 	resolveRequests, lyricsRequests := 0, 0
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
@@ -2142,8 +2141,7 @@ func TestConfigSelectionOmittingEnabledUsesSchemaDefault(t *testing.T) {
 	t.Parallel()
 
 	// `{"id":"better-lyrics"}` must keep the source enabled (schema default
-	// true) instead of silently dropping it and appending the other defaults
-	// (Codex).
+	// true) instead of silently dropping it and appending the other defaults.
 	lookup := func(key string) (string, bool) {
 		if key == "sources" {
 			return `[{"id":"better-lyrics"}]`, true
@@ -2169,7 +2167,7 @@ func TestLunaRejectsContainingArtistNames(t *testing.T) {
 	t.Parallel()
 
 	// "BLACKPINK" must not alias-match a "Pink" request via substring
-	// containment (Codex).
+	// containment.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"77","name":"Song","artists":[{"name":"BLACKPINK"}],"duration":130032}}}]}]}`)}, nil
 	})
@@ -2183,8 +2181,7 @@ func TestLunaRejectsContainingArtistNames(t *testing.T) {
 func TestYTMusicSearch404IsCleanMiss(t *testing.T) {
 	t.Parallel()
 
-	// A 404 body is empty/non-JSON: decoding it would degrade a clean miss
-	// (Codex).
+	// A 404 body is empty/non-JSON: decoding it would degrade a clean miss.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 404}, nil
 	})
@@ -2199,7 +2196,7 @@ func TestNetEaseLyricEnvelopeFailureDegrades(t *testing.T) {
 	t.Parallel()
 
 	// The lyric envelope carries its own code: a transient failure must not
-	// fall through as cacheable coverage (Codex).
+	// fall through as cacheable coverage.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "cloudsearch/pc"):
@@ -2219,7 +2216,7 @@ func TestTemporarySkipsDoNotCompleteForegroundCoverage(t *testing.T) {
 	t.Parallel()
 
 	// A tempSkip source is not covered work: the pass must stay incomplete,
-	// enqueue the sweep, and not write a complete negative winner (Codex).
+	// enqueue the sweep, and not write a complete negative winner.
 	enqueued := 0
 	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
 		{ID: "skip", Display: "skip", Hosts: []string{"skip.example.test"}, DefaultEnabled: true,
@@ -2244,7 +2241,7 @@ func TestPetitLyricsMalformedPayloadDegrades(t *testing.T) {
 	t.Parallel()
 
 	// Nonempty invalid base64 across every tier degrades instead of caching
-	// negative coverage (Codex).
+	// negative coverage.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<?xml version="1.0"?><response><status>00000000</status><songs><song><lyricsData>!!!not-base64!!!</lyricsData></song></songs></response>`)}, nil
 	})
@@ -2282,7 +2279,7 @@ func TestSweepQueueMarkerCoversBacklog(t *testing.T) {
 	t.Parallel()
 
 	// The enqueue-time marker must cover the queued interval, not just the
-	// execution window (Codex).
+	// execution window.
 	cache := newFakeLyricsCache()
 	provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{
 		sweepSource("one", new(int), false, nil),
@@ -2337,7 +2334,7 @@ func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
 	t.Parallel()
 
 	// A queued continuation must keep the pending marker alive so replays
-	// cannot enqueue a parallel full sweep while it waits (Greptile).
+	// cannot enqueue a parallel full sweep while it waits.
 	cache := newFakeLyricsCache()
 	continuations := 0
 	provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
@@ -2428,8 +2425,7 @@ func TestSweepContinuationDoneCheckUsesFullOrder(t *testing.T) {
 func TestDurationGatesSkipWithoutDuration(t *testing.T) {
 	t.Parallel()
 
-	// Durationless tracks must still match on identity in every selector
-	// (Codex round 12).
+	// Durationless tracks must still match on identity in every selector.
 	netease, ok := pickNetEaseSong([]neteaseSong{
 		{ID: 1, Name: "Song", Artists: []neteaseArtist{{Name: "Artist"}}, Duration: 240000},
 	}, lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
@@ -2526,7 +2522,7 @@ func TestAMLLSelectsByIdentityNotOrder(t *testing.T) {
 	t.Parallel()
 
 	// An unrelated first row must not win; the matching row (with album
-	// preference) serves (Codex).
+	// preference) serves.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "v1/lyrics/search"):
@@ -2555,7 +2551,7 @@ func TestAMLLSelectsByIdentityNotOrder(t *testing.T) {
 func TestMusixmatchKeepsFallbackWhenMacroFails(t *testing.T) {
 	t.Parallel()
 
-	// richsync 500 must not discard the usable subtitles macro (Codex).
+	// richsync 500 must not discard the usable subtitles macro.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "/ws/1.1/token.get"):
@@ -2580,8 +2576,7 @@ func TestLRCLibAlignmentFailureDoesNotDuplicate(t *testing.T) {
 	t.Parallel()
 
 	// A LAST token that cannot be found verbatim forfeits the remainder
-	// append: appending the untouched line after the token rendered it twice
-	// (Codex).
+	// append: appending the untouched line after the token rendered it twice.
 	rendered := renderLRCLibFixture(t, "version: '1.0'\n"+
 		"lines:\n"+
 		"- start_ms: 1000\n"+
@@ -2613,7 +2608,7 @@ func TestEmptyTTMLDocumentIsNotACandidate(t *testing.T) {
 
 	empty := newLyricsCandidate(lyrics.LyricsText{Text: "<tt></tt>"}, "Stub", "ttml")
 	if empty.present() {
-		t.Fatal("an empty TTML document must not become a candidate (Codex)")
+		t.Fatal("an empty TTML document must not become a candidate")
 	}
 	if !emptyLyricsDocument("<tt></tt>", "ttml") {
 		t.Fatal("an empty TTML document is a well-formed empty payload")
@@ -2631,7 +2626,7 @@ func TestCDATALyricsCountAsContent(t *testing.T) {
 	t.Parallel()
 
 	// CDATA carries real lyric text: rejecting it would cache a miss for
-	// valid documents (Greptile P1).
+	// valid documents.
 	cdata := `<tt xmlns:itunes="urn:itunes"><body><div><p begin="1" end="2"><![CDATA[Rock & Roll]]></p></div></body></tt>`
 	if !lyricsTextHasContent(cdata, "ttml") {
 		t.Fatal("CDATA lyric text must count as servable content")
@@ -2649,7 +2644,7 @@ func TestArtistMatcherRequiresCompleteNames(t *testing.T) {
 	t.Parallel()
 
 	// Prefix tolerance belongs to titles only: "Pink" must not match
-	// "Pink Floyd" (Codex round 13).
+	// "Pink Floyd".
 	if artistTokensMatch("Pink Floyd", "Pink") {
 		t.Fatal("Pink matched Pink Floyd")
 	}
@@ -2690,7 +2685,7 @@ func TestTTMLContentIgnoresMetadataNodes(t *testing.T) {
 
 	metadataOnly := `<tt xmlns:itunes="urn:itunes"><head><metadata>Song Title Words Here</metadata></head><body></body></tt>`
 	if lyricsTextHasContent(metadataOnly, "ttml") {
-		t.Fatal("metadata-only text must not count as lyric content (Codex round 13)")
+		t.Fatal("metadata-only text must not count as lyric content")
 	}
 	withLyrics := `<tt xmlns:itunes="urn:itunes"><head><metadata>Song Title</metadata></head><body><p begin="1">real line</p></body></tt>`
 	if !lyricsTextHasContent(withLyrics, "ttml") {
@@ -2761,13 +2756,13 @@ func TestPunctuatedArtistNamesStillMatch(t *testing.T) {
 
 	// Whole-name equality must precede collaborator splitting: AC/DC and
 	// Simon & Garfunkel collapse to single names and matched before the
-	// shared matcher arrived (Greptile P1).
+	// shared matcher arrived.
 	cases := []struct{ returned, wanted string }{
 		{"AC/DC", "AC/DC"},
 		{"Simon & Garfunkel", "Simon & Garfunkel"},
 		{"Simon & Garfunkel", "Garfunkel"},
 		// Variant punctuation: the whole-name path catches what splitting
-		// would miss (Greptile).
+		// would miss.
 		{"ACDC", "AC/DC"},
 	}
 	for _, tc := range cases {

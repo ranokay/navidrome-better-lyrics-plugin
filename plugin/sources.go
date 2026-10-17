@@ -99,8 +99,7 @@ type providerConfig struct {
 type sourceSelection struct {
 	ID string `json:"id"`
 	// Enabled is a pointer so an omitted property follows the schema default
-	// (true) instead of decoding to false and silently dropping the source
-	// (Codex).
+	// (true) instead of decoding to false and silently dropping the source.
 	Enabled *bool `json:"enabled"`
 }
 

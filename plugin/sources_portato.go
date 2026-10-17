@@ -19,7 +19,7 @@ const qqEndpoint = "https://lyrics-api.boidu.dev/qq/getLyrics"
 // raw document would leave XML entities escaped and lose rows whose line
 // breaks were entity-encoded. Raw (non-XML) QRC responses pass through
 // unchanged; a malformed QrcInfos shell fails loudly so the lookup degrades
-// instead of parsing XML junk (Codex).
+// instead of parsing XML junk.
 func portatoQRCContent(document string) (string, error) {
 	if !strings.Contains(document, "QrcInfos") {
 		return document, nil

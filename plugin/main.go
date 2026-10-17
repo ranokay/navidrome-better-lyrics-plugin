@@ -99,15 +99,15 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 		// Deliberate all-disabled opt-out (documented `sources: []` config):
 		// serve nothing without touching the winner cache or task queue — an
 		// empty source order creates no key and would wedge every lookup
-		// through the unschedulable sweep path (Codex).
+		// through the unschedulable sweep path.
 		return lyrics.GetLyricsResponse{}, nil
 	}
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
 		if candidate.present() {
 			if !sweepComplete {
 				// The sweep may have cached a better result after this winner
-				// was written: re-rank before serving (CodeRabbit/Codex
-				// finding). Ties adopt the per-source preferred candidate,
+				// was written: re-rank before serving.
+				// Ties adopt the per-source preferred candidate,
 				// which respects configured order.
 				if best := p.readBestFromSourceCache(track, sources); best.present() && best.quality >= candidate.quality {
 					p.cacheWinner(track, sources, best, false)
@@ -126,7 +126,7 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
-		// sweep must still be schedulable (Codex).
+		// sweep must still be schedulable.
 		if !sweepComplete {
 			p.maybeEnqueueSweep(track)
 		}
@@ -150,13 +150,13 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 		p.cacheNegativeWinner(track, sources, coveredAll)
 		if !coveredAll {
 			// A fully covered negative pass needs no sweep: every implemented
-			// source already answered inside stage one (Codex).
+			// source already answered inside stage one.
 			p.maybeEnqueueSweep(track)
 		}
 	} else {
 		// Retain the error, but an incomplete walk must still reach the tail:
 		// schedule the sweep so the returned error is the only failure the
-		// request exposes (Codex P1).
+		// request exposes.
 		p.maybeEnqueueSweep(track)
 	}
 	return candidate.response, err
@@ -211,7 +211,7 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 		}
 		// A per-source entry (positive or persisted miss) already covers this
 		// source for its TTL: refetching here would re-query providers every
-		// negative-winner cycle (Codex). Cached positives are served by the
+		// negative-winner cycle. Cached positives are served by the
 		// re-rank above the walk.
 		if _, ok := p.readCachedSourceCoverage(track, source.ID); ok {
 			continue
@@ -252,14 +252,14 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			case lookupHealthy, lookupUncertain:
 				// Healthy clean misses and anonymous cache-only misses are
 				// bounded coverage: persist them so the sweep and later
-				// lookups skip the refetch (Codex; Greptile). The miss keys
+				// lookups skip the refetch. The miss keys
 				// carry the credential fingerprint, so a configured key or
 				// token re-authorizes them immediately.
 				p.cacheSourceMiss(track, source.ID)
 			case lookupTemporarilySkipped:
 				// Token rejects are not covered work: the next lookup remints
-				// and retries (Greptile), and the pass must not report complete
-				// foreground coverage or suppress the sweep (Codex).
+				// and retries, and the pass must not report complete
+				// foreground coverage or suppress the sweep.
 				health = health.merge(sourceHealth)
 				coveredThisSource = false
 			}
@@ -279,7 +279,7 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 		return lyricsCandidate{}, health, false, errors.Join(lookupErrors...)
 	}
 	// A clean all-miss walk with full coverage is real: the negative winner
-	// must record that no sweep needs re-walking the same misses (Codex).
+	// must record that no sweep needs re-walking the same misses.
 	return lyricsCandidate{}, health, walkedTotal >= implementedTotal, nil
 }
 

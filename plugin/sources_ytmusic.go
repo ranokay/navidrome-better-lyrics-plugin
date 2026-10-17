@@ -56,7 +56,7 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	}
 	if response.StatusCode == 404 {
 		// A normal 404 carries an empty/non-JSON body: decoding it would turn
-		// the clean miss into a degraded decode failure (Codex).
+		// the clean miss into a degraded decode failure.
 		return nil, lookupHealthy, nil
 	}
 	if err := p.checkInnertubeOK("YouTube Music search", response); err != nil {
@@ -64,8 +64,8 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	}
 	videoID, searchErr := pickYTMusicVideo(response.Body, track)
 	if searchErr != nil {
-		// A malformed 200 is a provider failure, not a cacheable miss
-		// (Codex): the sweep must not mark the source covered on it.
+		// A malformed 200 is a provider failure, not a cacheable miss:
+		// the sweep must not mark the source covered on it.
 		return nil, lookupDegraded, fmt.Errorf("decode YouTube Music search response: %w", searchErr)
 	}
 	if videoID == "" {
@@ -92,7 +92,7 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	var watchTree any
 	if err := json.Unmarshal(response.Body, &watchTree); err != nil {
 		// A malformed 200 must stay retryable; only a well-formed body without
-		// a lyrics browse id is a cacheable miss (Codex round 13).
+		// a lyrics browse id is a cacheable miss.
 		return nil, lookupDegraded, fmt.Errorf("decode YouTube Music watch response: %w", err)
 	}
 	playlistID := firstStringMatch(response.Body, ytmusicBrowseIDPattern)
@@ -121,7 +121,7 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	lines, browseErr := ytmusicDescriptionLines(response.Body)
 	if browseErr != nil {
 		// A malformed 200 browse body is a provider failure, not a cacheable
-		// miss (Codex).
+		// miss.
 		return nil, lookupDegraded, fmt.Errorf("decode YouTube Music browse response: %w", browseErr)
 	}
 	text := strings.Join(lines, "\n")
@@ -188,7 +188,7 @@ type ytmusicSearchHit struct {
 
 // pickYTMusicVideo decodes the search payload and walks song renderers, reading
 // the video id, rendered duration, and identity from the same hit — serialized
-// field order (arrays between videoId and lengthText) must not matter (Devin).
+// field order (arrays between videoId and lengthText) must not matter.
 // A hit must match the requested identity before its duration qualifies; the
 // first qualifying hit wins and unmatched searches stay misses.
 func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {

@@ -26,8 +26,7 @@ const (
 	sweepMarkerTTL = int64(5 * time.Minute / time.Second)
 	// sweepQueuedMarkerTTL keeps the pending marker valid while a task waits
 	// behind a concurrency-1 backlog; OnTaskExecute refreshes it again when
-	// execution starts and releases it when an incomplete run finishes
-	// (Codex).
+	// execution starts and releases it when an incomplete run finishes.
 	sweepQueuedMarkerTTL = int64(30 * time.Minute / time.Second)
 )
 
@@ -66,7 +65,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 	// The task may have queued behind a backlog; refresh the marker when
 	// execution starts, and release it afterwards unless the sweep completed
 	// — an incomplete finish must stay re-enqueueable, while a completed one
-	// is gated by the done marker instead (Codex).
+	// is gated by the done marker instead.
 	markerKey := ""
 	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
 		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
@@ -93,7 +92,7 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 		case continuationQueued:
 			// A continuation still works this track: keep the queued marker
 			// alive so replays cannot enqueue a parallel full sweep while it
-			// waits behind other songs (Greptile).
+			// waits behind other songs.
 			_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepQueuedMarkerTTL)
 		default:
 			// Nothing is pending: release the slot so the next lookup can
@@ -120,8 +119,8 @@ func sweepDoneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
 }
 
 // doneMarkerKey is the provider-view done key: it also carries the credential
-// fingerprint so re-authorizing after a recorded miss re-runs the sweep
-// (Codex: credential changes must invalidate negative coverage).
+// fingerprint so re-authorizing after a recorded miss re-runs the sweep.
+// Credential changes must invalidate negative coverage.
 func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []lyricsSource) string {
 	return fmt.Sprintf("%s:cred:%s", sweepDoneMarkerKey(track, order), p.lyricsCredentialsFingerprint())
 }
@@ -129,7 +128,7 @@ func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []lyricsSou
 // cacheTTLForCoveredCandidate maps a covered entry to the TTL it bounds the
 // done marker by: positive candidates use their per-source TTL; a persisted
 // miss uses its one-hour retry window, so a marker cannot outlive the fresh
-// answers it stands for (Greptile).
+// answers it stands for.
 func cacheTTLForCoveredCandidate(candidate lyricsCandidate) int64 {
 	if candidate.present() {
 		return sourceCacheTTLSeconds(candidate.quality)
@@ -186,7 +185,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 	// could not store anything (e.g. quota-refused writes).
 	missed, notCovered := 0, 0
 	// coverageTTL bounds the done marker by the shortest cached-result TTL it
-	// covers, so a marker never outlives the results it stands for (Codex).
+	// covers, so a marker never outlives the results it stands for.
 	coverageTTL := sweepDoneTTL
 	var deferredIDs []string
 	localCold := map[string]bool{}
@@ -210,7 +209,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			}
 			// Entries without a trustworthy remaining lifetime (pre-stamp
 			// writes) refetch so the pass leaves stamped coverage behind
-			// instead of letting a marker outlive them (Devin).
+			// instead of letting a marker outlive them.
 		}
 		if cooledDown := p.sourceInCooldown(source); cooledDown {
 			// A cooled-down source is not covered by this pass, so the pass
@@ -221,7 +220,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 		if coldHostFor(source, localCold) != "" {
 			// A KV write failure must not let siblings hit the same globally
-			// rate-limited host inside this pass (Codex: in-memory cold hosts).
+			// rate-limited host inside this pass (in-memory cold hosts).
 			cooldownSkipped++
 			skipped++
 			continue
@@ -236,7 +235,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			if errors.Is(err, errLyricsLookupBudgetExhausted) {
 				// The search finished against the budget and the lyrics hop
 				// could not start: this source belongs in the continuation,
-				// not in the failure count (Greptile).
+				// not in the failure count.
 				deferred++
 				deferredIDs = append(deferredIDs, source.ID)
 				continue
@@ -253,9 +252,9 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		}
 		if fetchHealth == lookupTemporarilySkipped && len(candidates) == 0 {
 			// A temporary skip (token rejection) is neither covered work nor a
-			// miss: the next sweep can get a fresh token (Greptile). Anonymous
+			// miss: the next sweep can get a fresh token. Anonymous
 			// cache-only misses stay uncertain and fall through to miss
-			// coverage instead (Greptile G2).
+			// coverage instead.
 			cooldownSkipped++
 			skipped++
 			continue
@@ -285,7 +284,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			notCovered++
 		default:
 			// A clean miss is covered work too: the source was fetched and
-			// genuinely has nothing (Codex: misses must terminate the sweep).
+			// genuinely has nothing (misses must terminate the sweep).
 			// Persist the miss so later passes and continuations can skip the
 			// refetch instead of re-walking the same clean misses every cycle.
 			if !p.cacheSourceMiss(track, source.ID) {
@@ -295,7 +294,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			}
 			missed++
 			// The miss entry expires within the hour, so it also bounds the
-			// marker's re-check window (Greptile).
+			// marker's re-check window.
 			if unsyncedLyricsCacheTTLSeconds < coverageTTL {
 				coverageTTL = unsyncedLyricsCacheTTLSeconds
 			}
@@ -313,14 +312,13 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		remaining := siblingExpiry - p.now().Unix()
 		if !ok || siblingExpiry <= 0 || remaining <= 0 {
 			// A sibling without a trustworthy remaining lifetime cannot be
-			// covered by this marker; the next full sweep restamps it
-			// (Devin).
+			// covered by this marker; the next full sweep restamps it.
 			coveredOthers = false
 			break
 		}
 		// A cached sibling's REMAINING life bounds the marker, so a
 		// synchronized continuation cannot outlive a plain sibling's shorter
-		// entry (Codex/Devin).
+		// entry.
 		if remaining < coverageTTL {
 			coverageTTL = remaining
 		}
@@ -349,7 +347,7 @@ func (p *lyricsProvider) sourceInCooldown(source lyricsSource) bool {
 	if source.ID == "lyricsplus" {
 		// Its hosts are independent mirrors: per-host cooldowns are honored
 		// inside the fetch while rotating mirrors, and must not suppress the
-		// whole multi-host source here (Codex).
+		// whole multi-host source here.
 		return false
 	}
 	for _, hostName := range source.Hosts {
@@ -404,7 +402,7 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 
 // sweepPendingMarkerKey namespaces the dedupe marker by source order and
 // credential state: reconfiguring sources must not delay a fresh sweep for
-// the old marker window (Devin).
+// the old marker window.
 func (p *lyricsProvider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
 	digest := sha256.Sum256([]byte(strings.Join(sourceIDs(p.activeSources()), "|")))
 	return fmt.Sprintf("%s%s:%x:%s", sweepMarkerPrefix, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)

@@ -105,8 +105,7 @@ func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	lines, parseErr := parseLyricifyLYL(text)
 	if parseErr != nil {
 		// The endpoint returned payload that is not parseable LYL: a provider
-		// failure must stay retryable instead of becoming cached coverage
-		// (Codex).
+		// failure must stay retryable instead of becoming cached coverage.
 		return nil, lookupDegraded, fmt.Errorf("decode Lyricify lyrics: %w", parseErr)
 	}
 	if len(lines) == 0 {

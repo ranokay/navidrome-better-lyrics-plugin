@@ -84,7 +84,7 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 		lines, parseErr := parseKFamilyLyrics(wordSyncKRC, content)
 		if parseErr != nil {
 			// Nonempty KRC that no longer parses is a provider failure, not
-			// cacheable negative coverage (Codex).
+			// cacheable negative coverage.
 			return nil, lookupDegraded, fmt.Errorf("parse Luna KRC payload: %w", parseErr)
 		}
 		if len(lines) > 0 {
@@ -102,7 +102,7 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 		return nil, lookupHealthy, nil
 	default:
 		// Unknown payload type: return whatever is usable rather than discard
-		// otherwise valid lyrics (Codex: unknown dialects must not be dropped).
+		// otherwise valid lyrics (unknown dialects must not be dropped).
 		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain")
 		if candidate.present() {
 			return []lyricsCandidate{candidate}, lookupHealthy, nil
@@ -144,7 +144,7 @@ func (id *lunaTrackID) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	// json.Number keeps the original digits: unmarshalling through `any`
-	// would round ids above 2^53 onto a neighboring float64 (Codex).
+	// would round ids above 2^53 onto a neighboring float64.
 	var digits json.Number
 	if err := json.Unmarshal(text, &digits); err != nil {
 		return err
@@ -175,8 +175,7 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 				continue
 			}
 			if track.Duration > 0 {
-				// The duration gate applies only when the request carries one
-				// (Codex).
+				// The duration gate applies only when the request carries one.
 				delta := trackInfo.Duration - target
 				if delta <= -2000 || delta >= 2000 {
 					continue

@@ -42,7 +42,7 @@ type amllItem struct {
 // amllEnvelopeStatusFailure classifies an application-level status the HTTP
 // layer already answered 200 for: no-match 404 keeps the quiet miss contract,
 // an envelope rate limit activates the provider cooldown, and any other
-// non-200 status is a degraded failure instead of a healthy miss (Codex).
+// non-200 status is a degraded failure instead of a healthy miss.
 func amllEnvelopeStatusFailure(p *lyricsProvider, source string, status int) (lookupHealth, error) {
 	switch status {
 	case 200, 404:
@@ -97,7 +97,7 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	matched, ok := pickAMLLItem(envelope.Data.Items, track)
 	if !ok {
 		// Response order is not identity: only a normalized title/artist
-		// match may be fetched (Codex).
+		// match may be fetched.
 		return nil, lookupHealthy, nil
 	}
 
@@ -131,7 +131,7 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	}
 	if getEnvelope.Status == 404 {
 		// The lyrics endpoint answering "no match" is a clean miss; only a
-		// 200 with a missing body is malformed (Devin).
+		// 200 with a missing body is malformed.
 		return nil, lookupHealthy, nil
 	}
 	if health, err := amllEnvelopeStatusFailure(p, "AMLL lyrics envelope", getEnvelope.Status); err != nil {

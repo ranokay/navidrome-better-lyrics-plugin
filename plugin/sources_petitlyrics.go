@@ -44,8 +44,8 @@ func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadl
 		candidate, tierErr := petitLyricsCandidate(tier, response)
 		if tierErr != nil {
 			// A nonempty but malformed payload is a provider failure, not a
-			// genuine empty tier: keep the error and still try later tiers
-			// (Codex), degrading only if nothing usable comes out.
+			// genuine empty tier: keep the error and still try later tiers,
+			// degrading only if nothing usable comes out.
 			lookupErrors = append(lookupErrors, tierErr)
 			continue
 		}
@@ -63,7 +63,7 @@ func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadl
 // petitLyricsCandidate converts one tier payload into a candidate. A zero
 // candidate without an error is a clean miss (empty tier) so the tier loop can
 // fall through; decode failures return the error so malformed provider data
-// degrades instead of caching as coverage (Codex).
+// degrades instead of caching as coverage.
 func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyricsCandidate, error) {
 	data := strings.TrimSpace(payload.LyricsData)
 	if data == "" {
@@ -244,7 +244,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		return nil, lookupHealthy, nil
 	case 429:
 		// Apple throttles too; persist the cooldown so repeated lookups stop
-		// contacting the throttled endpoint (Codex).
+		// contacting the throttled endpoint.
 		retryAfter := retryAfterDuration(response.Headers, p.now())
 		p.rememberCooldown(sourceGlobalCooldownKey("apple-lyrically"), retryAfter)
 		return nil, lookupDegraded, rateLimitResponseError("Apple search", response, retryAfter)
@@ -274,7 +274,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		}
 		// Duration alone does not identify a recording: covers and live
 		// versions share runtimes, so the returned identity gates first and
-		// the duration ranks the survivors (Devin).
+		// the duration ranks the survivors.
 		if !lyricTokensMatch(normalizedLyricTokens(result.TrackName), titleTokens) {
 			continue
 		}
@@ -282,8 +282,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 			continue
 		}
 		if track.Duration > 0 {
-			// The duration gate applies only when the request carries one
-			// (Codex).
+			// The duration gate applies only when the request carries one.
 			delta := int64(math.Abs(float64(result.TrackTimeMillis - target)))
 			if delta > 2000 || delta >= bestDelta {
 				continue
