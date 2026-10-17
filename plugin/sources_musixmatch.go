@@ -364,6 +364,15 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 		if !musixmatchArtistsMatch(candidate.Track.ArtistName, artistTokens) {
 			continue
 		}
+		if track.Duration <= 0 {
+			// The duration gate applies only when the request carries one:
+			// the search already omitted q_duration, so the broader result
+			// set must stay usable (Codex).
+			if !found {
+				best, bestDelta, found = id, 0, true
+			}
+			continue
+		}
 		duration := candidate.Track.Duration
 		delta := int64(math.Abs(float64(int64(duration) - target)))
 		if delta > 2 {

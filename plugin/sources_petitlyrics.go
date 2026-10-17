@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -35,30 +36,43 @@ const (
 // implemented this release, so its tier falls straight through to plain.
 func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
 	tiers := []string{petitLyricsTypeWord, petitLyricsTypeLine, petitLyricsTypePlain}
+	var lookupErrors []error
 	for _, tier := range tiers {
 		response, health, err := p.fetchPetitLyricsTier(track, tier, deadline)
 		if err != nil {
 			return nil, health, err
 		}
-		candidate, miss := petitLyricsCandidate(tier, response)
-		if miss {
+		candidate, tierErr := petitLyricsCandidate(tier, response)
+		if tierErr != nil {
+			// A nonempty but malformed payload is a provider failure, not a
+			// genuine empty tier: keep the error and still try later tiers
+			// (Codex), degrading only if nothing usable comes out.
+			lookupErrors = append(lookupErrors, tierErr)
+			continue
+		}
+		if !candidate.present() {
 			continue
 		}
 		return []lyricsCandidate{candidate}, health, nil
 	}
+	if err := errors.Join(lookupErrors...); err != nil {
+		return nil, lookupDegraded, err
+	}
 	return nil, lookupHealthy, nil
 }
 
-// petitLyricsCandidate converts one tier payload into a candidate. The bool
-// result reports a clean miss so the tier loop can fall through.
-func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyricsCandidate, bool) {
+// petitLyricsCandidate converts one tier payload into a candidate. A zero
+// candidate without an error is a clean miss (empty tier) so the tier loop can
+// fall through; decode failures return the error so malformed provider data
+// degrades instead of caching as coverage (Codex).
+func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyricsCandidate, error) {
 	data := strings.TrimSpace(payload.LyricsData)
 	if data == "" {
-		return lyricsCandidate{}, true
+		return lyricsCandidate{}, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		return lyricsCandidate{}, true
+		return lyricsCandidate{}, fmt.Errorf("decode PetitLyrics %s payload: %w", tier, err)
 	}
 	content := string(raw)
 
@@ -66,34 +80,37 @@ func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyricsCandid
 	case petitLyricsTypeWord:
 		lines, parseErr := parsePetitWSY(raw)
 		if parseErr != nil || len(lines) == 0 {
-			return lyricsCandidate{}, true
+			if parseErr != nil {
+				return lyricsCandidate{}, fmt.Errorf("parse PetitLyrics WSY payload: %w", parseErr)
+			}
+			return lyricsCandidate{}, nil
 		}
 		candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "PetitLyrics", "elrc")
 		if candidate.present() {
-			return candidate, false
+			return candidate, nil
 		}
-		return lyricsCandidate{}, true
+		return lyricsCandidate{}, nil
 	case petitLyricsTypeLine:
 		// LSY binary payloads carry timings only and are skipped this release;
 		// plain rows (rare) fall through to the next tier.
 		if strings.HasPrefix(content, "MHDR") {
-			return lyricsCandidate{}, true
+			return lyricsCandidate{}, nil
 		}
 		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "PetitLyrics", "lrc")
 		if candidate.present() && candidate.quality > timingUnsynced {
-			return candidate, false
+			return candidate, nil
 		}
-		return lyricsCandidate{}, true
+		return lyricsCandidate{}, nil
 	default:
 		text := strings.TrimSpace(content)
 		if text == "" {
-			return lyricsCandidate{}, true
+			return lyricsCandidate{}, nil
 		}
 		candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "PetitLyrics", "plain")
 		if candidate.present() {
-			return candidate, false
+			return candidate, nil
 		}
-		return lyricsCandidate{}, true
+		return lyricsCandidate{}, nil
 	}
 }
 

@@ -54,6 +54,11 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
+	if response.StatusCode == 404 {
+		// A normal 404 carries an empty/non-JSON body: decoding it would turn
+		// the clean miss into a degraded decode failure (Codex).
+		return nil, lookupHealthy, nil
+	}
 	if err := p.checkInnertubeOK("YouTube Music search", response); err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -78,6 +83,9 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
+	if response.StatusCode == 404 {
+		return nil, lookupHealthy, nil
+	}
 	if err := p.checkInnertubeOK("YouTube Music watch", response); err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -96,6 +104,9 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	response, err = p.sendRequestHelper("YouTube Music lyrics", "POST", ytmusicBrowseEndpoint+"?key="+ytmusicAPIKey+"&prettyPrint=false", browseBody, innertubeHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
+	}
+	if response.StatusCode == 404 {
+		return nil, lookupHealthy, nil
 	}
 	if err := p.checkInnertubeOK("YouTube Music lyrics", response); err != nil {
 		return nil, lookupDegraded, err

@@ -43,7 +43,14 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	}
 
 	var lookupErrors []error
+	cooledMirrors := 0
 	for i, endpoint := range []string{lyricsPlusEndpoint, lyricsPlusMirrorOne} {
+		// Host-scoped cooldowns only remove the affected mirror from this
+		// lookup; the healthy sibling still serves (Codex).
+		if host := lyricsPlusEndpointHost(endpoint); p.activeCooldown(sourceGlobalCooldownKey(host)) > 0 {
+			cooledMirrors++
+			continue
+		}
 		requestURL := endpoint + "/v2/lyrics/get?" + query.Encode()
 		response, err := p.sendRequest("LyricsPlus lyrics", requestURL, lyricsPlusHeaders(), deadline)
 		if err != nil {
@@ -91,10 +98,23 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		}
 		return candidates, lookupHealthy, nil
 	}
+	if len(lookupErrors) == 0 && cooledMirrors > 0 {
+		// Every mirror is cooling down: degrade so sweeps do not mark the
+		// source covered while it is simply waiting out its Retry-After.
+		return nil, lookupDegraded, &providerHTTPError{source: "LyricsPlus mirrors", status: 429}
+	}
 	if err := errors.Join(lookupErrors...); err != nil {
 		return nil, lookupDegraded, err
 	}
 	return nil, lookupHealthy, nil
+}
+
+// lyricsPlusEndpointHost extracts the hostname of a mirror endpoint.
+func lyricsPlusEndpointHost(endpoint string) string {
+	if parsed, err := url.Parse(endpoint); err == nil {
+		return parsed.Hostname()
+	}
+	return endpoint
 }
 
 func lyricsPlusHeaders() map[string]string {

@@ -271,21 +271,27 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			p.cacheSourceCandidate(track, source.ID, candidate)
 			best = preferLyricsCandidate(best, candidate)
 		}
+		coveredThisSource := true
 		if !foundCandidate {
-			if sourceHealth == lookupHealthy || sourceHealth == lookupUncertain {
+			switch sourceHealth {
+			case lookupHealthy, lookupUncertain:
 				// Healthy clean misses and anonymous cache-only misses are
 				// bounded coverage: persist them so the sweep and later
 				// lookups skip the refetch (Codex; Greptile). The miss keys
 				// carry the credential fingerprint, so a configured key or
 				// token re-authorizes them immediately.
 				p.cacheSourceMiss(track, source.ID)
-			} else if sourceHealth == lookupTemporarilySkipped {
+			case lookupTemporarilySkipped:
 				// Token rejects are not covered work: the next lookup remints
-				// and retries (Greptile).
+				// and retries (Greptile), and the pass must not report complete
+				// foreground coverage or suppress the sweep (Codex).
 				health = health.merge(sourceHealth)
+				coveredThisSource = false
 			}
 		}
-		walkedTotal++
+		if coveredThisSource {
+			walkedTotal++
+		}
 		if best.quality == timingSyllable {
 			return best, health, walkedTotal >= implementedTotal, nil
 		}

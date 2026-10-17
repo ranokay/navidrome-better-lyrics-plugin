@@ -97,8 +97,16 @@ type providerConfig struct {
 }
 
 type sourceSelection struct {
-	ID      string `json:"id"`
-	Enabled bool   `json:"enabled"`
+	ID string `json:"id"`
+	// Enabled is a pointer so an omitted property follows the schema default
+	// (true) instead of decoding to false and silently dropping the source
+	// (Codex).
+	Enabled *bool `json:"enabled"`
+}
+
+// isEnabled applies the schema default for an omitted enabled property.
+func (selection sourceSelection) isEnabled() bool {
+	return selection.Enabled == nil || *selection.Enabled
 }
 
 // readProviderConfig resolves the plugin config blob. The Navidrome config service
@@ -151,7 +159,7 @@ func sourcesFromSelections(selections []sourceSelection) []lyricsSource {
 	ordered := make([]lyricsSource, 0, len(selections))
 	for _, selection := range selections {
 		source, ok := catalogSource(selection.ID)
-		if !ok || !selection.Enabled {
+		if !ok || !selection.isEnabled() {
 			continue
 		}
 		ordered = append(ordered, source)

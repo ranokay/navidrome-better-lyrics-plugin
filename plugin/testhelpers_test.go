@@ -121,3 +121,6 @@ func (c *fakeLyricsCache) sourceTTL(track lyrics.TrackInfo, sourceID string) int
 	key, _ := lyricsCacheKeyForSource(track, sourceID)
 	return c.ttlsForKey[key]
 }
+
+// ptrBool helps build presence-aware optionals in tests.
+func ptrBool(value bool) *bool { return &value }

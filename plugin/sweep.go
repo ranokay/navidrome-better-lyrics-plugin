@@ -24,6 +24,11 @@ const (
 	// sweepMarkerTTL matches the negative winner TTL so a fresh miss lookup can
 	// re-trigger a sweep once its marker expires.
 	sweepMarkerTTL = int64(5 * time.Minute / time.Second)
+	// sweepQueuedMarkerTTL keeps the pending marker valid while a task waits
+	// behind a concurrency-1 backlog; OnTaskExecute refreshes it again when
+	// execution starts and releases it when an incomplete run finishes
+	// (Codex).
+	sweepQueuedMarkerTTL = int64(30 * time.Minute / time.Second)
 )
 
 // defaultSweepBudget bounds one sweep invocation. The task worker's own callback
@@ -62,14 +67,21 @@ func (p *lyricsProvider) OnTaskExecute(req taskworker.TaskExecuteRequest) (strin
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		return "", fmt.Errorf("decode sweep payload: %w", err)
 	}
-	// The task may have queued behind a backlog longer than the marker's TTL;
-	// refresh it now so the dedupe window starts when execution does and a
-	// duplicate sweep cannot slip in while this one runs (Codex).
+	// The task may have queued behind a backlog; refresh the marker when
+	// execution starts, and release it afterwards unless the sweep completed
+	// — an incomplete finish must stay re-enqueueable, while a completed one
+	// is gated by the done marker instead (Codex).
+	markerKey := ""
 	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
-		markerKey := p.sweepPendingMarkerKey(payload.Track, trackKey)
+		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
 		_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL)
 	}
-	status, deferredIDs, _ := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
+	status, deferredIDs, sources := p.runSweepSourcesDetailed(payload.Track, payload.Sources)
+	if markerKey != "" {
+		if _, done, _ := p.cache.Get(p.doneMarkerKey(payload.Track, sources)); !done {
+			_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
+		}
+	}
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.
 		if err := p.enqueueSweepSources(payload.Track, deferredIDs); err != nil {
@@ -349,6 +361,12 @@ func (p *lyricsProvider) sourceInCooldown(source lyricsSource) bool {
 	if p.activeCooldown(sourceGlobalCooldownKey(source.ID)) > 0 {
 		return true
 	}
+	if source.ID == "lyricsplus" {
+		// Its hosts are independent mirrors: per-host cooldowns are honored
+		// inside the fetch while rotating mirrors, and must not suppress the
+		// whole multi-host source here (Codex).
+		return false
+	}
 	for _, hostName := range source.Hosts {
 		if p.activeCooldown(sourceGlobalCooldownKey(hostName)) > 0 {
 			return true
@@ -385,7 +403,7 @@ func (p *lyricsProvider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if _, exists, _ := p.cache.Get(markerKey); exists {
 		return false
 	}
-	if err := p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL); err != nil {
+	if err := p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepQueuedMarkerTTL); err != nil {
 		// A broken cache must not block lyrics: skip the sweep this round.
 		return false
 	}

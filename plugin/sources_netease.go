@@ -82,6 +82,12 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if err := json.Unmarshal(lyricResponse.Body, &lyricEnvelope); err != nil {
 		return nil, lookupDegraded, fmt.Errorf("decode NetEase lyric response: %w", err)
 	}
+	// The live lyric envelope also carries an application-level code; a
+	// transient failure must not fall through as cacheable negative coverage
+	// (Codex).
+	if health, err := neteaseEnvelopeStatusFailure(p, lyricEnvelope.Code); err != nil {
+		return nil, health, err
+	}
 
 	if yrc := strings.TrimSpace(lyricEnvelope.YRC.Lyric); yrc != "" {
 		lines, parseErr := parseKFamilyLyrics(wordSyncYRC, stripNetEaseCreditLines(yrc))
@@ -187,8 +193,9 @@ func neteaseArtistsMatch(song []neteaseArtist, wanted []string) bool {
 }
 
 type neteaseLyricEnvelope struct {
-	LRC neteaseLyricEntry `json:"lrc"`
-	YRC neteaseLyricEntry `json:"yrc"`
+	Code int               `json:"code"`
+	LRC  neteaseLyricEntry `json:"lrc"`
+	YRC  neteaseLyricEntry `json:"yrc"`
 }
 
 type neteaseLyricEntry struct {

@@ -262,7 +262,7 @@ func TestGetLyrics_ConfigWithEverySourceDisabledSkipsScheduling(t *testing.T) {
 	// must return without filling the task queue with unschedulable sweeps.
 	selections := make([]sourceSelection, 0, len(allSources))
 	for _, source := range allSources {
-		selections = append(selections, sourceSelection{ID: source.ID, Enabled: false})
+		selections = append(selections, sourceSelection{ID: source.ID, Enabled: ptrBool(false)})
 	}
 	raw, err := json.Marshal(selections)
 	if err != nil {
@@ -2134,5 +2134,200 @@ func TestMalformedLYLPayloadStaysDegraded(t *testing.T) {
 	}
 	if resolveRequests != 1 || lyricsRequests != 1 {
 		t.Fatalf("requests = %d/%d, want the resolve and lyrics hops both reached", resolveRequests, lyricsRequests)
+	}
+}
+
+func TestConfigSelectionOmittingEnabledUsesSchemaDefault(t *testing.T) {
+	t.Parallel()
+
+	// `{"id":"better-lyrics"}` must keep the source enabled (schema default
+	// true) instead of silently dropping it and appending the other defaults
+	// (Codex).
+	lookup := func(key string) (string, bool) {
+		if key == "sources" {
+			return `[{"id":"better-lyrics"}]`, true
+		}
+		return "", false
+	}
+	resolved := readProviderConfig(lookup)
+	ids := sourceIDs(resolved.Sources)
+	// The upgrade-compat pass still appends unlisted default sources, but the
+	// listed entry itself must not vanish (it decoded as disabled pre-fix).
+	found := false
+	for _, id := range ids {
+		if id == "better-lyrics" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("resolved = %v, want the listed source kept enabled by the schema default", ids)
+	}
+}
+
+func TestLunaRejectsContainingArtistNames(t *testing.T) {
+	t.Parallel()
+
+	// "BLACKPINK" must not alias-match a "Pink" request via substring
+	// containment (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result_groups":[{"data":[{"entity":{"track":{"id":"77","name":"Song","artists":[{"name":"BLACKPINK"}],"duration":130032}}}]}]}`)}, nil
+	})
+
+	candidates, health, err := fetchLunaLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Pink", Duration: 130}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want the containing artist rejected", candidates, health, err)
+	}
+}
+
+func TestYTMusicSearch404IsCleanMiss(t *testing.T) {
+	t.Parallel()
+
+	// A 404 body is empty/non-JSON: decoding it would degrade a clean miss
+	// (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	candidates, health, err := fetchYTMusicLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || len(candidates) != 0 || health != lookupHealthy {
+		t.Fatalf("result = %#v/%v/%v; want a clean miss on 404", candidates, health, err)
+	}
+}
+
+func TestNetEaseLyricEnvelopeFailureDegrades(t *testing.T) {
+	t.Parallel()
+
+	// The lyric envelope carries its own code: a transient failure must not
+	// fall through as cacheable coverage (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "cloudsearch/pc"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":111,"name":"Song","ar":[{"name":"Artist"}],"dt":280000}]},"code":200}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"code":500}`)}, nil
+		}
+	})
+
+	_, health, err := fetchNetEaseLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 280}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want degraded on the lyric envelope 500", err, health)
+	}
+}
+
+func TestTemporarySkipsDoNotCompleteForegroundCoverage(t *testing.T) {
+	t.Parallel()
+
+	// A tempSkip source is not covered work: the pass must stay incomplete,
+	// enqueue the sweep, and not write a complete negative winner (Codex).
+	enqueued := 0
+	provider := newLyricsProviderWithSources(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
+		{ID: "skip", Display: "skip", Hosts: []string{"skip.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return nil, lookupTemporarilySkipped, nil
+			}},
+	}, func(lyrics.TrackInfo) error {
+		enqueued++
+		return nil
+	})
+
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	}
+	if enqueued != 1 {
+		t.Fatalf("enqueues = %d, want the incomplete pass to schedule the sweep", enqueued)
+	}
+}
+
+func TestPetitLyricsMalformedPayloadDegrades(t *testing.T) {
+	t.Parallel()
+
+	// Nonempty invalid base64 across every tier degrades instead of caching
+	// negative coverage (Codex).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<?xml version="1.0"?><response><status>00000000</status><songs><song><lyricsData>!!!not-base64!!!</lyricsData></song></songs></response>`)}, nil
+	})
+
+	candidates, health, err := fetchPetitLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded || len(candidates) != 0 {
+		t.Fatalf("result = %#v/%v/%v; want a degraded malformed payload", candidates, health, err)
+	}
+}
+
+func TestMusixmatchMatchesWithoutDuration(t *testing.T) {
+	t.Parallel()
+
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "/ws/1.1/token.get"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+		case strings.Contains(request.URL, "/ws/1.1/track.search"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":240}}]}}}`)}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.subtitles.get":{"header":{"status_code":200},"body":{"subtitle_list":[{"subtitle_body":"[00:01.00]line"}]}}}}}}`)}, nil
+		}
+	})
+
+	candidates, _, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchMusixmatchLyricsCandidates() error = %v, want nil", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want the identity match without a duration gate", candidates)
+	}
+}
+
+func TestSweepQueueMarkerCoversBacklog(t *testing.T) {
+	t.Parallel()
+
+	// The enqueue-time marker must cover the queued interval, not just the
+	// execution window (Codex).
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithSources(nil, cache, time.Now, []lyricsSource{
+		sweepSource("one", new(int), false, nil),
+	}, nil)
+
+	if !provider.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) {
+		t.Fatal("maybeEnqueueSweep refused")
+	}
+	found := false
+	for _, ttl := range cache.ttls {
+		if ttl == sweepQueuedMarkerTTL {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("marker TTLs = %v, want the backlog-covering %d", cache.ttls, sweepQueuedMarkerTTL)
+	}
+}
+
+func TestLyricsPlusHostCooldownsStayMirrorScoped(t *testing.T) {
+	t.Parallel()
+
+	source, ok := catalogSource("lyricsplus")
+	if !ok {
+		t.Fatal("lyricsplus not in the catalog")
+	}
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithDeps(nil, cache, time.Now, nil, nil)
+	// Cool the primary mirror's host down.
+	provider.rememberCooldown(sourceGlobalCooldownKey("lyricsplus.binimum.org"), 5*time.Minute)
+	if provider.sourceInCooldown(source) {
+		t.Fatal("a single mirror cooldown must not suppress the whole source pre-fetch")
+	}
+
+	// The fetch still serves from the healthy sibling.
+	requests := 0
+	provider = newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"type":"Line","lyrics":[{"time":1000,"duration":500,"text":"line"}]}`)}, nil
+	}, cache, time.Now, nil, nil)
+	provider.rememberCooldown(sourceGlobalCooldownKey("lyricsplus.binimum.org"), 5*time.Minute)
+	candidates, health, err := fetchLyricsPlusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err != nil || health != lookupHealthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v/%v, want the healthy sibling to serve", candidates, health, err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the non-cooled mirror queried", requests)
 	}
 }

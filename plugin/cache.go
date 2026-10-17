@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
@@ -252,7 +253,13 @@ const credentialSaltTTL = int64(10 * 365 * 24 * time.Hour / time.Second)
 // CWE-760); a per-installation salt removes that verifiability. The constant
 // remains only as a last resort so fingerprinting never blocks lyrics when the
 // store refuses writes.
+// credentialSaltMutex serializes first-use salt initialization so concurrent
+// callers mint and persist one salt instead of racing (Codex).
+var credentialSaltMutex sync.Mutex
+
 func (p *lyricsProvider) credentialSalt() []byte {
+	credentialSaltMutex.Lock()
+	defer credentialSaltMutex.Unlock()
 	if len(p.credentialSaltBytes) >= 16 {
 		return p.credentialSaltBytes
 	}

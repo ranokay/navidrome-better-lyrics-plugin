@@ -182,20 +182,28 @@ type lunaSearchTrack struct {
 	Duration int64              `json:"duration"` // ms
 }
 
-// lunaArtistsMatch accepts the requested artist either from any artists-array
-// entry or concatenated inside the track name itself.
+// lunaArtistsMatch accepts the requested artist from any artists-array entry
+// with COMPLETE normalized-name equality, or from a narrowly scoped UGC
+// fallback: hub rows that concatenate title+artist without separators
+// ("liveforeverOasis") when the remainder after the collapsed title is
+// exactly the artist (Codex: substring matching let "blackpink" aliase a
+// "pink" request).
 func lunaArtistsMatch(trackInfo lunaSearchTrack, track lyrics.TrackInfo) bool {
-	nameNorm := strings.ToLower(onlyLettersAndDigits(trackInfo.Name))
 	artistNorm := strings.ToLower(onlyLettersAndDigits(trackArtist(track)))
 	if artistNorm == "" {
 		return true
 	}
 	for _, candidateArtist := range trackInfo.Artists {
-		if strings.Contains(strings.ToLower(onlyLettersAndDigits(candidateArtist.Name)), artistNorm) {
+		if strings.ToLower(onlyLettersAndDigits(candidateArtist.Name)) == artistNorm {
 			return true
 		}
 	}
-	return strings.Contains(nameNorm, artistNorm)
+	nameNorm := strings.ToLower(onlyLettersAndDigits(trackInfo.Name))
+	titleNorm := strings.ToLower(onlyLettersAndDigits(track.Title))
+	if titleNorm != "" && strings.HasPrefix(nameNorm, titleNorm) {
+		return strings.TrimPrefix(nameNorm, titleNorm) == artistNorm
+	}
+	return false
 }
 
 type lunaDetailEnvelope struct {
