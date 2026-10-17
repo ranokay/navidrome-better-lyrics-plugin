@@ -67,9 +67,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(searchResponse.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Musixmatch search", searchResponse, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("musixmatch", "Musixmatch search", searchResponse)
 	default:
 		return nil, lookupDegraded, providerResponseError("Musixmatch search", searchResponse)
 	}
@@ -113,9 +111,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(macroResponse.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Musixmatch subtitles", macroResponse, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("musixmatch", "Musixmatch subtitles", macroResponse)
 	default:
 		return nil, lookupDegraded, providerResponseError("Musixmatch subtitles", macroResponse)
 	}

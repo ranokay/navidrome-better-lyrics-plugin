@@ -44,9 +44,7 @@ func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("lyricify"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Lyricify resolve", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("lyricify", "Lyricify resolve", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Lyricify resolve", response)
 	}
@@ -79,9 +77,7 @@ func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		// A missing ISRC comes back as 403, not 404; both are clean misses here.
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("lyricify"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Lyricify lyrics", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("lyricify", "Lyricify lyrics", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Lyricify lyrics", response)
 	}

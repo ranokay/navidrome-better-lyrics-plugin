@@ -52,7 +52,7 @@ func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 			continue
 		}
 		requestURL := endpoint + "/v2/lyrics/get?" + query.Encode()
-		response, err := p.sendRequest("LyricsPlus lyrics", requestURL, lyricsPlusHeaders(), deadline)
+		response, err := p.sendRequest("LyricsPlus lyrics", requestURL, defaultHeaders(), deadline)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
 			if len(lookupErrors) > i {
@@ -115,13 +115,6 @@ func lyricsPlusEndpointHost(endpoint string) string {
 		return parsed.Hostname()
 	}
 	return endpoint
-}
-
-func lyricsPlusHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }
 
 type lyricsPlusPayload struct {

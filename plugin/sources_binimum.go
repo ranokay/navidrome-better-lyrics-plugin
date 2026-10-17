@@ -38,7 +38,7 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if !ok {
 		return nil, lookupHealthy, nil
 	}
-	response, err := p.sendRequest("BiniLyrics search", searchURL, binimumHeaders(), deadline)
+	response, err := p.sendRequest("BiniLyrics search", searchURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -50,9 +50,7 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		// missing results are a clean miss
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("binimum"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("BiniLyrics search", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("binimum", "BiniLyrics search", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("BiniLyrics search", response)
 	}
@@ -67,7 +65,7 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		return nil, lookupHealthy, nil
 	}
 
-	lyricsResponse, err := p.sendRequest("BiniLyrics lyrics", best.LyricsURL, binimumHeaders(), deadline)
+	lyricsResponse, err := p.sendRequest("BiniLyrics lyrics", best.LyricsURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -77,9 +75,7 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	case 401, 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(lyricsResponse.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("binimum"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("BiniLyrics lyrics", lyricsResponse, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("binimum", "BiniLyrics lyrics", lyricsResponse)
 	default:
 		return nil, lookupDegraded, providerResponseError("BiniLyrics lyrics", lyricsResponse)
 	}
@@ -164,11 +160,4 @@ func binimumSearchURL(track lyrics.TrackInfo) (string, bool) {
 		query.Set("album", album)
 	}
 	return binimumEndpoint + "?" + query.Encode(), true
-}
-
-func binimumHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }

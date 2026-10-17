@@ -70,10 +70,7 @@ func fetchBetterLyricsLyrics(p *lyricsProvider, track lyrics.TrackInfo, deadline
 }
 
 func (p *lyricsProvider) betterLyricsHeaders() map[string]string {
-	headers := map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
+	headers := defaultHeaders()
 	if apiKey := readProviderConfig(p.configLookup).BetterLyricsAPIKey; apiKey != "" {
 		headers["X-API-Key"] = apiKey
 	}

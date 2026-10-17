@@ -36,9 +36,7 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("luna"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Luna search", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("luna", "Luna search", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Luna search", response)
 	}
@@ -63,9 +61,7 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("luna"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Luna track", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("luna", "Luna track", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Luna track", response)
 	}

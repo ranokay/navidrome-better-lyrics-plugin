@@ -149,9 +149,7 @@ func (p *lyricsProvider) fetchPetitLyricsTier(track lyrics.TrackInfo, tier strin
 	case 404:
 		return petitlyricsPayload{}, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("petitlyrics"), retryAfter)
-		return petitlyricsPayload{}, lookupDegraded, rateLimitResponseError("PetitLyrics", response, retryAfter)
+		return petitlyricsPayload{}, lookupDegraded, p.rateLimitFailure("petitlyrics", "PetitLyrics", response)
 	default:
 		return petitlyricsPayload{}, lookupDegraded, providerResponseError("PetitLyrics", response)
 	}
@@ -233,7 +231,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		"entity": {"song"},
 		"limit":  {"5"},
 	}.Encode()
-	response, err := p.sendRequest("Apple search", searchURL, lyricallyHeaders(), deadline)
+	response, err := p.sendRequest("Apple search", searchURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -245,9 +243,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 	case 429:
 		// Apple throttles too; persist the cooldown so repeated lookups stop
 		// contacting the throttled endpoint.
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("apple-lyrically"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Apple search", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("apple-lyrically", "Apple search", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Apple search", response)
 	}
@@ -299,7 +295,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 	}
 
 	mirrorURL := lyricallyMirrorEndpoint + "?id=" + strconv.FormatInt(trackID, 10)
-	response, err = p.sendRequest("Lyrically lyrics", mirrorURL, lyricallyHeaders(), deadline)
+	response, err = p.sendRequest("Lyrically lyrics", mirrorURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -309,9 +305,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("apple-lyrically"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Lyrically lyrics", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("apple-lyrically", "Lyrically lyrics", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Lyrically lyrics", response)
 	}
@@ -344,11 +338,4 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		}
 	}
 	return nil, lookupHealthy, nil
-}
-
-func lyricallyHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }

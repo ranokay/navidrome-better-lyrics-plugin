@@ -114,7 +114,7 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 // fetchLRCLibEndpoint performs one LRCLib HTTP call with the shared status and
 // throttling handling.
 func (p *lyricsProvider) fetchLRCLibEndpoint(source, requestURL string, deadline time.Time) ([]byte, lookupHealth, error) {
-	response, err := p.sendRequest(source, requestURL, lrclibHeaders(), deadline)
+	response, err := p.sendRequest(source, requestURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -125,14 +125,10 @@ func (p *lyricsProvider) fetchLRCLibEndpoint(source, requestURL string, deadline
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("lrclib"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError(source, response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("lrclib", source, response)
 	case 503:
 		// LRCLib sheds load with a 503 + Retry-After; treat like a rate limit.
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("lrclib"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError(source, response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("lrclib", source, response)
 	default:
 		return nil, lookupDegraded, providerResponseError(source, response)
 	}
@@ -262,13 +258,4 @@ func lrclibDurationsClose(recordSeconds float64, track lyrics.TrackInfo) bool {
 	}
 	delta := math.Abs(recordSeconds - float64(track.Duration))
 	return delta <= 2
-}
-
-func lrclibHeaders() map[string]string {
-	// LRCLib asks clients to identify themselves in the User-Agent and throttles
-	// requests that do not, so the plugin UA is required, not decorative.
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }

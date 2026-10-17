@@ -106,6 +106,15 @@ func rateLimitResponseError(source string, response *host.HTTPResponse, retryAft
 	return err
 }
 
+// rateLimitFailure records the response's Retry-After window on the source's
+// provider-wide cooldown and returns the degraded error a rate-limited lookup
+// produces.
+func (p *lyricsProvider) rateLimitFailure(sourceID, label string, response *host.HTTPResponse) error {
+	retryAfter := retryAfterDuration(response.Headers, p.now())
+	p.rememberCooldown(sourceGlobalCooldownKey(sourceID), retryAfter)
+	return rateLimitResponseError(label, response, retryAfter)
+}
+
 func providerRateLimitResponseError(source string, response *host.HTTPResponse, retryAfter time.Duration) error {
 	err := providerResponseError(source, response)
 	responseErr, ok := err.(*providerHTTPError)

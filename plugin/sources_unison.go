@@ -29,10 +29,7 @@ type unisonLyricsEntry struct {
 // fetchUnisonLyrics walks the community database through its explicitly
 // documented specificity tiers.
 func fetchUnisonCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
-	headers := map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
+	headers := defaultHeaders()
 
 	health := lookupHealthy
 	retryBroader := true

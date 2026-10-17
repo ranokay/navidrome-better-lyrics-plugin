@@ -49,9 +49,7 @@ func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("genius"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Genius search", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("genius", "Genius search", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Genius search", response)
 	}
@@ -76,9 +74,7 @@ func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("genius"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("Genius lyrics", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("genius", "Genius lyrics", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("Genius lyrics", response)
 	}

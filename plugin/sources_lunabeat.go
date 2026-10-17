@@ -64,7 +64,7 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	}
 
 	ttmlURL := strings.TrimSuffix(lunaBeatBase, "/") + "/" + entry.Path
-	response, err := p.sendRequest("LunaBeat lyrics", ttmlURL, lunaBeatHeaders(), deadline)
+	response, err := p.sendRequest("LunaBeat lyrics", ttmlURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -74,9 +74,7 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("luna-beat"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("LunaBeat lyrics", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("luna-beat", "LunaBeat lyrics", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("LunaBeat lyrics", response)
 	}
@@ -100,7 +98,7 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 // failures fall through to a direct index refetch (best-effort revision
 // tracking); index acquisition failures themselves degrade the lookup.
 func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnvelope, error) {
-	manifestResponse, err := p.sendRequest("LunaBeat manifest", lunaBeatBase+"/api/v1/manifest.json", lunaBeatHeaders(), deadline)
+	manifestResponse, err := p.sendRequest("LunaBeat manifest", lunaBeatBase+"/api/v1/manifest.json", defaultHeaders(), deadline)
 	if err == nil && manifestResponse.StatusCode == 200 {
 		var manifest struct {
 			Revision string `json:"revision"`
@@ -117,7 +115,7 @@ func (p *lyricsProvider) readLunaBeatIndex(deadline time.Time) (lunaBeatIndexEnv
 		}
 	}
 
-	indexResponse, err := p.sendRequest("LunaBeat index", lunaBeatBase+"/api/v1/songs.json", lunaBeatHeaders(), deadline)
+	indexResponse, err := p.sendRequest("LunaBeat index", lunaBeatBase+"/api/v1/songs.json", defaultHeaders(), deadline)
 	if err != nil {
 		return lunaBeatIndexEnvelope{}, err
 	}
@@ -216,13 +214,6 @@ func lunaBeatArtistNames(trackArtist string) []string {
 // whitespace and punctuation. Good enough to match the hub's index rows.
 func normalizeLunaBeatTitle(title, artist string) string {
 	return strings.ToLower(onlyLettersAndDigits(title)) + "|" + strings.ToLower(onlyLettersAndDigits(artist))
-}
-
-func lunaBeatHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }
 
 func gzipString(value []byte) []byte {

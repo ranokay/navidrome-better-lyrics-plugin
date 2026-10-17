@@ -62,7 +62,7 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	if !ok {
 		return nil, lookupHealthy, nil
 	}
-	headers := amllHeaders()
+	headers := defaultHeaders()
 	response, err := p.sendRequest("AMLL search", searchURL, headers, deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
@@ -74,9 +74,7 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("amll"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("AMLL search", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("amll", "AMLL search", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("AMLL search", response)
 	}
@@ -113,9 +111,7 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(lyricsResponse.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("amll"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("AMLL lyrics", lyricsResponse, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("amll", "AMLL lyrics", lyricsResponse)
 	default:
 		return nil, lookupDegraded, providerResponseError("AMLL lyrics", lyricsResponse)
 	}
@@ -225,11 +221,4 @@ func amllSearchURL(track lyrics.TrackInfo) (string, bool) {
 		query.Set("albumName", album)
 	}
 	return amllEndpoint + "/v1/lyrics/search?" + query.Encode(), true
-}
-
-func amllHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }

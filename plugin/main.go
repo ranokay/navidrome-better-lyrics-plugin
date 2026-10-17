@@ -318,6 +318,15 @@ func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyri
 	}
 }
 
+// defaultHeaders is the plugin's common header set. The identifying User-Agent
+// is required by providers that throttle unidentified clients (LRCLib).
+func defaultHeaders() map[string]string {
+	return map[string]string{
+		"Accept":     "application/json",
+		"User-Agent": pluginUserAgent(),
+	}
+}
+
 func pluginUserAgent() string {
 	return "NavidromeBetterLyricsPlugin/" + pluginVersion() + " (+" + pluginRepository + ")"
 }

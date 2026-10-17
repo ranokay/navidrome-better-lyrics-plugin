@@ -24,7 +24,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		"limit":  {"10"},
 	}
 	searchURL := neteaseEndpoint + "/api/cloudsearch/pc"
-	response, err := p.postForm("NetEase search", searchURL, form, neteaseHeaders(), deadline)
+	response, err := p.postForm("NetEase search", searchURL, form, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -34,9 +34,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(response.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("netease"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("NetEase search", response, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("netease", "NetEase search", response)
 	default:
 		return nil, lookupDegraded, providerResponseError("NetEase search", response)
 	}
@@ -61,7 +59,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		"lv": {"-1"}, "kv": {"-1"}, "tv": {"-1"}, "rv": {"-1"}, "yv": {"-1"},
 	}
 	lyricURL := neteaseEndpoint + "/api/song/lyric/v1?" + lyricQuery.Encode()
-	lyricResponse, err := p.sendRequest("NetEase lyrics", lyricURL, neteaseHeaders(), deadline)
+	lyricResponse, err := p.sendRequest("NetEase lyrics", lyricURL, defaultHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
 	}
@@ -71,9 +69,7 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
-		retryAfter := retryAfterDuration(lyricResponse.Headers, p.now())
-		p.rememberCooldown(sourceGlobalCooldownKey("netease"), retryAfter)
-		return nil, lookupDegraded, rateLimitResponseError("NetEase lyrics", lyricResponse, retryAfter)
+		return nil, lookupDegraded, p.rateLimitFailure("netease", "NetEase lyrics", lyricResponse)
 	default:
 		return nil, lookupDegraded, providerResponseError("NetEase lyrics", lyricResponse)
 	}
@@ -212,11 +208,4 @@ type neteaseLyricEnvelope struct {
 
 type neteaseLyricEntry struct {
 	Lyric string `json:"lyric"`
-}
-
-func neteaseHeaders() map[string]string {
-	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": pluginUserAgent(),
-	}
 }
