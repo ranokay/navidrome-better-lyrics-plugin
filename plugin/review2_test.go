@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -349,14 +350,22 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 		want   int64
 	}{
 		{name: "plain tail result bounds the marker to one hour", text: "some plain words", format: "plain", want: unsyncedLyricsCacheTTLSeconds},
-		{name: "line result bounds the marker to a day", text: "[00:01.00]timed", format: "lrc", want: syncedLyricsCacheTTLSeconds},
+		{name: "misses bound the re-check window to one hour", text: "[00:01.00]timed", format: "lrc", want: unsyncedLyricsCacheTTLSeconds},
+		{name: "fully timed coverage still spans a day", text: "[00:02.00]timed", format: "lrc2", want: syncedLyricsCacheTTLSeconds},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cache := newFakeLyricsCache()
+			tailFormat := tc.format
+			lead := sweepSource("lead", new(int), false, nil)
+			if tc.format == "lrc2" {
+				// Both sources timed: nothing expires within the day.
+				lead = stubFetchedCandidate("lead", "lead", "lrc", "[00:01.00]lead timed")
+				tailFormat = "lrc"
+			}
 			provider := newLyricsProviderWithSourcesAt(nil, cache, time.Now, []lyricsSource{
-				sweepSource("lead", new(int), false, nil),
-				stubFetchedCandidate("tail", "tail", tc.format, tc.text),
+				lead,
+				stubFetchedCandidate("tail", "tail", tailFormat, tc.text),
 			}, func(lyrics.TrackInfo) error { return nil })
 
 			provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
@@ -532,8 +541,8 @@ func TestMusixmatchMintFailuresStayDegraded(t *testing.T) {
 			return &host.HTTPResponse{StatusCode: 401, Body: []byte("denied")}, nil
 		})
 		_, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
-		if err != nil || health != lookupHealthy {
-			t.Fatalf("challenge = (%v, %v); want a healthy quiet miss", err, health)
+		if err != nil || health != lookupUncertain {
+			t.Fatalf("challenge = (%v, %v); want a temporary skip, not a covered miss", err, health)
 		}
 	})
 }
@@ -822,8 +831,8 @@ func TestMusixmatchMintEnvelopeStatusesClassified(t *testing.T) {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":401,"hint":"captcha"}}}`)}, nil
 		})
 		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
-		if err != nil || health != lookupHealthy {
-			t.Fatalf("result = (%v, %v); want the challenge kept quiet", err, health)
+		if err != nil || health != lookupUncertain {
+			t.Fatalf("result = (%v, %v); want the challenge kept as a temporary skip", err, health)
 		}
 	})
 }
@@ -1180,5 +1189,162 @@ func TestCoverageCredChangeInvalidatesMisses(t *testing.T) {
 	reauthorized.runSweep(track)
 	if missCalls != 2 {
 		t.Fatalf("fetches after the credential change = %d, want the stale miss entry to be bypassed", missCalls)
+	}
+}
+
+func TestSweep_DefersDeadlineExhaustedSources(t *testing.T) {
+	t.Parallel()
+
+	// A search that finishes against the deadline leaves no budget for the
+	// lyrics request; its error is budget exhaustion, not a failure — the
+	// source belongs in the continuation (Greptile).
+	provider := newLyricsProviderWithSourcesAt(nil, newFakeLyricsCache(), time.Now, []lyricsSource{
+		{ID: "late", Display: "late", Hosts: []string{"late.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return nil, lookupDegraded, fmt.Errorf("request lyrics: %w", errLyricsLookupBudgetExhausted)
+			}},
+		{ID: "tail", Display: "tail", Hosts: []string{"tail.example.test"}, DefaultEnabled: true,
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+				return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]line"}, "tail", "lrc")}, lookupHealthy, nil
+			}},
+	}, func(lyrics.TrackInfo) error { return nil })
+
+	status, deferredIDs := provider.runSweepSources(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, nil)
+	if len(deferredIDs) != 1 || deferredIDs[0] != "late" {
+		t.Fatalf("status/deferred = %q/%v, want the deadline-exhausted source deferred", status, deferredIDs)
+	}
+	if !strings.Contains(status, "deferred=1") {
+		t.Fatalf("status = %q, count the exhausted source as deferred", status)
+	}
+}
+
+func TestMusixmatchTokenRejectionsStaySkippable(t *testing.T) {
+	t.Parallel()
+
+	// Expired-token rejections must not persist as clean misses: the next
+	// lookup has to remint and retry, and the sweep must not mark the source
+	// covered (Greptile).
+	facade := func(t *testing.T, searchBody, macroBody string) func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+			switch {
+			case strings.Contains(request.URL, "/ws/1.1/token.get"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
+			case strings.Contains(request.URL, "/ws/1.1/track.search"):
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(searchBody)}, nil
+			default:
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(macroBody)}, nil
+			}
+		}
+	}
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 10}
+
+	t.Run("rejected search token stays skippable", func(t *testing.T) {
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(t, `{"message":{"header":{"status_code":401}}}`, `{}`), cache, time.Now, nil, nil)
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a temporary skip health", err, health)
+		}
+		if _, ok := provider.readCachedSourceCoverage(track, "musixmatch"); ok {
+			t.Fatal("a rejected-token miss persisted into negative coverage")
+		}
+	})
+
+	t.Run("rejected macro token stays skippable", func(t *testing.T) {
+		search := `{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_length":10}}]}}}`
+		cache := newFakeLyricsCache()
+		provider := newLyricsProviderWithDeps(facade(t, search, `{"message":{"header":{"status_code":200},"body":{"macro_calls":{"track.richsync.get":{"header":{"status_code":401}}}}}}`), cache, time.Now, nil, nil)
+		_, health, err := fetchMusixmatchLyricsCandidates(provider, track, time.Now().Add(stageOneLookupBudget))
+		if err != nil || health == lookupHealthy {
+			t.Fatalf("result = (%v, %v); want a temporary skip health", err, health)
+		}
+		if _, ok := provider.readCachedSourceCoverage(track, "musixmatch"); ok {
+			t.Fatal("a rejected-macro miss persisted into negative coverage")
+		}
+	})
+}
+
+func TestLunaBeatMatchesArtistAliases(t *testing.T) {
+	t.Parallel()
+
+	// The hub index lists several aliases per artist (`赵雷`, `趙雷`, `Lei Zhao`);
+	// joining them into one string never matches a track tagged with a single
+	// alias (Greptile).
+	index := []byte(`{"schemaVersion":6,"revision":"rev-1","songs":[{"id":"e","title":"阿刁","artists":["赵雷","趙雷","Lei Zhao"],"album":"剃刀","path":"lyrics/cjk.ttml"}]}`)
+	provider := providerForCatalogWithCache(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch {
+		case strings.Contains(request.URL, "api/v1/manifest.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"schemaVersion":6,"revision":"rev-1"}`)}, nil
+		case strings.Contains(request.URL, "api/v1/songs.json"):
+			return &host.HTTPResponse{StatusCode: 200, Body: index}, nil
+		default:
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`<tt></tt>`)}, nil
+		}
+	}, newFakeLyricsCache(), time.Now, "luna-beat")
+
+	for _, alias := range []string{"Lei Zhao", "趙雷"} {
+		if _, _, err := fetchLunaBeatLyricsCandidates(provider, lyrics.TrackInfo{Title: "阿刁", Artist: alias, Album: "剃刀"}, time.Now().Add(stageOneLookupBudget)); err != nil {
+			t.Fatalf("fetchLunaBeatLyricsCandidates(artist %q) error = %v, want nil", alias, err)
+		}
+	}
+}
+
+func TestMusixmatchToken429RecordsCooldown(t *testing.T) {
+	t.Parallel()
+
+	cache := newFakeLyricsCache()
+	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 429, Headers: map[string]string{"Retry-After": "7"}}, nil
+	}, cache, time.Now, nil, nil)
+
+	_, _, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(stageOneLookupBudget))
+	if err == nil {
+		t.Fatal("token.get 429 converted to a miss; want an error")
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Fatalf("error = %v, want the rate-limit error surfaced", err)
+	}
+	if cooldown := provider.activeCooldown(sourceGlobalCooldownKey("musixmatch")); cooldown < 7*time.Second || cooldown > 8*time.Second {
+		t.Fatalf("cooldown = %v, want the Retry-After value honored", cooldown)
+	}
+}
+
+func TestWinnerEntriesRespectCredentialChanges(t *testing.T) {
+	t.Parallel()
+
+	// A completed winner recorded without a credential must not stay served
+	// once an administrator provides one (Greptile): the re-walk reaches the
+	// newly authorized source instead of the cached miss.
+	requests := 0
+	provider := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	}, newFakeLyricsCache(), time.Now, func(key string) (string, bool) { return "", false }, nil)
+
+	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err != nil {
+		t.Fatalf("first GetLyrics() error = %v, want nil", err)
+	}
+	firstRound := requests
+
+	authorized := newLyricsProviderWithDeps(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		if strings.Contains(request.URL, "lyrics-api.boidu.dev") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Word\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">authorized line</span></p></tt>"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	}, provider.cache, time.Now, func(key string) (string, bool) {
+		if key == "betterLyricsApiKey" {
+			return "secret", true
+		}
+		return "", false
+	}, nil)
+
+	result, err := authorized.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatalf("re-authorized GetLyrics() error = %v, want nil", err)
+	}
+	assertLyricsSource(t, result.Source, "Better Lyrics", "ttml")
+	if requests <= firstRound {
+		t.Fatalf("requests = %d (first round %d), want the re-authorized lookup to hit the providers again", requests, firstRound)
 	}
 }

@@ -40,7 +40,9 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// HTTP 5xx) must stay degraded so sweep coverage cannot mark the
 		// source done while minting is actually down (Codex).
 		if errors.Is(err, errMusixmatchTokenChallenge) {
-			return nil, lookupHealthy, nil
+			// The challenge answer can clear itself next lookup; skip quietly
+			// without letting the walkers persist it as a miss (Greptile).
+			return nil, lookupUncertain, nil
 		}
 		return nil, lookupDegraded, err
 	}
@@ -57,9 +59,11 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	case 200:
 		// pass to the envelope decode
 	case 401:
-		// The cached token went stale: drop it and try one fresh mint next lookup.
+		// The cached token went stale: drop it and try one fresh mint next
+		// lookup. A temporary skip must not persist as a clean miss, or this
+		// source stays suppressed when its token simply aged out (Greptile).
 		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-		return nil, lookupHealthy, nil
+		return nil, lookupUncertain, nil
 	case 404:
 		return nil, lookupHealthy, nil
 	case 429:
@@ -82,9 +86,9 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	if musixmatchTokenRejected(searchEnvelope.Message.Header) {
 		// Musixmatch sometimes reports the rejected token only in the JSON
 		// envelope; drop it so the next lookup remints instead of missing for up
-		// to ten days.
+		// to ten days. A temporary skip must not persist as a missed song.
 		_ = p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-		return nil, lookupHealthy, nil
+		return nil, lookupUncertain, nil
 	}
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch track.search", searchEnvelope.Message.Header.StatusCode); err != nil {
 		return nil, health, err
@@ -122,7 +126,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 	}
 	if musixmatchTokenRejected(macroEnvelope.Message.Header) {
 		p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-		return nil, lookupHealthy, nil
+		return nil, lookupUncertain, nil
 	}
 	if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro.subtitles.get", macroEnvelope.Message.Header.StatusCode); err != nil {
 		return nil, health, err
@@ -132,7 +136,7 @@ func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, 
 		// envelope still says HTTP 200 (Codex: stale tokens must be dropped).
 		if musixmatchTokenRejected(macro.Header) {
 			p.cache.SetWithTTL(musixmatchTokenKey, []byte(""), 1)
-			return nil, lookupHealthy, nil
+			return nil, lookupUncertain, nil
 		}
 		if health, err := p.musixmatchEnvelopeStatusFailure("Musixmatch macro payload", macro.Header.StatusCode); err != nil {
 			return nil, health, err
@@ -215,6 +219,13 @@ func (p *lyricsProvider) musixmatchToken(deadline time.Time) (string, error) {
 	}
 	if response.StatusCode == 401 {
 		return "", errMusixmatchTokenChallenge
+	}
+	if response.StatusCode == 429 {
+		// Rate-limited minting must cool the provider down; hammering token.get
+		// while it throttles only extends the block (Greptile).
+		retryAfter := retryAfterDuration(response.Headers, p.now())
+		p.rememberCooldown(sourceGlobalCooldownKey("musixmatch"), retryAfter)
+		return "", rateLimitResponseError("Musixmatch token", response, retryAfter)
 	}
 	if response.StatusCode != 200 && response.StatusCode != 201 {
 		return "", providerResponseError("Musixmatch token", response)

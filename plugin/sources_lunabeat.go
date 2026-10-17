@@ -40,12 +40,13 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		return nil, lookupDegraded, err
 	}
 
-	wanted := normalizeLunaBeatTitle(title, artist)
+	wantedTitle := normalizeLunaBeatTitle(title, "")
+	wantedArtist := normalizeLunaBeatTitle(strings.TrimSpace(artist), "")
 	var entry lunaBeatSong
 	found := false
 	bestAlbum := false
 	for _, candidate := range songs.Songs {
-		if normalizeLunaBeatTitle(candidate.Title, strings.Join(candidate.Artists, ", ")) != wanted {
+		if !lunaBeatRowMatches(candidate, wantedTitle, wantedArtist) {
 			continue
 		}
 		albumMatch := strings.TrimSpace(track.Album) != "" &&
@@ -154,6 +155,29 @@ type lunaBeatSong struct {
 	Artists []string `json:"artists"`
 	Album   string   `json:"album"`
 	Path    string   `json:"path"`
+}
+
+// lunaBeatRowMatches compares the collapsed title and the artist aliases
+// individually: the hub index lists several alias names for one artist
+// (赵雷/趙雷/Lei Zhao), so joining them would never match a track tagged with a
+// single alias (Greptile). Multi-artist tracks still match when one catalog
+// alias appears inside the track's artist string.
+func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, wantedArtist string) bool {
+	if normalizeLunaBeatTitle(candidate.Title, "") != wantedTitle {
+		return false
+	}
+	if len(candidate.Artists) == 0 {
+		return wantedArtist == ""
+	}
+	for _, alias := range candidate.Artists {
+		rowArtist := normalizeLunaBeatTitle(strings.TrimSpace(alias), "")
+		if rowArtist == wantedArtist ||
+			(rowArtist != "" && strings.Contains(wantedArtist, rowArtist)) ||
+			(wantedArtist != "" && strings.Contains(rowArtist, wantedArtist)) {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeLunaBeatTitle folds NFKC-ish differences down: lowercase, strip all

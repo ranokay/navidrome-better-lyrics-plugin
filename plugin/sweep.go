@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -93,14 +94,15 @@ func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []lyricsSou
 	return fmt.Sprintf("%s:cred:%s", sweepDoneMarkerKey(track, order), p.lyricsCredentialsFingerprint())
 }
 
-// cacheTTLForCoveredCandidate maps a covered candidate to its per-source cache
-// TTL so a done marker can only outlive the results it stands for as long as
-// the shortest of those results does.
+// cacheTTLForCoveredCandidate maps a covered entry to the TTL it bounds the
+// done marker by: positive candidates use their per-source TTL; a persisted
+// miss uses its one-hour retry window, so a marker cannot outlive the fresh
+// answers it stands for (Greptile).
 func cacheTTLForCoveredCandidate(candidate lyricsCandidate) int64 {
-	if !candidate.present() {
-		return 0
+	if candidate.present() {
+		return sourceCacheTTLSeconds(candidate.quality)
 	}
-	return sourceCacheTTLSeconds(candidate.quality)
+	return unsyncedLyricsCacheTTLSeconds
 }
 
 // runSweepSources walks the sources for one track, optionally restricted to the
@@ -194,8 +196,16 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 			deferredIDs = append(deferredIDs, source.ID)
 			continue
 		}
-		candidates, _, err := source.Fetch(p, track, deadline)
+		candidates, fetchHealth, err := source.Fetch(p, track, deadline)
 		if err != nil {
+			if errors.Is(err, errLyricsLookupBudgetExhausted) {
+				// The search finished against the budget and the lyrics hop
+				// could not start: this source belongs in the continuation,
+				// not in the failure count (Greptile).
+				deferred++
+				deferredIDs = append(deferredIDs, source.ID)
+				continue
+			}
 			failed++
 			if isGlobalRateLimitError(err) {
 				// Preserve the observed host cooldown in memory too: a KV write
@@ -204,6 +214,13 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 					localCold[hostName] = true
 				}
 			}
+			continue
+		}
+		if fetchHealth == lookupUncertain && len(candidates) == 0 {
+			// A temporary skip (token rejection) is neither covered work nor a
+			// miss: the next sweep can get a fresh token (Greptile).
+			cooldownSkipped++
+			skipped++
 			continue
 		}
 		storedAny := false
@@ -240,6 +257,11 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 				continue
 			}
 			missed++
+			// The miss entry expires within the hour, so it also bounds the
+			// marker's re-check window (Greptile).
+			if unsyncedLyricsCacheTTLSeconds < coverageTTL {
+				coverageTTL = unsyncedLyricsCacheTTLSeconds
+			}
 		}
 	}
 	// For a continuation pass, the sources outside the deferred subset must

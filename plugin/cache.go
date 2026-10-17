@@ -138,6 +138,7 @@ type cachedLyricsEnvelope struct {
 	Quality       lyricTimingQuality       `json:"quality"`
 	Response      lyrics.GetLyricsResponse `json:"response"`
 	SweepComplete bool                     `json:"sweepComplete,omitempty"`
+	Credentials   string                   `json:"credentials,omitempty"`
 }
 
 // winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.
@@ -315,6 +316,11 @@ func (p *lyricsProvider) readCachedWinner(track lyrics.TrackInfo, order []lyrics
 		logCacheDebug(fmt.Sprintf("lyrics cache entry decode failed: %v", err))
 		return lyricsCandidate{}, false, false
 	}
+	if envelope.Credentials != p.lyricsCredentialsFingerprint() {
+		// Winner coverage recorded under different credentials does not
+		// authorise the current lookup: re-adding a key must re-walk (Greptile).
+		return lyricsCandidate{}, false, false
+	}
 	return lyricsCandidate{response: envelope.Response, quality: envelope.Quality}, true, envelope.SweepComplete
 }
 
@@ -327,7 +333,12 @@ func (p *lyricsProvider) cacheWinner(track lyrics.TrackInfo, order []lyricsSourc
 	if !ok {
 		return
 	}
-	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.quality, Response: candidate.response, SweepComplete: sweepComplete})
+	value, err := json.Marshal(cachedLyricsEnvelope{
+		Quality:       candidate.quality,
+		Response:      candidate.response,
+		SweepComplete: sweepComplete,
+		Credentials:   p.lyricsCredentialsFingerprint(),
+	})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return
@@ -340,7 +351,7 @@ func (p *lyricsProvider) cacheNegativeWinner(track lyrics.TrackInfo, order []lyr
 	if !ok {
 		return
 	}
-	value, err := json.Marshal(cachedLyricsEnvelope{SweepComplete: sweepComplete})
+	value, err := json.Marshal(cachedLyricsEnvelope{SweepComplete: sweepComplete, Credentials: p.lyricsCredentialsFingerprint()})
 	if err != nil {
 		logCacheDebug(fmt.Sprintf("lyrics cache encode failed: %v", err))
 		return

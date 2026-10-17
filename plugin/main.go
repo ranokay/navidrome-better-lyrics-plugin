@@ -269,9 +269,15 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 			best = preferLyricsCandidate(best, candidate)
 		}
 		if !foundCandidate {
-			// Persist healthy clean misses so the sweep and later lookups can
-			// skip the refetch (Codex).
-			p.cacheSourceMiss(track, source.ID)
+			if sourceHealth == lookupHealthy {
+				// Persist healthy clean misses so the sweep and later lookups
+				// can skip the refetch (Codex).
+				p.cacheSourceMiss(track, source.ID)
+			} else if sourceHealth == lookupUncertain {
+				// A temporary skip (token rejection) is not covered work: the
+				// next lookup remints and retries (Greptile).
+				health = health.merge(lookupUncertain)
+			}
 		}
 		walkedTotal++
 		if best.quality == timingSyllable {
