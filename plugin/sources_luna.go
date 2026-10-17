@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -242,9 +241,9 @@ func lunaSearchURL(track lyrics.TrackInfo, now time.Time) (string, bool) {
 }
 
 func randomLunaDeviceID(now time.Time) string {
-	raw := make([]byte, 10, 20)
-	_, _ = rand.Read(raw)
-	return fmt.Sprintf("%x%04x", raw, uint16(now.UnixNano()))
+	// A 20-hex-digit device id with the millisecond timestamp appended, as the
+	// Android client ships it.
+	return randomHex(10) + fmt.Sprintf("%04x", uint16(now.UnixNano()))
 }
 
 func lunaSearchHeaders() map[string]string {

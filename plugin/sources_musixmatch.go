@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -315,9 +313,7 @@ func musixmatchHeaders() map[string]string {
 }
 
 func randomMusixmatchNonce() string {
-	raw := make([]byte, 16)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
+	return randomHex(16)
 }
 
 func musixmatchSearchURL(track lyrics.TrackInfo, token string) (string, bool) {
