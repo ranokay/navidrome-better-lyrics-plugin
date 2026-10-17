@@ -8,6 +8,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestLyricsPlusCandidates_WordTimingFromLiveFixture(t *testing.T) {
@@ -36,9 +37,9 @@ func TestLyricsPlusCandidates_WordTimingFromLiveFixture(t *testing.T) {
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want one enhanced candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "LyricsPlus", "elrc")
-	if candidates[0].quality != timingWord {
-		t.Fatalf("quality = %v, want the apple word timing from the syllabus", candidates[0].quality)
+	assertLyricsSource(t, candidates[0].Response.Source, "LyricsPlus", "elrc")
+	if candidates[0].Quality != lyric.TimingWord {
+		t.Fatalf("quality = %v, want the apple word timing from the syllabus", candidates[0].Quality)
 	}
 
 	// The payload's provenance must read from the probe sources.

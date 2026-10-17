@@ -7,6 +7,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestLunaBeatCandidates_TTMLFromFile(t *testing.T) {
@@ -33,10 +34,10 @@ func TestLunaBeatCandidates_TTMLFromFile(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality < timingWord {
+	if len(candidates) != 1 || candidates[0].Quality < lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "LunaBeat", "ttml")
+	assertLyricsSource(t, candidates[0].Response.Source, "LunaBeat", "ttml")
 }
 
 func TestLunaBeatCandidates_SecondLookupUsesCachedIndex(t *testing.T) {

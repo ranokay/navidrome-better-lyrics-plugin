@@ -7,6 +7,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const neteaseSearchBody = `{"result":{"songs":[{"id":17822787,"name":"Live Forever","ar":[{"name":"Oasis"}],"dt":280000}]}}`
@@ -53,12 +54,12 @@ func TestNetEaseCandidates_WordsFromYRC(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingWord {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "NetEase", "elrc")
-	if !strings.Contains(candidates[0].response.Lyrics[0].Text, "<00:10.20>Hey") {
-		t.Fatalf("text = %q, want word markers", candidates[0].response.Lyrics[0].Text)
+	assertLyricsSource(t, candidates[0].Response.Source, "NetEase", "elrc")
+	if !strings.Contains(candidates[0].Response.Lyrics[0].Text, "<00:10.20>Hey") {
+		t.Fatalf("text = %q, want word markers", candidates[0].Response.Lyrics[0].Text)
 	}
 }
 
@@ -80,11 +81,11 @@ func TestNetEaseCandidates_StripsRichJsonCreditLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchNetEaseLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want line candidate", candidates)
 	}
-	if strings.Contains(candidates[0].response.Lyrics[0].Text, `"t":0`) {
-		t.Fatalf("text = %q, want JSON credit lines stripped", candidates[0].response.Lyrics[0].Text)
+	if strings.Contains(candidates[0].Response.Lyrics[0].Text, `"t":0`) {
+		t.Fatalf("text = %q, want JSON credit lines stripped", candidates[0].Response.Lyrics[0].Text)
 	}
 }
 
@@ -128,10 +129,10 @@ func TestLunaCandidates_WordsFromPlainKRC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchLunaLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingWord {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Soda (Luna)", "elrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Soda (Luna)", "elrc")
 }
 
 func TestLunaCandidates_LineLRCWithoutWordData(t *testing.T) {
@@ -154,7 +155,7 @@ func TestLunaCandidates_LineLRCWithoutWordData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchLunaLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want one line candidate", candidates)
 	}
 }
@@ -180,10 +181,10 @@ func TestLyricifyCandidates_ISRCResolveThenFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchLyricifyLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want one line candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Lyricify", "elrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Lyricify", "elrc")
 }
 
 func TestLyricifyCandidates_MissingIsrcIsForbidden(t *testing.T) {
@@ -262,7 +263,7 @@ func TestLunaCandidates_QuotedTrackIDs(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want one line candidate sourced from the quoted id", candidates)
 	}
 	if !strings.Contains(detailRequest, "track_id=7425699317225293865") {
@@ -428,7 +429,7 @@ func TestLunaCandidates_UnknownTypeReturnsPlainCandidate(t *testing.T) {
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want the usable payload returned as a candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Soda (Luna)", "plain")
+	assertLyricsSource(t, candidates[0].Response.Source, "Soda (Luna)", "plain")
 }
 
 func TestLyricifyCandidates_DoNotAskForGzip(t *testing.T) {
@@ -473,8 +474,8 @@ func TestLyricifyCandidates_WordOutputLabelsAsElrc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchLyricifyLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingWord {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Lyricify", "elrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Lyricify", "elrc")
 }

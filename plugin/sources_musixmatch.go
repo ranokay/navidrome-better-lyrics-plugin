@@ -12,6 +12,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const musixmatchEndpoint = "https://apic.musixmatch.com/ws/1.1"
@@ -30,7 +31,7 @@ const musixmatchProviderName = "Musixmatch"
 // API: mint (or reuse a configured) anonymous user token, search the track by
 // duration drift, then fetch the richest usable payload (word richsync, line
 // subtitles, or plain lyrics).
-func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchMusixmatchLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	token, err := p.musixmatchToken(deadline)
 	if err != nil {
 		// A mint challenge means this lookup skips Musixmatch quietly and the
@@ -195,13 +196,13 @@ func musixmatchTokenRejected(header struct {
 
 // musixmatchCandidate ranks the available payloads: richsync (word) before LRC
 // subtitles (line) before plain lyrics.
-func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCandidate, lookupHealth, error) {
+func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyric.Candidate, lookupHealth, error) {
 	var richsyncParseErr error
 	if richsyncBody := macroCalls["track.richsync.get"].Body.RichsyncBody; strings.TrimSpace(richsyncBody) != "" {
-		if lines, err := parseRichsync(richsyncBody); err == nil && len(lines) > 0 {
-			text := lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}
-			if candidate := newLyricsCandidate(text, musixmatchProviderName, "elrc"); candidate.present() {
-				return []lyricsCandidate{candidate}, lookupHealthy, nil
+		if lines, err := lyric.ParseRichsync(richsyncBody); err == nil && len(lines) > 0 {
+			text := lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}
+			if candidate := lyric.NewCandidate(text, musixmatchProviderName, "elrc"); candidate.Present() {
+				return []lyric.Candidate{candidate}, lookupHealthy, nil
 			}
 		} else {
 			richsyncParseErr = err
@@ -211,15 +212,15 @@ func musixmatchCandidate(macroCalls map[string]musixmatchMacroBody) ([]lyricsCan
 		// Restricted or unavailable subtitles arrive with an empty body;
 		// serving them would cache a blank lyric ahead of usable fallbacks.
 		if body := strings.TrimSpace(subtitles[0].SubtitleBody); body != "" {
-			if candidate := newLyricsCandidate(lyrics.LyricsText{Text: body}, musixmatchProviderName, "lrc"); candidate.present() {
-				return []lyricsCandidate{candidate}, lookupHealthy, nil
+			if candidate := lyric.NewCandidate(lyrics.LyricsText{Text: body}, musixmatchProviderName, "lrc"); candidate.Present() {
+				return []lyric.Candidate{candidate}, lookupHealthy, nil
 			}
 		}
 	}
 	if plainLyrics := macroCalls["track.lyrics.get"].Body.LyricsBody; strings.TrimSpace(plainLyrics) != "" {
 		text := lyrics.LyricsText{Text: plainLyrics}
-		if candidate := newLyricsCandidate(text, musixmatchProviderName, "plain"); candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		if candidate := lyric.NewCandidate(text, musixmatchProviderName, "plain"); candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 	}
 	if richsyncParseErr != nil {
@@ -318,7 +319,7 @@ func randomMusixmatchNonce() string {
 
 func musixmatchSearchURL(track lyrics.TrackInfo, token string) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}
@@ -357,7 +358,7 @@ func musixmatchMacroURL(trackID, token string) (string, bool) {
 // pickMusixmatchTrack selects the duration-tightest candidate within 2 s.
 func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackInfo) (int64, bool) {
 	target := int64(math.Round(float64(track.Duration)))
-	titleTokens := normalizedLyricTokens(track.Title)
+	titleTokens := lyric.NormalizedTokens(track.Title)
 	var best int64
 	bestDelta := int64(math.MaxInt64)
 	found := false
@@ -368,10 +369,10 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 		}
 		// The fuzzy track.search rows only qualify when their identity
 		// matches; duration then ranks the qualifying rows.
-		if !lyricTokensMatch(normalizedLyricTokens(candidate.Track.TrackName), titleTokens) {
+		if !lyric.TokensMatch(lyric.NormalizedTokens(candidate.Track.TrackName), titleTokens) {
 			continue
 		}
-		if !musixmatchArtistsMatch(candidate.Track.ArtistName, trackArtist(track)) {
+		if !musixmatchArtistsMatch(candidate.Track.ArtistName, lyric.TrackArtist(track)) {
 			continue
 		}
 		if track.Duration <= 0 {
@@ -398,7 +399,7 @@ func pickMusixmatchTrack(candidates []musixmatchTrackEntry, track lyrics.TrackIn
 // musixmatchArtistsMatch accepts the row when any collaborating artist name
 // matches the requested artist completely.
 func musixmatchArtistsMatch(artistName, wanted string) bool {
-	return artistTokensMatch(artistName, wanted)
+	return lyric.ArtistMatch(artistName, wanted)
 }
 
 // errMusixmatchTokenChallenge marks the anti-bot captcha/rejection the desktop

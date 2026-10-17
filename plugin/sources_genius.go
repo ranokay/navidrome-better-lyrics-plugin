@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -31,9 +32,9 @@ var (
 // from Genius: a keyless metadata search, then a scrape of the matched song
 // page's lyric containers. Section tags ([Verse 1] and friends) stay because
 // they are part of the published lyric layout.
-func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -83,11 +84,11 @@ func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	if strings.TrimSpace(text) == "" {
 		return nil, lookupHealthy, nil
 	}
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, geniusProviderName, "plain")
-	if !candidate.present() {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, geniusProviderName, "plain")
+	if !candidate.Present() {
 		return nil, lookupHealthy, nil
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	return []lyric.Candidate{candidate}, lookupHealthy, nil
 }
 
 type geniusSearchEnvelope struct {
@@ -113,7 +114,7 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return "", err
 	}
-	titleTokens := normalizedLyricTokens(track.Title)
+	titleTokens := lyric.NormalizedTokens(track.Title)
 	for _, hit := range envelope.Response.Hits {
 		if hit.Type != "song" {
 			continue
@@ -121,11 +122,11 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 		if hit.Result.URL == "" || !strings.HasPrefix(hit.Result.URL, "https://genius.com/") {
 			continue
 		}
-		if !lyricTokensMatch(normalizedLyricTokens(hit.Result.TitleWithFeatured), titleTokens) &&
-			!lyricTokensMatch(normalizedLyricTokens(hit.Result.Title), titleTokens) {
+		if !lyric.TokensMatch(lyric.NormalizedTokens(hit.Result.TitleWithFeatured), titleTokens) &&
+			!lyric.TokensMatch(lyric.NormalizedTokens(hit.Result.Title), titleTokens) {
 			continue
 		}
-		if !geniusArtistsMatch(hit.Result.ArtistNames, trackArtist(track)) {
+		if !geniusArtistsMatch(hit.Result.ArtistNames, lyric.TrackArtist(track)) {
 			continue
 		}
 		return hit.Result.URL, nil
@@ -136,7 +137,7 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 // geniusArtistsMatch accepts the request when any returned artist name matches
 // the track artist completely, with collaboration splitting on both sides.
 func geniusArtistsMatch(returned, wanted string) bool {
-	return artistTokensMatch(returned, wanted)
+	return lyric.ArtistMatch(returned, wanted)
 }
 
 func geniusPageHeaders() map[string]string {

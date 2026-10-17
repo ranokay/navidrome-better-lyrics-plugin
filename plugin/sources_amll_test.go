@@ -8,6 +8,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestAMLLPickFailsClosedWithoutTitleTokens(t *testing.T) {
@@ -66,10 +67,10 @@ func TestAMLLCandidates_TTMLFromSearchAndFetch(t *testing.T) {
 		t.Fatalf("candidates = %#v, want one", candidates)
 	}
 	candidate := candidates[0]
-	if candidate.quality == timingUnsynced {
-		t.Fatalf("quality = %v, want TTML-graded timing (fixture is word-timed)", candidate.quality)
+	if candidate.Quality == lyric.TimingUnsynced {
+		t.Fatalf("quality = %v, want TTML-graded timing (fixture is word-timed)", candidate.Quality)
 	}
-	assertLyricsSource(t, candidate.response.Source, "AMLL", "ttml")
+	assertLyricsSource(t, candidate.Response.Source, "AMLL", "ttml")
 	if len(requests) != 2 {
 		t.Fatalf("request count = %d, want search then fetch", len(requests))
 	}

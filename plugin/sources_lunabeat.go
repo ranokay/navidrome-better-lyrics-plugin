@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const lunaBeatBase = "https://2755337087.github.io/ttml-hub"
@@ -22,9 +23,9 @@ const (
 // fetchLunaBeatLyricsCandidates resolves Apple-style TTML from the LunaBeat
 // community hub: a revision-gated songs index (cached gzipped in the KV store)
 // plus one TTML fetch for the matched file.
-func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -83,14 +84,14 @@ func fetchLunaBeatLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 	if text == "" {
 		return nil, lookupHealthy, nil
 	}
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "LunaBeat", "ttml")
-	if !candidate.present() {
-		if emptyLyricsDocument(text, "ttml") {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "LunaBeat", "ttml")
+	if !candidate.Present() {
+		if lyric.EmptyDocument(text, "ttml") {
 			return nil, lookupHealthy, nil
 		}
 		return nil, lookupDegraded, fmt.Errorf("LunaBeat lyrics returned malformed TTML")
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	return []lyric.Candidate{candidate}, lookupHealthy, nil
 }
 
 // readLunaBeatIndex returns the cached songs index when the live manifest revision
@@ -172,7 +173,7 @@ func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, trackArtist string)
 	}
 	wanted := lunaBeatArtistNames(trackArtist)
 	for _, alias := range candidate.Artists {
-		rowArtist := strings.ToLower(onlyLettersAndDigits(strings.TrimSpace(alias)))
+		rowArtist := strings.ToLower(lyric.OnlyLettersAndDigits(strings.TrimSpace(alias)))
 		if rowArtist == "" {
 			continue
 		}
@@ -192,7 +193,7 @@ func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, trackArtist string)
 // tracks can alias-match hub rows.
 func lunaBeatArtistNames(trackArtist string) []string {
 	names := make([]string, 0, 3)
-	whole := strings.ToLower(onlyLettersAndDigits(strings.TrimSpace(trackArtist)))
+	whole := strings.ToLower(lyric.OnlyLettersAndDigits(strings.TrimSpace(trackArtist)))
 	if whole != "" {
 		names = append(names, whole)
 	}
@@ -203,7 +204,7 @@ func lunaBeatArtistNames(trackArtist string) []string {
 		}
 		return false
 	}) {
-		if collapsed := strings.ToLower(onlyLettersAndDigits(strings.TrimSpace(raw))); collapsed != "" && collapsed != whole {
+		if collapsed := strings.ToLower(lyric.OnlyLettersAndDigits(strings.TrimSpace(raw))); collapsed != "" && collapsed != whole {
 			names = append(names, collapsed)
 		}
 	}
@@ -213,7 +214,7 @@ func lunaBeatArtistNames(trackArtist string) []string {
 // normalizeLunaBeatTitle folds NFKC-ish differences down: lowercase, strip all
 // whitespace and punctuation. Good enough to match the hub's index rows.
 func normalizeLunaBeatTitle(title, artist string) string {
-	return strings.ToLower(onlyLettersAndDigits(title)) + "|" + strings.ToLower(onlyLettersAndDigits(artist))
+	return strings.ToLower(lyric.OnlyLettersAndDigits(title)) + "|" + strings.ToLower(lyric.OnlyLettersAndDigits(artist))
 }
 
 func gzipString(value []byte) []byte {

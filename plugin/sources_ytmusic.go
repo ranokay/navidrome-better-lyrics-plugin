@@ -11,6 +11,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -36,9 +37,9 @@ var (
 // official YouTube Music "Lyrics" tab for the best duration-tight video:
 // search, then the watch-next playlist id of the matched song, then the
 // description shelf that carries the lyric body.
-func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -128,11 +129,11 @@ func fetchYTMusicLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 	if strings.TrimSpace(text) == "" {
 		return nil, lookupHealthy, nil
 	}
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, ytmusicProviderName, "plain")
-	if !candidate.present() {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, ytmusicProviderName, "plain")
+	if !candidate.Present() {
 		return nil, lookupHealthy, nil
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	return []lyric.Candidate{candidate}, lookupHealthy, nil
 }
 
 // checkInnertubeOK maps the endpoint status codes: misses leave quietly, rate
@@ -196,7 +197,7 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 	if track.Duration > 0 {
 		target = int64(float64(track.Duration)*1000.0 + 0.5)
 	}
-	titleTokens := normalizedLyricTokens(track.Title)
+	titleTokens := lyric.NormalizedTokens(track.Title)
 	hits, err := ytmusicSearchHits(body)
 	if err != nil {
 		return "", err
@@ -205,10 +206,10 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 		if hit.videoID == "" || hit.durationMs <= 0 {
 			continue
 		}
-		if !lyricTokensMatch(normalizedLyricTokens(hit.title), titleTokens) {
+		if !lyric.TokensMatch(lyric.NormalizedTokens(hit.title), titleTokens) {
 			continue
 		}
-		if !ytmusicArtistsMatch(hit.artists, trackArtist(track)) {
+		if !ytmusicArtistsMatch(hit.artists, lyric.TrackArtist(track)) {
 			continue
 		}
 		if target > 0 {
@@ -225,7 +226,7 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 // ytmusicArtistsMatch accepts the renderer when any listed artist matches the
 // request completely.
 func ytmusicArtistsMatch(artists, wanted string) bool {
-	return artistTokensMatch(strings.ReplaceAll(artists, " • ", " & "), wanted)
+	return lyric.ArtistMatch(strings.ReplaceAll(artists, " • ", " & "), wanted)
 }
 
 // ytmusicSearchHits decodes the payload and collects song renderers in

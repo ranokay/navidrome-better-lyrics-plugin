@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -25,9 +26,9 @@ const (
 // holds the backend priority: Apple Music timing is the syllable-grade store
 // the mirrors back onto. Mirror rotation only proceeds when the primary fails
 // to carry the response; a clean miss is authoritative everywhere.
-func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchLyricsPlusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -142,16 +143,16 @@ type lyricsPlusWord struct {
 // lyricsPlusCandidates flattens the payload into one enhanced-LRC candidate:
 // type Word payloads keep their per-token syllabus; type Line renders line
 // stamps only. The source field is preserved for provenance display.
-func lyricsPlusCandidates(payload lyricsPlusPayload) []lyricsCandidate {
+func lyricsPlusCandidates(payload lyricsPlusPayload) []lyric.Candidate {
 	if len(payload.Lyrics) == 0 {
 		return nil
 	}
-	lines := make([]timedLine, 0, len(payload.Lyrics))
+	lines := make([]lyric.TimedLine, 0, len(payload.Lyrics))
 	for _, row := range payload.Lyrics {
 		if row.Time < 0 || strings.TrimSpace(row.Text) == "" {
 			continue
 		}
-		line := timedLine{
+		line := lyric.TimedLine{
 			StartMs: row.Time,
 			EndMs:   row.Time + row.Duration,
 			Text:    strings.TrimSpace(row.Text),
@@ -163,7 +164,7 @@ func lyricsPlusCandidates(payload lyricsPlusPayload) []lyricsCandidate {
 			if strings.TrimSpace(word.Text) == "" || word.Duration <= 0 {
 				continue
 			}
-			line.Words = append(line.Words, timedWord{
+			line.Words = append(line.Words, lyric.TimedWord{
 				StartMs: word.Time,
 				EndMs:   word.Time + word.Duration,
 				Text:    word.Text,
@@ -174,10 +175,10 @@ func lyricsPlusCandidates(payload lyricsPlusPayload) []lyricsCandidate {
 	if len(lines) == 0 {
 		return nil
 	}
-	text := enhancedLRCFromTimedLines(lines)
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, lyricsPlusProviderName, "elrc")
-	if !candidate.present() {
+	text := lyric.EnhancedLRC(lines)
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, lyricsPlusProviderName, "elrc")
+	if !candidate.Present() {
 		return nil
 	}
-	return []lyricsCandidate{candidate}
+	return []lyric.Candidate{candidate}
 }

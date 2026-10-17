@@ -46,8 +46,8 @@ func TestGeniusChain_ScapesMatchedSong(t *testing.T) {
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want one plain candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Genius", "plain")
-	text := candidates[0].response.Lyrics[0].Text
+	assertLyricsSource(t, candidates[0].Response.Source, "Genius", "plain")
+	text := candidates[0].Response.Lyrics[0].Text
 	if !strings.Contains(text, "A club isn't the best place") {
 		t.Fatalf("text sample = %q, want the lyric body from the page containers", text[0:120])
 	}

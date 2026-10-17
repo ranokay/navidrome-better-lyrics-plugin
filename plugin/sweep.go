@@ -11,6 +11,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -129,9 +130,9 @@ func (p *lyricsProvider) doneMarkerKey(track lyrics.TrackInfo, order []lyricsSou
 // done marker by: positive candidates use their per-source TTL; a persisted
 // miss uses its one-hour retry window, so a marker cannot outlive the fresh
 // answers it stands for.
-func cacheTTLForCoveredCandidate(candidate lyricsCandidate) int64 {
-	if candidate.present() {
-		return sourceCacheTTLSeconds(candidate.quality)
+func cacheTTLForCoveredCandidate(candidate lyric.Candidate) int64 {
+	if candidate.Present() {
+		return sourceCacheTTLSeconds(candidate.Quality)
 	}
 	return unsyncedLyricsCacheTTLSeconds
 }
@@ -145,7 +146,7 @@ func (p *lyricsProvider) runSweepSources(track lyrics.TrackInfo, allowed []strin
 }
 
 func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []lyricsSource) {
-	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
+	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
 		return "ignored (incomplete track metadata)", nil, nil
 	}
 
@@ -262,7 +263,7 @@ func (p *lyricsProvider) runSweepDetailed(track lyrics.TrackInfo, allowed []stri
 		storedAny := false
 		hadCandidates := false
 		for _, candidate := range candidates {
-			if !candidate.present() {
+			if !candidate.Present() {
 				continue
 			}
 			hadCandidates = true

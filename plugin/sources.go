@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 type configLookup func(key string) (string, bool)
@@ -18,7 +19,7 @@ type lyricsSource struct {
 	Display        string
 	Hosts          []string
 	DefaultEnabled bool
-	Fetch          func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error)
+	Fetch          func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error)
 }
 
 // allSources is the full catalog in default config order. Sourced display names match
@@ -56,7 +57,7 @@ func init() {
 	}
 }
 
-var sourceFetches = map[string]func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error){
+var sourceFetches = map[string]func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error){
 	"better-lyrics":         fetchBetterLyricsLyrics,
 	"unison":                fetchUnisonCandidates,
 	"binimum":               fetchBinimumLyricsCandidates,

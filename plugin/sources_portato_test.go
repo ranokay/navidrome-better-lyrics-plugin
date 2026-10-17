@@ -9,6 +9,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const portatoQrcSample = "[0,2380]Shape(0,476) (476,95)of(571,190)\n" +
@@ -38,12 +39,12 @@ func TestPortatoCandidates_WordSyncedElrc(t *testing.T) {
 		t.Fatalf("candidates = %#v, want one", candidates)
 	}
 	candidate := candidates[0]
-	if candidate.quality != timingWord {
-		t.Fatalf("quality = %v, want word", candidate.quality)
+	if candidate.Quality != lyric.TimingWord {
+		t.Fatalf("quality = %v, want word", candidate.Quality)
 	}
-	assertLyricsSource(t, candidate.response.Source, "Better Lyrics Portato", "elrc")
-	if !strings.Contains(candidate.response.Lyrics[0].Text, "[03:48.36]") || !strings.Contains(candidate.response.Lyrics[0].Text, "<00:00.00>Shape") {
-		t.Fatalf("converted text = %q, want enhanced LRC stamps", candidate.response.Lyrics[0].Text)
+	assertLyricsSource(t, candidate.Response.Source, "Better Lyrics Portato", "elrc")
+	if !strings.Contains(candidate.Response.Lyrics[0].Text, "[03:48.36]") || !strings.Contains(candidate.Response.Lyrics[0].Text, "<00:00.00>Shape") {
+		t.Fatalf("converted text = %q, want enhanced LRC stamps", candidate.Response.Lyrics[0].Text)
 	}
 	full, parseErr := url.Parse(requests[0].URL)
 	if parseErr != nil {
@@ -130,7 +131,7 @@ func TestPortatoQRCEnvelopeExtraction(t *testing.T) {
 	if health != lookupHealthy || len(candidates) != 1 {
 		t.Fatalf("result = %#v/%v, want one candidate from the XML envelope", candidates, health)
 	}
-	rendered := candidates[0].response.Lyrics[0].Text
+	rendered := candidates[0].Response.Lyrics[0].Text
 	if strings.Contains(rendered, "&amp;") {
 		t.Fatalf("rendered = %q, want XML entities decoded", rendered)
 	}

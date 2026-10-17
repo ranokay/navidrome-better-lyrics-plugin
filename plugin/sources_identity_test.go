@@ -7,6 +7,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestBinimumRejectsMetadataMismatch(t *testing.T) {
@@ -71,7 +72,7 @@ func TestNetEaseCandidates_RequireMetadataMatch(t *testing.T) {
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want the metadata-matching candidate only (the unrelated duration-only row must be rejected)", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "NetEase", "lrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "NetEase", "lrc")
 
 	provider = newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"result":{"songs":[{"id":111,"name":"Wrong Song","ar":[{"name":"Somebody"}],"dt":340000}]}}`)}, nil
@@ -118,8 +119,8 @@ func TestLunaCandidates_GateMatchesByMetadata(t *testing.T) {
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("result = %#v/%v, want the live-titled Oasis row accepted over the unrelated row", candidates, err)
 	}
-	if candidates[0].quality != timingLine {
-		t.Fatalf("quality = %v, want the timed line from the metadata-matched row", candidates[0].quality)
+	if candidates[0].Quality != lyric.TimingLine {
+		t.Fatalf("quality = %v, want the timed line from the metadata-matched row", candidates[0].Quality)
 	}
 
 	provider = newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -194,7 +195,7 @@ func TestLunaBeatRejectsUnrelatedArtistSubstrings(t *testing.T) {
 	}
 }
 
-func (p *lyricsProvider) fetchLunaBeatLyricsCandidatesProvider(track lyrics.TrackInfo) ([]lyricsCandidate, lookupHealth, error) {
+func (p *lyricsProvider) fetchLunaBeatLyricsCandidatesProvider(track lyrics.TrackInfo) ([]lyric.Candidate, lookupHealth, error) {
 	return fetchLunaBeatLyricsCandidates(p, track, time.Now().Add(stageOneLookupBudget))
 }
 
@@ -379,29 +380,6 @@ func TestAMLLSelectsByIdentityNotOrder(t *testing.T) {
 	}
 }
 
-func TestArtistMatcherRequiresCompleteNames(t *testing.T) {
-	t.Parallel()
-
-	// Prefix tolerance belongs to titles only: "Pink" must not match
-	// "Pink Floyd".
-	if artistTokensMatch("Pink Floyd", "Pink") {
-		t.Fatal("Pink matched Pink Floyd")
-	}
-	if !artistTokensMatch("Pink Floyd", "Pink Floyd") {
-		t.Fatal("exact artist names must match")
-	}
-	// Collaborator splitting still works in both directions.
-	if !artistTokensMatch("Oasis", "Oasis & Someone") {
-		t.Fatal("a listed collaborator must match the plain artist")
-	}
-	if !artistTokensMatch("Simon & Garfunkel", "Simon & Garfunkel") {
-		t.Fatal("identical collaboration lists must match")
-	}
-	if artistTokensMatch("Oasis Worship", "Oasis") {
-		t.Fatal("Oasis matched Oasis Worship")
-	}
-}
-
 func TestBinimumRejectsContainingArtist(t *testing.T) {
 	t.Parallel()
 
@@ -419,26 +397,11 @@ func TestBinimumRejectsContainingArtist(t *testing.T) {
 	}
 }
 
-func TestPunctuatedArtistNamesStillMatch(t *testing.T) {
+func TestAMLLMatchesPunctuatedArtists(t *testing.T) {
 	t.Parallel()
 
-	// Whole-name equality must precede collaborator splitting: AC/DC and
-	// Simon & Garfunkel collapse to single names and matched before the
-	// shared matcher arrived.
-	cases := []struct{ returned, wanted string }{
-		{"AC/DC", "AC/DC"},
-		{"Simon & Garfunkel", "Simon & Garfunkel"},
-		{"Simon & Garfunkel", "Garfunkel"},
-		// Variant punctuation: the whole-name path catches what splitting
-		// would miss.
-		{"ACDC", "AC/DC"},
-	}
-	for _, tc := range cases {
-		if !artistTokensMatch(tc.returned, tc.wanted) {
-			t.Fatalf("artistTokensMatch(%q, %q) = false, want true", tc.returned, tc.wanted)
-		}
-	}
-
+	// Whole-name equality must precede collaborator splitting: AC/DC collapses
+	// to a single name, so the source must still pick the row.
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		switch {
 		case strings.Contains(request.URL, "v1/lyrics/search"):

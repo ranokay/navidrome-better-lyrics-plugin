@@ -13,6 +13,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lifecycle"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -92,7 +93,7 @@ func newLyricsProviderWithDeps(send requestSender, cache lyricsCacheStore, now f
 // retaining plain text as the final fallback.
 func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
 	track := input.Track
-	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
+	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
 		return lyrics.GetLyricsResponse{}, nil
 	}
 
@@ -105,26 +106,26 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 		return lyrics.GetLyricsResponse{}, nil
 	}
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
-		if candidate.present() {
+		if candidate.Present() {
 			if !sweepComplete {
 				// The sweep may have cached a better result after this winner
 				// was written: re-rank before serving.
 				// Ties adopt the per-source preferred candidate,
 				// which respects configured order.
-				if best := p.readBestFromSourceCache(track, sources); best.present() && best.quality >= candidate.quality {
+				if best := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
 					p.cacheWinner(track, sources, best, false)
 					candidate = best
 				}
 				p.maybeEnqueueSweep(track)
 			}
-			return candidate.response, nil
+			return candidate.Response, nil
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
-		if best := p.readBestFromSourceCache(track, sources); best.present() {
+		if best := p.readBestFromSourceCache(track, sources); best.Present() {
 			p.cacheWinner(track, sources, best, false)
 			p.maybeEnqueueSweep(track)
-			return best.response, nil
+			return best.Response, nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -132,21 +133,21 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 		if !sweepComplete {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate.response, nil
+		return candidate.Response, nil
 	}
-	if best := p.readBestFromSourceCache(track, sources); best.present() {
+	if best := p.readBestFromSourceCache(track, sources); best.Present() {
 		p.cacheWinner(track, sources, best, false)
 		p.maybeEnqueueSweep(track)
-		return best.response, nil
+		return best.Response, nil
 	}
 
 	candidate, _, coveredAll, err := p.fetchLyrics(input)
-	if candidate.present() {
+	if candidate.Present() {
 		p.cacheWinner(track, sources, candidate, coveredAll)
 		if !coveredAll {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate.response, nil
+		return candidate.Response, nil
 	}
 	if err == nil {
 		p.cacheNegativeWinner(track, sources, coveredAll)
@@ -161,7 +162,7 @@ func (p *lyricsProvider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyr
 		// request exposes.
 		p.maybeEnqueueSweep(track)
 	}
-	return candidate.response, err
+	return candidate.Response, err
 }
 
 // activeSources resolves the source order for this lookup: the injected test
@@ -178,17 +179,17 @@ func (p *lyricsProvider) activeSources() []lyricsSource {
 // result lands. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
 // are covered by the background sweep (Task 6).
-func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandidate, lookupHealth, bool, error) {
+func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, lookupHealth, bool, error) {
 	track := input.Track
-	if title := strings.TrimSpace(track.Title); title == "" || trackArtist(track) == "" {
-		return lyricsCandidate{}, lookupHealthy, false, nil
+	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
+		return lyric.Candidate{}, lookupHealthy, false, nil
 	}
 
 	sources := p.activeSources()
 	deadline := p.now().Add(stageOneLookupBudget)
 
 	var (
-		best         lyricsCandidate
+		best         lyric.Candidate
 		health       = lookupHealthy
 		lookupErrors []error
 		walked       int
@@ -241,12 +242,12 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 		}
 		foundCandidate := false
 		for _, candidate := range candidates {
-			if !candidate.present() {
+			if !candidate.Present() {
 				continue
 			}
 			foundCandidate = true
 			p.cacheSourceCandidate(track, source.ID, candidate)
-			best = preferLyricsCandidate(best, candidate)
+			best = lyric.Prefer(best, candidate)
 		}
 		coveredThisSource := true
 		if !foundCandidate {
@@ -269,20 +270,20 @@ func (p *lyricsProvider) fetchLyrics(input lyrics.GetLyricsRequest) (lyricsCandi
 		if coveredThisSource {
 			walkedTotal++
 		}
-		if best.quality == timingSyllable {
+		if best.Quality == lyric.TimingSyllable {
 			return best, health, walkedTotal >= implementedTotal, nil
 		}
 	}
 
-	if best.present() {
+	if best.Present() {
 		return best, health, walkedTotal >= implementedTotal, nil
 	}
 	if len(lookupErrors) > 0 {
-		return lyricsCandidate{}, health, false, errors.Join(lookupErrors...)
+		return lyric.Candidate{}, health, false, errors.Join(lookupErrors...)
 	}
 	// A clean all-miss walk with full coverage is real: the negative winner
 	// must record that no sweep needs re-walking the same misses.
-	return lyricsCandidate{}, health, walkedTotal >= implementedTotal, nil
+	return lyric.Candidate{}, health, walkedTotal >= implementedTotal, nil
 }
 
 func coldHostFor(source lyricsSource, coldHosts map[string]bool) string {
@@ -308,16 +309,6 @@ func (p *lyricsProvider) requestTimeoutMilliseconds(deadline time.Time) (int32, 
 		milliseconds = 1
 	}
 	return int32(milliseconds), nil
-}
-
-func sourcedLyricsResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {
-	return lyrics.GetLyricsResponse{
-		Lyrics: []lyrics.LyricsText{text},
-		Source: &lyrics.LyricsSource{
-			Provider: provider,
-			Format:   format,
-		},
-	}
 }
 
 // defaultHeaders is the plugin's common header set. The identifying User-Agent

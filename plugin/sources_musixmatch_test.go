@@ -9,6 +9,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestMusixmatchCandidates_WordRichsync(t *testing.T) {
@@ -47,10 +48,10 @@ func TestMusixmatchCandidates_WordRichsync(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingWord {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Musixmatch", "elrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Musixmatch", "elrc")
 	if minted != 1 {
 		t.Fatalf("token mints = %d, want 1", minted)
 	}
@@ -124,10 +125,10 @@ func TestMusixmatchCandidates_LineSubtitleFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchMusixmatchLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want line candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Musixmatch", "lrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Musixmatch", "lrc")
 }
 
 func TestMusixmatchCandidates_TrackLengthDuration(t *testing.T) {
@@ -148,10 +149,10 @@ func TestMusixmatchCandidates_TrackLengthDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchMusixmatchLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want the line candidate matched via track_length", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Musixmatch", "lrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Musixmatch", "lrc")
 }
 
 func TestMusixmatchMintFailuresStayDegraded(t *testing.T) {
@@ -366,11 +367,11 @@ func TestMusixmatchSkipsEmptySubtitleBodies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchMusixmatchLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingUnsynced {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingUnsynced {
 		t.Fatalf("candidates = %#v, want the plain fallback rather than the empty subtitle", candidates)
 	}
-	if !strings.Contains(candidates[0].response.Lyrics[0].Text, "plain words") {
-		t.Fatalf("text = %q, want the plain fallback served", candidates[0].response.Lyrics[0].Text)
+	if !strings.Contains(candidates[0].Response.Lyrics[0].Text, "plain words") {
+		t.Fatalf("text = %q, want the plain fallback served", candidates[0].Response.Lyrics[0].Text)
 	}
 }
 
@@ -422,8 +423,8 @@ func TestMusixmatchKeepsFallbackWhenMacroFails(t *testing.T) {
 	if err != nil || health != lookupHealthy || len(candidates) != 1 {
 		t.Fatalf("result = %#v/%v/%v, want the subtitles fallback served despite the richsync failure", candidates, health, err)
 	}
-	if !strings.Contains(candidates[0].response.Lyrics[0].Text, "usable line") {
-		t.Fatalf("text = %q, want the subtitles payload", candidates[0].response.Lyrics[0].Text)
+	if !strings.Contains(candidates[0].Response.Lyrics[0].Text, "usable line") {
+		t.Fatalf("text = %q, want the subtitles payload", candidates[0].Response.Lyrics[0].Text)
 	}
 }
 

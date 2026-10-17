@@ -1,26 +1,44 @@
-package main
+package lyric
 
 import (
 	"strings"
 	"unicode"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
 // Metadata identity helpers shared by every source selector: title tokens
 // compare with prefix tolerance, artist names with complete-name semantics.
 
-// normalizedLyricTokens lowercases and keeps only alphanumeric tokens so
+// TrackArtist resolves the artist metadata a lookup search should use: the
+// track artist first, then the individual credit list.
+func TrackArtist(track lyrics.TrackInfo) string {
+	if artist := strings.TrimSpace(track.Artist); artist != "" {
+		return artist
+	}
+
+	artists := make([]string, 0, len(track.Artists))
+	for _, artist := range track.Artists {
+		if name := strings.TrimSpace(artist.Name); name != "" {
+			artists = append(artists, name)
+		}
+	}
+	return strings.Join(artists, ", ")
+}
+
+// NormalizedTokens lowercases and keeps only alphanumeric tokens so
 // metadata comparisons resist punctuation and casing drift.
-func normalizedLyricTokens(value string) []string {
+func NormalizedTokens(value string) []string {
 	return strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
 }
 
-// lyricTokensMatch reports whether one normalized token list is a prefix of the
+// TokensMatch reports whether one normalized token list is a prefix of the
 // other at least one token long: so "Live Forever (Remastered)" matches a
 // request for "Live Forever", while an unrelated same-duration song with a
 // different title/artist never qualifies.
-func lyricTokensMatch(a, b []string) bool {
+func TokensMatch(a, b []string) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return false
 	}
@@ -35,11 +53,11 @@ func lyricTokensMatch(a, b []string) bool {
 	return true
 }
 
-// artistTokensMatch compares artist fields with complete-name semantics: each
+// ArtistMatch compares artist fields with complete-name semantics: each
 // side splits into collaborator names on common separators, and any exact
 // collapsed-name equality matches. Prefix tolerance stays for titles only —
 // it would equate "Pink" and "Pink Floyd".
-func artistTokensMatch(returned, wanted string) bool {
+func ArtistMatch(returned, wanted string) bool {
 	wanted = strings.TrimSpace(wanted)
 	if wanted == "" {
 		return true
@@ -48,7 +66,7 @@ func artistTokensMatch(returned, wanted string) bool {
 	if returned == "" {
 		return false
 	}
-	wantedCollapsed := onlyLettersAndDigits(strings.ToLower(wanted))
+	wantedCollapsed := OnlyLettersAndDigits(strings.ToLower(wanted))
 	// A wanted name that collapses to no alphanumerics ("???") identifies
 	// nothing: matching it would alias every returned artist.
 	if wantedCollapsed == "" {
@@ -57,7 +75,7 @@ func artistTokensMatch(returned, wanted string) bool {
 	// Whole-name equality first: "AC/DC" collapses to one name, while the
 	// collaborator split below would break it into "ac" and "dc" that can
 	// never equal "acdc".
-	if onlyLettersAndDigits(strings.ToLower(returned)) == wantedCollapsed {
+	if OnlyLettersAndDigits(strings.ToLower(returned)) == wantedCollapsed {
 		return true
 	}
 	wantNames := splitArtistNames(wanted)
@@ -83,17 +101,17 @@ func splitArtistNames(value string) []string {
 	}) {
 		lower := strings.ToLower(part)
 		// "feat."/"ft." keep their role words from ever matching a plain name.
-		if cleaned := onlyLettersAndDigits(lower); cleaned != "" {
+		if cleaned := OnlyLettersAndDigits(lower); cleaned != "" {
 			names = append(names, cleaned)
 		}
 	}
 	return names
 }
 
-// onlyLettersAndDigits keeps letters and digits for matching while dropping
+// OnlyLettersAndDigits keeps letters and digits for matching while dropping
 // whitespace and punctuation. It is unicode-aware because the hub index is
 // mostly non-Latin titles (CJK), which ASCII range checks would erase entirely.
-func onlyLettersAndDigits(value string) string {
+func OnlyLettersAndDigits(value string) string {
 	var kept []rune
 	for _, letter := range value {
 		if unicode.IsLetter(letter) || unicode.IsDigit(letter) {

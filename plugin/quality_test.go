@@ -96,33 +96,6 @@ func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) 
 	}
 }
 
-func TestTTMLTimingQuality(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		ttml string
-		want lyricTimingQuality
-	}{
-		{name: "syllable metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><p begin="1"/></tt>`, want: timingSyllable},
-		{name: "word metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Word"><p begin="1"/></tt>`, want: timingWord},
-		{name: "line metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Line"><p begin="1"/></tt>`, want: timingLine},
-		{name: "timed spans without metadata", ttml: `<tt><p begin="1" end="2"><span begin="1" end="2">word</span></p></tt>`, want: timingWord},
-		{name: "ignores timed metadata spans", ttml: `<tt><head><text><span begin="1">translation</span></text></head><body><p begin="1">line</p></body></tt>`, want: timingLine},
-		{name: "timed lines only", ttml: `<tt><p begin="1" end="2">line</p></tt>`, want: timingLine},
-		{name: "untimed text", ttml: `<tt><p>plain</p></tt>`, want: timingUnsynced},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := ttmlTimingQuality(test.ttml); got != test.want {
-				t.Fatalf("ttmlTimingQuality() = %v, want %v", got, test.want)
-			}
-		})
-	}
-}
-
 func TestLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
 	t.Parallel()
 
@@ -202,59 +175,5 @@ func TestLyricsProvider_RejectsUnknownUnisonFormatAfterFallbacks(t *testing.T) {
 	}
 	if requests != 5 {
 		t.Fatalf("GetLyrics() request count = %d, want 5", requests)
-	}
-}
-
-func TestEmptyTTMLDocumentIsNotACandidate(t *testing.T) {
-	t.Parallel()
-
-	empty := newLyricsCandidate(lyrics.LyricsText{Text: "<tt></tt>"}, "Stub", "ttml")
-	if empty.present() {
-		t.Fatal("an empty TTML document must not become a candidate")
-	}
-	if !emptyLyricsDocument("<tt></tt>", "ttml") {
-		t.Fatal("an empty TTML document is a well-formed empty payload")
-	}
-	metadataOnly := newLyricsCandidate(lyrics.LyricsText{Text: `<tt xmlns:itunes="urn:itunes"></tt>`}, "Stub", "ttml")
-	if metadataOnly.present() {
-		t.Fatal("a metadata-only TTML document must not become a candidate")
-	}
-	if emptyLyricsDocument("<tt><broken", "ttml") {
-		t.Fatal("malformed XML is not a well-formed empty payload")
-	}
-}
-
-func TestCDATALyricsCountAsContent(t *testing.T) {
-	t.Parallel()
-
-	// CDATA carries real lyric text: rejecting it would cache a miss for
-	// valid documents.
-	cdata := `<tt xmlns:itunes="urn:itunes"><body><div><p begin="1" end="2"><![CDATA[Rock & Roll]]></p></div></body></tt>`
-	if !lyricsTextHasContent(cdata, "ttml") {
-		t.Fatal("CDATA lyric text must count as servable content")
-	}
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: cdata}, "Stub", "ttml")
-	if !candidate.present() {
-		t.Fatal("a CDATA-bearing document must produce a candidate")
-	}
-	if emptyLyricsDocument(cdata, "ttml") {
-		t.Fatal("a CDATA-bearing document is not an empty document")
-	}
-}
-
-func TestTTMLContentIgnoresMetadataNodes(t *testing.T) {
-	t.Parallel()
-
-	metadataOnly := `<tt xmlns:itunes="urn:itunes"><head><metadata>Song Title Words Here</metadata></head><body></body></tt>`
-	if lyricsTextHasContent(metadataOnly, "ttml") {
-		t.Fatal("metadata-only text must not count as lyric content")
-	}
-	withLyrics := `<tt xmlns:itunes="urn:itunes"><head><metadata>Song Title</metadata></head><body><p begin="1">real line</p></body></tt>`
-	if !lyricsTextHasContent(withLyrics, "ttml") {
-		t.Fatal("body text must count as lyric content")
-	}
-	bodyless := `<tt>bare line</tt>`
-	if !lyricsTextHasContent(bodyless, "ttml") {
-		t.Fatal("documents without a body fall back to any character data")
 	}
 }

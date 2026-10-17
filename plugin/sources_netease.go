@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const neteaseEndpoint = "https://music.163.com"
@@ -16,9 +17,9 @@ const neteaseEndpoint = "https://music.163.com"
 // fetchNetEaseLyricsCandidates resolves lyrics from NetEase Cloud Music's plain
 // (unauthenticated) JSON API: form-POST search, then a lyric fetch. The word-synced
 // YRC payload is preferred, then line LRC, then nothing (translations are skipped).
-func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	form := url.Values{
-		"s":      {strings.TrimSpace(track.Title) + " " + trackArtist(track)},
+		"s":      {strings.TrimSpace(track.Title) + " " + lyric.TrackArtist(track)},
 		"type":   {"1"},
 		"offset": {"0"},
 		"limit":  {"10"},
@@ -86,19 +87,19 @@ func fetchNetEaseLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 
 	var yrcParseErr error
 	if yrc := strings.TrimSpace(lyricEnvelope.YRC.Lyric); yrc != "" {
-		lines, parseErr := parseKFamilyLyrics(wordSyncYRC, stripNetEaseCreditLines(yrc))
+		lines, parseErr := lyric.ParseKFamily(lyric.YRC, stripNetEaseCreditLines(yrc))
 		if parseErr == nil && len(lines) > 0 {
-			candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "NetEase", "elrc")
-			if candidate.present() {
-				return []lyricsCandidate{candidate}, lookupHealthy, nil
+			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "NetEase", "elrc")
+			if candidate.Present() {
+				return []lyric.Candidate{candidate}, lookupHealthy, nil
 			}
 		}
 		yrcParseErr = parseErr
 	}
 	if lrc := strings.TrimSpace(lyricEnvelope.LRC.Lyric); lrc != "" {
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc")
-		if candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc")
+		if candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 	}
 	if yrcParseErr != nil {
@@ -158,7 +159,7 @@ func neteaseEnvelopeStatusFailure(p *lyricsProvider, code int) (lookupHealth, er
 
 func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
-	title := normalizedLyricTokens(track.Title)
+	title := lyric.NormalizedTokens(track.Title)
 	for _, song := range songs {
 		if song.ID <= 0 {
 			continue
@@ -166,10 +167,10 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 		// Require a normalized metadata match before the duration gate: the
 		// fuzzy cloud search can return unrelated rows with similar durations,
 		// and their lyrics would then outrank correct candidates.
-		if !lyricTokensMatch(normalizedLyricTokens(song.Name), title) {
+		if !lyric.TokensMatch(lyric.NormalizedTokens(song.Name), title) {
 			continue
 		}
-		if !neteaseArtistsMatch(song.Artists, trackArtist(track)) {
+		if !neteaseArtistsMatch(song.Artists, lyric.TrackArtist(track)) {
 			continue
 		}
 		if track.Duration > 0 {
@@ -193,7 +194,7 @@ func neteaseArtistsMatch(song []neteaseArtist, wanted string) bool {
 		return true
 	}
 	for _, candidateArtist := range song {
-		if artistTokensMatch(candidateArtist.Name, wanted) {
+		if lyric.ArtistMatch(candidateArtist.Name, wanted) {
 			return true
 		}
 	}

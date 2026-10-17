@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const kugouEndpoint = "https://lyrics-api.boidu.dev/kugou/getLyrics"
@@ -18,7 +19,7 @@ type providerAPIResponse struct {
 
 // fetchKugouLyricsCandidates queries the Better Lyrics Kugou endpoint for a
 // line-synchronized LRC fallback.
-func fetchKugouLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchKugouLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	kugouURL, ok := kugouRequestURL(track)
 	if !ok {
 		return nil, lookupHealthy, nil
@@ -30,7 +31,7 @@ func fetchKugouLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadl
 	if strings.TrimSpace(text.Text) == "" {
 		return nil, lookupHealthy, nil
 	}
-	return []lyricsCandidate{newLyricsCandidate(text, "Better Lyrics Legato", "lrc")}, lookupHealthy, nil
+	return []lyric.Candidate{lyric.NewCandidate(text, "Better Lyrics Legato", "lrc")}, lookupHealthy, nil
 }
 
 func (p *lyricsProvider) fetchKugouLyrics(requestURL string, headers map[string]string, deadline time.Time) (lyrics.LyricsText, error) {
@@ -64,7 +65,7 @@ func (p *lyricsProvider) fetchKugouLyrics(requestURL string, headers map[string]
 
 func kugouRequestURL(track lyrics.TrackInfo) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func stubFetchedCandidate(id, provider, format, text string) lyricsSource {
@@ -21,9 +22,9 @@ func stubFetchedCandidate(id, provider, format, text string) lyricsSource {
 	}
 }
 
-func fetchFixedCandidate(provider, format, text string) func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
-	return func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
-		return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: text}, provider, format)}, lookupHealthy, nil
+func fetchFixedCandidate(provider, format, text string) func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error) {
+	return func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error) {
+		return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: text}, provider, format)}, lookupHealthy, nil
 	}
 }
 
@@ -69,7 +70,7 @@ func TestLyricsProvider_CachedNegativeWinnerAvoidsTheWalk(t *testing.T) {
 	src := func(id string) lyricsSource {
 		return lyricsSource{
 			ID: id, Display: id, Hosts: []string{id + ".example.test"}, DefaultEnabled: true,
-			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+			Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error) {
 				calls++
 				return nil, lookupHealthy, nil
 			},
@@ -194,11 +195,11 @@ func TestGetLyrics_TieReRankRespectsConfiguredOrder(t *testing.T) {
 	earlierFailed := true
 	earlier := lyricsSource{
 		ID: "earlier", Display: "earlier", Hosts: []string{"earlier.example.test"}, DefaultEnabled: true,
-		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error) {
 			if earlierFailed {
 				return nil, lookupDegraded, errors.New("earlier down")
 			}
-			return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]earlier line"}, "earlier", "lrc")}, lookupHealthy, nil
+			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]earlier line"}, "earlier", "lrc")}, lookupHealthy, nil
 		},
 	}
 	sources := []lyricsSource{
@@ -216,7 +217,7 @@ func TestGetLyrics_TieReRankRespectsConfiguredOrder(t *testing.T) {
 	assertLyricsSource(t, first.Source, "later", "lrc")
 
 	// The sweep caches an equal-quality candidate for the earlier source.
-	if !provider.cacheSourceCandidate(track, "earlier", newLyricsCandidate(lyrics.LyricsText{Text: "[00:01.00]earlier line"}, "earlier", "lrc")) {
+	if !provider.cacheSourceCandidate(track, "earlier", lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]earlier line"}, "earlier", "lrc")) {
 		t.Fatal("expected the earlier-source candidate to be stored")
 	}
 
@@ -300,9 +301,9 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 	}
 	syllable := lyricsSource{
 		ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
-		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error) {
 			callsTwo++
-			return []lyricsCandidate{newLyricsCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"}, "stub", "ttml")}, lookupHealthy, nil
+			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"}, "stub", "ttml")}, lookupHealthy, nil
 		},
 	}
 	cache := newFakeLyricsCache()
@@ -324,7 +325,7 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 	assertLyricsSource(t, first.Source, "stub", "lrc")
 
 	// The sweep lands the syllable result for the previously skipped source.
-	walkProvider.cacheSourceCandidate(track, "two", newLyricsCandidate(
+	walkProvider.cacheSourceCandidate(track, "two", lyric.NewCandidate(
 		lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"},
 		"stub", "ttml"))
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const petitlyricsEndpoint = "https://p0.petitlyrics.com/api/GetPetitLyricsData.php"
@@ -33,7 +34,7 @@ const (
 // fetchPetitLyricsCandidates resolves lyrics from PetitLyrics: word WSY first,
 // then plain text. The line-level LSY binary decode is intentionally not
 // implemented this release, so its tier falls straight through to plain.
-func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	tiers := []string{petitLyricsTypeWord, petitLyricsTypeLine, petitLyricsTypePlain}
 	var lookupErrors []error
 	for _, tier := range tiers {
@@ -49,10 +50,10 @@ func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadl
 			lookupErrors = append(lookupErrors, tierErr)
 			continue
 		}
-		if !candidate.present() {
+		if !candidate.Present() {
 			continue
 		}
-		return []lyricsCandidate{candidate}, health, nil
+		return []lyric.Candidate{candidate}, health, nil
 	}
 	if err := errors.Join(lookupErrors...); err != nil {
 		return nil, lookupDegraded, err
@@ -64,52 +65,52 @@ func fetchPetitLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadl
 // candidate without an error is a clean miss (empty tier) so the tier loop can
 // fall through; decode failures return the error so malformed provider data
 // degrades instead of caching as coverage.
-func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyricsCandidate, error) {
+func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyric.Candidate, error) {
 	data := strings.TrimSpace(payload.LyricsData)
 	if data == "" {
-		return lyricsCandidate{}, nil
+		return lyric.Candidate{}, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		return lyricsCandidate{}, fmt.Errorf("decode PetitLyrics %s payload: %w", tier, err)
+		return lyric.Candidate{}, fmt.Errorf("decode PetitLyrics %s payload: %w", tier, err)
 	}
 	content := string(raw)
 
 	switch tier {
 	case petitLyricsTypeWord:
-		lines, parseErr := parsePetitWSY(raw)
+		lines, parseErr := lyric.ParsePetitWSY(raw)
 		if parseErr != nil || len(lines) == 0 {
 			if parseErr != nil {
-				return lyricsCandidate{}, fmt.Errorf("parse PetitLyrics WSY payload: %w", parseErr)
+				return lyric.Candidate{}, fmt.Errorf("parse PetitLyrics WSY payload: %w", parseErr)
 			}
-			return lyricsCandidate{}, nil
+			return lyric.Candidate{}, nil
 		}
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "PetitLyrics", "elrc")
-		if candidate.present() {
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "PetitLyrics", "elrc")
+		if candidate.Present() {
 			return candidate, nil
 		}
-		return lyricsCandidate{}, nil
+		return lyric.Candidate{}, nil
 	case petitLyricsTypeLine:
 		// LSY binary payloads carry timings only and are skipped this release;
 		// plain rows (rare) fall through to the next tier.
 		if strings.HasPrefix(content, "MHDR") {
-			return lyricsCandidate{}, nil
+			return lyric.Candidate{}, nil
 		}
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "PetitLyrics", "lrc")
-		if candidate.present() && candidate.quality > timingUnsynced {
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "PetitLyrics", "lrc")
+		if candidate.Present() && candidate.Quality > lyric.TimingUnsynced {
 			return candidate, nil
 		}
-		return lyricsCandidate{}, nil
+		return lyric.Candidate{}, nil
 	default:
 		text := strings.TrimSpace(content)
 		if text == "" {
-			return lyricsCandidate{}, nil
+			return lyric.Candidate{}, nil
 		}
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "PetitLyrics", "plain")
-		if candidate.present() {
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "PetitLyrics", "plain")
+		if candidate.Present() {
 			return candidate, nil
 		}
-		return lyricsCandidate{}, nil
+		return lyric.Candidate{}, nil
 	}
 }
 
@@ -124,7 +125,7 @@ const petitlyricsStatusOK = "00000000"
 // fetchPetitLyricsTier performs one form POST of the GetPetitLyricsData API.
 func (p *lyricsProvider) fetchPetitLyricsTier(track lyrics.TrackInfo, tier string, deadline time.Time) (petitlyricsPayload, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return petitlyricsPayload{}, lookupHealthy, nil
 	}
@@ -167,15 +168,15 @@ func (p *lyricsProvider) fetchPetitLyricsTier(track lyrics.TrackInfo, tier strin
 	// Each row carries its own metadata: the first row is not automatically
 	// the requested song, and a row of a different tier would be decoded with
 	// the wrong parser. Accept only the row that answers this lookup.
-	titleTokens := normalizedLyricTokens(track.Title)
+	titleTokens := lyric.NormalizedTokens(track.Title)
 	for _, song := range envelope.Songs.Songs {
 		if rowTier := strings.TrimSpace(song.LyricsType); rowTier != "" && rowTier != tier {
 			continue
 		}
-		if rowTitle := strings.TrimSpace(song.Title); rowTitle != "" && !lyricTokensMatch(normalizedLyricTokens(rowTitle), titleTokens) {
+		if rowTitle := strings.TrimSpace(song.Title); rowTitle != "" && !lyric.TokensMatch(lyric.NormalizedTokens(rowTitle), titleTokens) {
 			continue
 		}
-		if rowArtist := strings.TrimSpace(song.Artist); rowArtist != "" && !artistTokensMatch(rowArtist, artist) {
+		if rowArtist := strings.TrimSpace(song.Artist); rowArtist != "" && !lyric.ArtistMatch(rowArtist, artist) {
 			continue
 		}
 		return petitlyricsPayload{LyricsData: song.LyricsData}, lookupHealthy, nil
@@ -202,7 +203,7 @@ type petitlyricsSongEntry struct {
 // appleLyricallyArtistMatches accepts any collaborating artist entry whose
 // complete name matches the requested artist.
 func appleLyricallyArtistMatches(artistName, wanted string) bool {
-	return artistTokensMatch(artistName, wanted)
+	return lyric.ArtistMatch(artistName, wanted)
 }
 
 func petitLyricsHeaders() map[string]string {
@@ -218,9 +219,9 @@ const lyricallyMirrorEndpoint = "https://lyrics.paxsenix.org/apple-music/lyrics"
 // fetchLyricallyLyricsCandidates resolves Apple-sourced lyrics without any
 // Apple credential: iTunes search picks the duration-tightest track, then the
 // Lyrically mirror returns word-timed enhanced LRC, line TTML, or plain text.
-func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -260,7 +261,7 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		return nil, lookupDegraded, fmt.Errorf("decode Apple search response: %w", err)
 	}
 	target := int64(math.Round(float64(track.Duration) * 1000.0))
-	titleTokens := normalizedLyricTokens(track.Title)
+	titleTokens := lyric.NormalizedTokens(track.Title)
 	var trackID int64
 	bestDelta := int64(math.MaxInt64)
 	found := false
@@ -271,10 +272,10 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 		// Duration alone does not identify a recording: covers and live
 		// versions share runtimes, so the returned identity gates first and
 		// the duration ranks the survivors.
-		if !lyricTokensMatch(normalizedLyricTokens(result.TrackName), titleTokens) {
+		if !lyric.TokensMatch(lyric.NormalizedTokens(result.TrackName), titleTokens) {
 			continue
 		}
-		if !appleLyricallyArtistMatches(result.ArtistName, trackArtist(track)) {
+		if !appleLyricallyArtistMatches(result.ArtistName, lyric.TrackArtist(track)) {
 			continue
 		}
 		if track.Duration > 0 {
@@ -320,21 +321,21 @@ func fetchLyricallyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, d
 	}
 
 	if elrc := strings.TrimSpace(mirror.ELRC); elrc != "" {
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: elrc}, "Apple Music (Lyrically)", "elrc")
-		if candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: elrc}, "Apple Music (Lyrically)", "elrc")
+		if candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 	}
 	if ttml := strings.TrimSpace(mirror.TTMLContent); ttml != "" {
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: ttml}, "Apple Music (Lyrically)", "ttml")
-		if candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: ttml}, "Apple Music (Lyrically)", "ttml")
+		if candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 	}
 	if plain := strings.TrimSpace(mirror.Plain); plain != "" {
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: plain}, "Apple Music (Lyrically)", "plain")
-		if candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: plain}, "Apple Music (Lyrically)", "plain")
+		if candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 	}
 	return nil, lookupHealthy, nil

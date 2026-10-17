@@ -10,6 +10,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const qqEndpoint = "https://lyrics-api.boidu.dev/qq/getLyrics"
@@ -47,13 +48,13 @@ func portatoQRCContent(document string) (string, error) {
 // fetchPortatoLyricsCandidates queries the Better Lyrics QQ endpoint for
 // word-synced QRC lyrics, walking the same specificity tiers as the TTML source.
 // Results come back as enhanced LRC so Navidrome sees word timing.
-func fetchPortatoLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchPortatoLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	headers := p.betterLyricsHeaders()
 
 	health := lookupHealthy
 	retryBroader := true
 	var lookupErrors []error
-	var found *lyricsCandidate
+	var found *lyric.Candidate
 	for i, requestURL := range uniqueRequestURLs(
 		mustRequestURL(buildBetterLyricsProviderRequestURLWithMetadata(qqEndpoint, track, true, true)),
 		mustRequestURL(buildBetterLyricsProviderRequestURLWithMetadata(qqEndpoint, track, false, true)),
@@ -82,14 +83,14 @@ func fetchPortatoLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 			health = health.merge(lookupDegraded)
 			continue
 		}
-		lines, parseErr := parseKFamilyLyrics(wordSyncQRC, qrc)
+		lines, parseErr := lyric.ParseKFamily(lyric.QRC, qrc)
 		if parseErr != nil {
 			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics QQ API returned unparseable QRC"))
 			health = health.merge(lookupDegraded)
 			continue
 		}
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Better Lyrics Portato", "elrc")
-		if !candidate.present() {
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Better Lyrics Portato", "elrc")
+		if !candidate.Present() {
 			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics QQ API returned no usable timed lines"))
 			health = health.merge(lookupDegraded)
 			continue
@@ -98,7 +99,7 @@ func fetchPortatoLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		break
 	}
 	if found != nil {
-		return []lyricsCandidate{*found}, health, nil
+		return []lyric.Candidate{*found}, health, nil
 	}
 	if len(lookupErrors) > 0 {
 		return nil, health, errors.Join(lookupErrors...)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestPetitLyricsCandidates_WordFromWSY(t *testing.T) {
@@ -39,10 +40,10 @@ func TestPetitLyricsCandidates_WordFromWSY(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingWord {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "PetitLyrics", "elrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "PetitLyrics", "elrc")
 }
 
 func TestPetitLyricsCandidates_PlainFallbackTier(t *testing.T) {
@@ -61,10 +62,10 @@ func TestPetitLyricsCandidates_PlainFallbackTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchPetitLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingUnsynced {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingUnsynced {
 		t.Fatalf("candidates = %#v, want one plain candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "PetitLyrics", "plain")
+	assertLyricsSource(t, candidates[0].Response.Source, "PetitLyrics", "plain")
 	if calls != 3 {
 		t.Fatalf("calls = %d, want word, line and plain tiers", calls)
 	}
@@ -89,7 +90,7 @@ func TestPetitLyricsCandidates_LSYBinarySkipsToPlain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchPetitLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingUnsynced {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingUnsynced {
 		t.Fatalf("candidates = %#v, want plain via tier fallback", candidates)
 	}
 }
@@ -200,10 +201,10 @@ func TestLyricallyCandidates_ITunesSearchThenMirror(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingWord {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingWord {
 		t.Fatalf("candidates = %#v, want one word candidate from elrc", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "Apple Music (Lyrically)", "elrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "Apple Music (Lyrically)", "elrc")
 }
 
 func TestLyricallyCandidates_TTMLFallbackWhenNoELRC(t *testing.T) {
@@ -223,7 +224,7 @@ func TestLyricallyCandidates_TTMLFallbackWhenNoELRC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchLyricallyLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want line candidate from TTML", candidates)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 // fetchLunaLyricsCandidates resolves lyrics from Soda/Luna (汽水音乐): a spoofed
 // Android-style search, then a track detail whose `lyric` payload is plaintext KRC
 // (word) or LRC (line).
-func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	searchURL, ok := lunaSearchURL(track, p.now())
 	if !ok {
 		return nil, lookupHealthy, nil
@@ -76,31 +77,31 @@ func fetchLunaLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadli
 	}
 	switch strings.ToLower(strings.TrimSpace(detail.Lyric.Type)) {
 	case "krc":
-		lines, parseErr := parseKFamilyLyrics(wordSyncKRC, content)
+		lines, parseErr := lyric.ParseKFamily(lyric.KRC, content)
 		if parseErr != nil {
 			// Nonempty KRC that no longer parses is a provider failure, not
 			// cacheable negative coverage.
 			return nil, lookupDegraded, fmt.Errorf("parse Luna KRC payload: %w", parseErr)
 		}
 		if len(lines) > 0 {
-			candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Soda (Luna)", "elrc")
-			if candidate.present() {
-				return []lyricsCandidate{candidate}, lookupHealthy, nil
+			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Soda (Luna)", "elrc")
+			if candidate.Present() {
+				return []lyric.Candidate{candidate}, lookupHealthy, nil
 			}
 		}
 		return nil, lookupHealthy, nil
 	case "lrc":
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "lrc")
-		if candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "lrc")
+		if candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 		return nil, lookupHealthy, nil
 	default:
 		// Unknown payload type: return whatever is usable rather than discard
 		// otherwise valid lyrics (unknown dialects must not be dropped).
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain")
-		if candidate.present() {
-			return []lyricsCandidate{candidate}, lookupHealthy, nil
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain")
+		if candidate.Present() {
+			return []lyric.Candidate{candidate}, lookupHealthy, nil
 		}
 		return nil, lookupHealthy, nil
 	}
@@ -150,7 +151,7 @@ func (id *lunaTrackID) UnmarshalJSON(data []byte) error {
 
 func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
-	titleNorm := strings.ToLower(onlyLettersAndDigits(track.Title))
+	titleNorm := strings.ToLower(lyric.OnlyLettersAndDigits(track.Title))
 	for _, group := range groups {
 		for _, datum := range group.Data {
 			trackInfo := datum.Entity.Track
@@ -163,7 +164,7 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 			// concatenate name and artist without separators
 			// ("liveforeverOasis"), as the live fixture does. A title without
 			// alphanumerics verifies nothing and matches no row.
-			if titleNorm == "" || !strings.Contains(strings.ToLower(onlyLettersAndDigits(trackInfo.Name)), titleNorm) {
+			if titleNorm == "" || !strings.Contains(strings.ToLower(lyric.OnlyLettersAndDigits(trackInfo.Name)), titleNorm) {
 				continue
 			}
 			if !lunaArtistsMatch(trackInfo, track) {
@@ -195,17 +196,17 @@ type lunaSearchTrack struct {
 // ("liveforeverOasis") when the remainder after the collapsed title is
 // exactly the artist. An artist without alphanumerics verifies nothing.
 func lunaArtistsMatch(trackInfo lunaSearchTrack, track lyrics.TrackInfo) bool {
-	artistNorm := strings.ToLower(onlyLettersAndDigits(trackArtist(track)))
+	artistNorm := strings.ToLower(lyric.OnlyLettersAndDigits(lyric.TrackArtist(track)))
 	if artistNorm == "" {
 		return false
 	}
 	for _, candidateArtist := range trackInfo.Artists {
-		if strings.ToLower(onlyLettersAndDigits(candidateArtist.Name)) == artistNorm {
+		if strings.ToLower(lyric.OnlyLettersAndDigits(candidateArtist.Name)) == artistNorm {
 			return true
 		}
 	}
-	nameNorm := strings.ToLower(onlyLettersAndDigits(trackInfo.Name))
-	titleNorm := strings.ToLower(onlyLettersAndDigits(track.Title))
+	nameNorm := strings.ToLower(lyric.OnlyLettersAndDigits(trackInfo.Name))
+	titleNorm := strings.ToLower(lyric.OnlyLettersAndDigits(track.Title))
 	if titleNorm != "" && strings.HasPrefix(nameNorm, titleNorm) {
 		return strings.TrimPrefix(nameNorm, titleNorm) == artistNorm
 	}
@@ -221,7 +222,7 @@ type lunaDetailEnvelope struct {
 
 func lunaSearchURL(track lyrics.TrackInfo, now time.Time) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}

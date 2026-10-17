@@ -10,15 +10,20 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const lrclibEndpoint = "https://lrclib.net"
+
+// errNoLRCLibPayload marks a record that decoded but carries no usable lyrics
+// body in any of the supported shapes.
+var errNoLRCLibPayload = errors.New("no usable LRCLib lyrics payload")
 
 // fetchLRCLibLyricsCandidates resolves lyrics from the LRCLib community API: the
 // exact `get` endpoint first, then the `search` endpoint scoped to a duration drift
 // of at most two seconds. `lyricsfile` (word timing), `syncedLyrics` (line), and
 // `plainLyrics` map to enhanced LRC, line LRC, and plain text respectively.
-func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	getURL, ok := lrclibGetURL(track)
 	if !ok {
 		return nil, lookupHealthy, nil
@@ -44,8 +49,8 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 			if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
 				return nil, lookupDegraded, candErr
 			}
-			if candErr == nil && candidate.present() {
-				return []lyricsCandidate{candidate}, health, nil
+			if candErr == nil && candidate.Present() {
+				return []lyric.Candidate{candidate}, health, nil
 			}
 		}
 	}
@@ -53,7 +58,7 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	// failure: the duration-scoped search still gets its chance below.
 	// The exact lookup misses or the payload cannot be used; broaden by title and
 	// artist, keeping the best duration match.
-	searchQuery := url.Values{"track_name": {strings.TrimSpace(track.Title)}, "artist_name": {trackArtist(track)}}
+	searchQuery := url.Values{"track_name": {strings.TrimSpace(track.Title)}, "artist_name": {lyric.TrackArtist(track)}}
 	searchURL := lrclibEndpoint + "/api/search?" + searchQuery.Encode()
 	searchBody, health, err := p.fetchLRCLibEndpoint("LRCLib search", searchURL, deadline)
 	if err != nil {
@@ -103,12 +108,12 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 	if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
 		return nil, lookupDegraded, candErr
 	}
-	if candErr != nil || !matchCandidate.present() {
+	if candErr != nil || !matchCandidate.Present() {
 		// The duration-matched record is unusable (instrumental, empty): a clean
 		// miss, so later sources still get their turn.
 		return nil, lookupHealthy, nil
 	}
-	return []lyricsCandidate{matchCandidate}, lookupHealthy, nil
+	return []lyric.Candidate{matchCandidate}, lookupHealthy, nil
 }
 
 // fetchLRCLibEndpoint performs one LRCLib HTTP call with the shared status and
@@ -136,7 +141,7 @@ func (p *lyricsProvider) fetchLRCLibEndpoint(source, requestURL string, deadline
 
 // lrclibCandidate turns an LRCLib record (JSON) into the best ranked candidate:
 // lyricsfile words, then synced LRC, then plain text.
-func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) {
+func lrclibCandidate(p *lyricsProvider, record []byte) (lyric.Candidate, error) {
 	var payload struct {
 		Instrumental bool   `json:"instrumental"`
 		HasWordSync  bool   `json:"hasWordSync"`
@@ -145,18 +150,18 @@ func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) 
 		LyricsFile   string `json:"lyricsfile"`
 	}
 	if err := json.Unmarshal(record, &payload); err != nil {
-		return lyricsCandidate{}, fmt.Errorf("decode LRCLib record: %w", err)
+		return lyric.Candidate{}, fmt.Errorf("decode LRCLib record: %w", err)
 	}
 	if payload.Instrumental {
-		return lyricsCandidate{}, errNoLRCLibPayload
+		return lyric.Candidate{}, errNoLRCLibPayload
 	}
 
 	var lyricsFileErr error
 	if payload.HasWordSync && strings.TrimSpace(payload.LyricsFile) != "" {
-		lines, err := parseLRCLibLyricsFile([]byte(payload.LyricsFile))
+		lines, err := lyric.ParseLRCLibLyricsFile([]byte(payload.LyricsFile))
 		if err == nil && len(lines) > 0 {
-			text := lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}
-			if candidate := newLyricsCandidate(text, "LRCLib", "elrc"); candidate.present() {
+			text := lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}
+			if candidate := lyric.NewCandidate(text, "LRCLib", "elrc"); candidate.Present() {
 				return candidate, nil
 			}
 		}
@@ -165,27 +170,27 @@ func lrclibCandidate(p *lyricsProvider, record []byte) (lyricsCandidate, error) 
 	}
 	if strings.TrimSpace(payload.SyncedLyrics) != "" {
 		text := lyrics.LyricsText{Text: payload.SyncedLyrics}
-		if candidate := newLyricsCandidate(text, "LRCLib", "lrc"); candidate.present() {
+		if candidate := lyric.NewCandidate(text, "LRCLib", "lrc"); candidate.Present() {
 			return candidate, nil
 		}
 	}
 	if strings.TrimSpace(payload.PlainLyrics) != "" {
 		text := lyrics.LyricsText{Text: payload.PlainLyrics}
-		if candidate := newLyricsCandidate(text, "LRCLib", "plain"); candidate.present() {
+		if candidate := lyric.NewCandidate(text, "LRCLib", "plain"); candidate.Present() {
 			return candidate, nil
 		}
 	}
 	if lyricsFileErr != nil {
-		return lyricsCandidate{}, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
+		return lyric.Candidate{}, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
 	}
-	return lyricsCandidate{}, errNoLRCLibPayload
+	return lyric.Candidate{}, errNoLRCLibPayload
 }
 
 // lrclibGetURL builds the exact-match lookup; the album is optional but improves
 // the cache key upstream.
 func lrclibGetURL(track lyrics.TrackInfo) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}
@@ -241,14 +246,14 @@ func lrclibMetadataMatches(trackName, artistName string, track lyrics.TrackInfo)
 		// request; fall through to broader search instead.
 		return false
 	}
-	return lyricTokensMatch(normalizedLyricTokens(trackName), normalizedLyricTokens(track.Title)) &&
+	return lyric.TokensMatch(lyric.NormalizedTokens(trackName), lyric.NormalizedTokens(track.Title)) &&
 		lrclibArtistMatches(artistName, track)
 }
 
 // lrclibArtistMatches accepts the record when any collaborating artist name
 // matches the request completely (no prefix tolerance for artists).
 func lrclibArtistMatches(artistName string, track lyrics.TrackInfo) bool {
-	return artistTokensMatch(artistName, trackArtist(track))
+	return lyric.ArtistMatch(artistName, lyric.TrackArtist(track))
 }
 
 // lrclibDurationsClose keeps the historical two-second tolerance.

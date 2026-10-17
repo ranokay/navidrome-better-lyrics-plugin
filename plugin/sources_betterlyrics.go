@@ -12,6 +12,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const apiEndpoint = "https://lyrics-api.boidu.dev/getLyrics"
@@ -22,13 +23,13 @@ type apiResponse struct {
 
 // fetchBetterLyricsLyrics walks the Better Lyrics TTML endpoint through its
 // documented specificity tiers: full metadata, then no album, then title+artist.
-func fetchBetterLyricsLyrics(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchBetterLyricsLyrics(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	headers := p.betterLyricsHeaders()
 
 	health := lookupHealthy
 	retryBroader := true
 	var lookupErrors []error
-	var found *lyricsCandidate
+	var found *lyric.Candidate
 	for i, requestURL := range uniqueRequestURLs(
 		mustRequestURL(lyricsRequestURL(track)),
 		mustRequestURL(lyricsRequestURLWithoutAlbum(track)),
@@ -51,8 +52,8 @@ func fetchBetterLyricsLyrics(p *lyricsProvider, track lyrics.TrackInfo, deadline
 			continue
 		}
 
-		candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "Better Lyrics", "ttml")
-		if !candidate.present() {
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "Better Lyrics", "ttml")
+		if !candidate.Present() {
 			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics API returned malformed TTML"))
 			health = health.merge(lookupDegraded)
 			continue
@@ -61,7 +62,7 @@ func fetchBetterLyricsLyrics(p *lyricsProvider, track lyrics.TrackInfo, deadline
 		break
 	}
 	if found != nil {
-		return []lyricsCandidate{*found}, health, nil
+		return []lyric.Candidate{*found}, health, nil
 	}
 	if len(lookupErrors) > 0 {
 		return nil, health, errors.Join(lookupErrors...)
@@ -141,7 +142,7 @@ func lyricsRequestURLWithoutOptionalMetadata(track lyrics.TrackInfo) (string, bo
 
 func buildBetterLyricsProviderRequestURLWithMetadata(endpoint string, track lyrics.TrackInfo, includeAlbum, includeDuration bool) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}
@@ -187,18 +188,4 @@ func mustRequestURL(requestURL string, ok bool) string {
 		return ""
 	}
 	return requestURL
-}
-
-func trackArtist(track lyrics.TrackInfo) string {
-	if artist := strings.TrimSpace(track.Artist); artist != "" {
-		return artist
-	}
-
-	artists := make([]string, 0, len(track.Artists))
-	for _, artist := range track.Artists {
-		if name := strings.TrimSpace(artist.Name); name != "" {
-			artists = append(artists, name)
-		}
-	}
-	return strings.Join(artists, ", ")
 }

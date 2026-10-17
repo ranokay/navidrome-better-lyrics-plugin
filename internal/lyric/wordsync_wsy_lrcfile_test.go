@@ -1,4 +1,4 @@
-package main
+package lyric
 
 import (
 	"encoding/json"
@@ -14,9 +14,9 @@ func TestParsePetitWSY(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	lines, parseErr := parsePetitWSY(raw)
+	lines, parseErr := ParsePetitWSY(raw)
 	if parseErr != nil {
-		t.Fatalf("parsePetitWSY() error = %v, want nil", parseErr)
+		t.Fatalf("ParsePetitWSY() error = %v, want nil", parseErr)
 	}
 	if len(lines) != 5 {
 		t.Fatalf("lines = %d, want 5 (fixture keeps five lines)", len(lines))
@@ -38,9 +38,9 @@ func TestParsePetitWSY_MinimalDocument(t *testing.T) {
 		`<word><starttime>150</starttime><endtime>400</endtime><wordstring>world</wordstring></word></line>` +
 		`<line><linestring>plain row</linestring></line></wsy>`
 
-	lines, err := parsePetitWSY([]byte(raw))
+	lines, err := ParsePetitWSY([]byte(raw))
 	if err != nil {
-		t.Fatalf("parsePetitWSY() error = %v, want nil", err)
+		t.Fatalf("ParsePetitWSY() error = %v, want nil", err)
 	}
 	if len(lines) != 2 {
 		t.Fatalf("lines = %d, want 2", len(lines))
@@ -56,11 +56,11 @@ func TestParsePetitWSY_MinimalDocument(t *testing.T) {
 func TestParsePetitWSY_RejectsEmptyDocuments(t *testing.T) {
 	t.Parallel()
 
-	if _, err := parsePetitWSY([]byte("<wsy></wsy>")); err == nil {
-		t.Fatal("parsePetitWSY(empty) error = nil, want err")
+	if _, err := ParsePetitWSY([]byte("<wsy></wsy>")); err == nil {
+		t.Fatal("ParsePetitWSY(empty) error = nil, want err")
 	}
-	if _, err := parsePetitWSY([]byte("<bad/>")); err == nil {
-		t.Fatal("parsePetitWSY(nondialect) error = nil, want err")
+	if _, err := ParsePetitWSY([]byte("<bad/>")); err == nil {
+		t.Fatal("ParsePetitWSY(nondialect) error = nil, want err")
 	}
 }
 
@@ -85,9 +85,9 @@ func TestParseLRCLibLyricsFile(t *testing.T) {
 		"  end_ms: 3600\n" +
 		"  text: second line\n"
 
-	lines, err := parseLRCLibLyricsFile([]byte(yamlDoc))
+	lines, err := ParseLRCLibLyricsFile([]byte(yamlDoc))
 	if err != nil {
-		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+		t.Fatalf("ParseLRCLibLyricsFile() error = %v, want nil", err)
 	}
 	if len(lines) != 2 {
 		t.Fatalf("lines = %d, want 2", len(lines))
@@ -103,7 +103,7 @@ func TestParseLRCLibLyricsFile(t *testing.T) {
 func TestParseLRCLibLyricsFile_FixtureSmoke(t *testing.T) {
 	t.Parallel()
 
-	fixture, err := os.ReadFile("testdata/lrclib/get.json")
+	fixture, err := os.ReadFile("../source/testdata/lrclib/get.json")
 	if err != nil {
 		t.Skipf("fixture unavailable: %v", err)
 	}
@@ -116,9 +116,9 @@ func TestParseLRCLibLyricsFile_FixtureSmoke(t *testing.T) {
 	if envelope.Lyricsfile == "" {
 		t.Skip("fixture has no lyricsfile payload")
 	}
-	lines, parseErr := parseLRCLibLyricsFile([]byte(envelope.Lyricsfile))
+	lines, parseErr := ParseLRCLibLyricsFile([]byte(envelope.Lyricsfile))
 	if parseErr != nil {
-		t.Fatalf("parseLRCLibLyricsFile(fixture) error = %v", parseErr)
+		t.Fatalf("ParseLRCLibLyricsFile(fixture) error = %v", parseErr)
 	}
 	if len(lines) == 0 {
 		t.Fatalf("fixture lines = 0, want timed lines")

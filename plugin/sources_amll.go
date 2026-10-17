@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const amllEndpoint = "https://api.amll.dev"
@@ -57,7 +58,7 @@ func amllEnvelopeStatusFailure(p *lyricsProvider, source string, status int) (lo
 
 // fetchAMLLyricsCandidates resolves lyrics through the AMLL community DB:
 // first search by name/artist/album, then fetch the matched TTML.
-func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	searchURL, ok := amllSearchURL(track)
 	if !ok {
 		return nil, lookupHealthy, nil
@@ -138,20 +139,20 @@ func fetchAMLLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadlin
 	}
 
 	lyricsBody := getEnvelope.Data.Lyrics
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: lyricsBody}, "AMLL", "ttml")
-	if !candidate.present() {
-		if emptyLyricsDocument(lyricsBody, "ttml") {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyricsBody}, "AMLL", "ttml")
+	if !candidate.Present() {
+		if lyric.EmptyDocument(lyricsBody, "ttml") {
 			return nil, lookupHealthy, nil
 		}
 		return nil, lookupDegraded, fmt.Errorf("AMLL lyrics returned unparseable TTML")
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	return []lyric.Candidate{candidate}, lookupHealthy, nil
 }
 
 // pickAMLLItem selects the search row whose collapsed title and artist match
 // the request; the album breaks ties between otherwise-qualified rows.
 func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
-	titleTokens := normalizedLyricTokens(track.Title)
+	titleTokens := lyric.NormalizedTokens(track.Title)
 	album := strings.TrimSpace(track.Album)
 
 	var best amllItem
@@ -161,10 +162,10 @@ func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 		if !amllNamesMatch(item.MusicNames, titleTokens) {
 			continue
 		}
-		if !amllArtistsMatch(item.ArtistNames, trackArtist(track)) {
+		if !amllArtistsMatch(item.ArtistNames, lyric.TrackArtist(track)) {
 			continue
 		}
-		albumMatch := album != "" && amllNamesContain(item.AlbumNames, normalizedLyricTokens(album))
+		albumMatch := album != "" && amllNamesContain(item.AlbumNames, lyric.NormalizedTokens(album))
 		if !found || (!bestAlbum && albumMatch) {
 			best, found, bestAlbum = item, true, bestAlbum || albumMatch
 		}
@@ -174,14 +175,14 @@ func pickAMLLItem(items []amllItem, track lyrics.TrackInfo) (amllItem, bool) {
 
 // amllNamesMatch accepts any listed name whose collapsed tokens match (title
 // prefix tolerance allowed by the callers) — artist callers pass complete-name
-// semantics via artistTokensMatch instead. An empty wanted list means the
+// semantics via lyric.ArtistMatch instead. An empty wanted list means the
 // request carried no verifiable title tokens, so nothing may match.
 func amllNamesMatch(names []string, wanted []string) bool {
 	if len(wanted) == 0 {
 		return false
 	}
 	for _, name := range names {
-		if lyricTokensMatch(normalizedLyricTokens(name), wanted) {
+		if lyric.TokensMatch(lyric.NormalizedTokens(name), wanted) {
 			return true
 		}
 	}
@@ -194,7 +195,7 @@ func amllArtistsMatch(names []string, wanted string) bool {
 		return true
 	}
 	for _, name := range names {
-		if artistTokensMatch(name, wanted) {
+		if lyric.ArtistMatch(name, wanted) {
 			return true
 		}
 	}
@@ -203,7 +204,7 @@ func amllArtistsMatch(names []string, wanted string) bool {
 
 func amllNamesContain(names []string, tokens []string) bool {
 	for _, name := range names {
-		if lyricTokensMatch(normalizedLyricTokens(name), tokens) {
+		if lyric.TokensMatch(lyric.NormalizedTokens(name), tokens) {
 			return true
 		}
 	}
@@ -212,7 +213,7 @@ func amllNamesContain(names []string, tokens []string) bool {
 
 func amllSearchURL(track lyrics.TrackInfo) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}

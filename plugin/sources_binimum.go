@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const binimumEndpoint = "https://lyrics-api.binimum.org/"
@@ -33,7 +34,7 @@ type binimumResult struct {
 // fetchBinimumLyricsCandidates resolves lyrics through BiniLyrics: a metadata
 // search scoped by duration (≤2 s drift) followed by an Apple-shaped TTML fetch
 // that Navidrome parses unchanged.
-func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	searchURL, ok := binimumSearchURL(track)
 	if !ok {
 		return nil, lookupHealthy, nil
@@ -84,25 +85,25 @@ func fetchBinimumLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dea
 		return nil, lookupHealthy, nil
 	}
 	text := string(lyricsResponse.Body)
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: text}, "BiniLyrics", "ttml")
-	if !candidate.present() {
-		if emptyLyricsDocument(text, "ttml") {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "BiniLyrics", "ttml")
+	if !candidate.Present() {
+		if lyric.EmptyDocument(text, "ttml") {
 			return nil, lookupHealthy, nil
 		}
 		return nil, lookupDegraded, fmt.Errorf("BiniLyrics lyrics returned malformed TTML")
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	return []lyric.Candidate{candidate}, lookupHealthy, nil
 }
 
 func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimumResult, bool) {
 	target := int64(math.Round(float64(track.Duration)))
-	title := normalizedLyricTokens(track.Title)
+	title := lyric.NormalizedTokens(track.Title)
 	var best binimumResult
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, candidateResult := range results {
-		if !lyricTokensMatch(normalizedLyricTokens(candidateResult.TrackName), title) ||
-			!artistTokensMatch(candidateResult.ArtistName, trackArtist(track)) {
+		if !lyric.TokensMatch(lyric.NormalizedTokens(candidateResult.TrackName), title) ||
+			!lyric.ArtistMatch(candidateResult.ArtistName, lyric.TrackArtist(track)) {
 			continue
 		}
 		// Provider-supplied URLs are untrusted: only the known lyrics hosts
@@ -147,7 +148,7 @@ func binimumLyricsURLAllowed(raw string) bool {
 
 func binimumSearchURL(track lyrics.TrackInfo) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}

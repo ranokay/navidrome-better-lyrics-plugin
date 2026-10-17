@@ -56,8 +56,8 @@ func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want one plain candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "YouTube Music", "plain")
-	rendered := candidates[0].response.Lyrics[0].Text
+	assertLyricsSource(t, candidates[0].Response.Source, "YouTube Music", "plain")
+	rendered := candidates[0].Response.Lyrics[0].Text
 	if !strings.Contains(rendered, "The club isn't the best place") || strings.Contains(rendered, "Source:") {
 		t.Fatalf("rendered = %q, want the shelf body without attribution", rendered)
 	}

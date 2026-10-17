@@ -1,4 +1,4 @@
-package main
+package lyric
 
 import (
 	"strings"
@@ -12,9 +12,9 @@ func TestParseLyricifyLYL_LinesAndSyllables(t *testing.T) {
 		"[9731,14858]The club isn't the best place to find a lover so the bar is where I go\n" +
 		"[14858,19592]Me and my friends at the weekend and it's something we go\n"
 
-	lines, err := parseLyricifyLYL(input)
+	lines, err := ParseLyricifyLYL(input)
 	if err != nil {
-		t.Fatalf("parseLyricifyLYL() error = %v, want nil", err)
+		t.Fatalf("ParseLyricifyLYL() error = %v, want nil", err)
 	}
 	if len(lines) != 2 {
 		t.Fatalf("lines = %d, want 2", len(lines))
@@ -29,9 +29,9 @@ func TestParseLyricifyLYL_LinesAndSyllables(t *testing.T) {
 	wordFile := "[type:LyricifyLines]\n" +
 		"[from:AppleSyllable]\n" +
 		"[100,400]Hel(100,200) (200,100)lo(300,100)\n"
-	syllables, err := parseLyricifyLYL(wordFile)
+	syllables, err := ParseLyricifyLYL(wordFile)
 	if err != nil {
-		t.Fatalf("parseLyricifyLYL(syllable) error = %v, want nil", err)
+		t.Fatalf("ParseLyricifyLYL(syllable) error = %v, want nil", err)
 	}
 	if len(syllables) != 1 {
 		t.Fatalf("syllable lines = %d, want 1", len(syllables))
@@ -50,11 +50,11 @@ func TestParseLyricifyLYL_RendersEnhancedLRC(t *testing.T) {
 	input := "[type:LyricifyLines]\n" +
 		"[1000,500]syll text\n"
 
-	lines, err := parseLyricifyLYL(input)
+	lines, err := ParseLyricifyLYL(input)
 	if err != nil {
-		t.Fatalf("parseLyricifyLYL() error = %v, want nil", err)
+		t.Fatalf("ParseLyricifyLYL() error = %v, want nil", err)
 	}
-	output := enhancedLRCFromTimedLines(lines)
+	output := EnhancedLRC(lines)
 	if !strings.HasPrefix(output, "[00:01.00]") {
 		t.Fatalf("output = %q, want [00:01.00] prefix", output)
 	}
@@ -63,10 +63,10 @@ func TestParseLyricifyLYL_RendersEnhancedLRC(t *testing.T) {
 func TestParseLyricifyLYL_RejectsOtherDialects(t *testing.T) {
 	t.Parallel()
 
-	if _, err := parseLyricifyLYL(""); err == nil {
-		t.Fatal("parseLyricifyLYL(empty) error = nil, want err")
+	if _, err := ParseLyricifyLYL(""); err == nil {
+		t.Fatal("ParseLyricifyLYL(empty) error = nil, want err")
 	}
-	if _, err := parseLyricifyLYL("[00:01.10]normal LRC with word markers"); err == nil {
-		t.Fatal("parseLyricifyLYL(lrc) error = nil, want err")
+	if _, err := ParseLyricifyLYL("[00:01.10]normal LRC with word markers"); err == nil {
+		t.Fatal("ParseLyricifyLYL(lrc) error = nil, want err")
 	}
 }

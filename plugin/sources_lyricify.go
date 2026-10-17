@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const (
@@ -20,9 +21,9 @@ const (
 // fetchLyricifyLyricsCandidates resolves lyrics via Lyricify's mobile endpoint:
 // titles/artists first resolve to an ISRC through credits.fm, the fetch then uses
 // a throwaway random username (no account exists server-side).
-func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return nil, lookupHealthy, nil
 	}
@@ -98,7 +99,7 @@ func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		return nil, lookupHealthy, nil
 	}
 
-	lines, parseErr := parseLyricifyLYL(text)
+	lines, parseErr := lyric.ParseLyricifyLYL(text)
 	if parseErr != nil {
 		// The endpoint returned payload that is not parseable LYL: a provider
 		// failure must stay retryable instead of becoming cached coverage.
@@ -108,19 +109,19 @@ func fetchLyricifyLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, de
 		return nil, lookupHealthy, nil
 	}
 	lines = applyLyricsOffset(lines, payloadEnvelope.Offset)
-	candidate := newLyricsCandidate(lyrics.LyricsText{Text: enhancedLRCFromTimedLines(lines)}, "Lyricify", "elrc")
-	if !candidate.present() {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Lyricify", "elrc")
+	if !candidate.Present() {
 		return nil, lookupHealthy, nil
 	}
-	return []lyricsCandidate{candidate}, lookupHealthy, nil
+	return []lyric.Candidate{candidate}, lookupHealthy, nil
 }
 
 // applyLyricsOffset shifts parsed lines by the file's millisecond offset.
-func applyLyricsOffset(lines []timedLine, offsetMs int64) []timedLine {
+func applyLyricsOffset(lines []lyric.TimedLine, offsetMs int64) []lyric.TimedLine {
 	if offsetMs == 0 {
 		return lines
 	}
-	shifted := make([]timedLine, 0, len(lines))
+	shifted := make([]lyric.TimedLine, 0, len(lines))
 	for _, line := range lines {
 		line.StartMs += offsetMs
 		line.EndMs += offsetMs

@@ -8,6 +8,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func TestLRCLibCandidates_PrefersWordSyncedLyricsFile(t *testing.T) {
@@ -38,10 +39,10 @@ func TestLRCLibCandidates_PrefersWordSyncedLyricsFile(t *testing.T) {
 		t.Fatalf("candidates = %#v, want one", candidates)
 	}
 	candidate := candidates[0]
-	if candidate.quality != timingWord && candidate.quality != timingLine {
-		t.Fatalf("quality = %v, want synchronized", candidate.quality)
+	if candidate.Quality != lyric.TimingWord && candidate.Quality != lyric.TimingLine {
+		t.Fatalf("quality = %v, want synchronized", candidate.Quality)
 	}
-	assertLyricsSource(t, candidate.response.Source, "LRCLib", candidate.response.Source.Format)
+	assertLyricsSource(t, candidate.Response.Source, "LRCLib", candidate.Response.Source.Format)
 }
 
 func TestLRCLibCandidates_FallsBackToSearchOnExactMiss(t *testing.T) {
@@ -138,10 +139,10 @@ func TestLRCLibCandidates_PlainFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchLRCLibLyricsCandidates() error = %v, want nil", err)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingUnsynced {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingUnsynced {
 		t.Fatalf("candidates = %#v, want one unsynced candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "LRCLib", "plain")
+	assertLyricsSource(t, candidates[0].Response.Source, "LRCLib", "plain")
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
@@ -165,11 +166,11 @@ func TestLRCLibWordSeparatorsSurviveParsing(t *testing.T) {
 		"    start_ms: 1500\n" +
 		"    end_ms: 2500\n"
 
-	lines, err := parseLRCLibLyricsFile([]byte(yamlDoc))
+	lines, err := lyric.ParseLRCLibLyricsFile([]byte(yamlDoc))
 	if err != nil {
-		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+		t.Fatalf("lyric.ParseLRCLibLyricsFile() error = %v, want nil", err)
 	}
-	rendered := enhancedLRCFromTimedLines(lines)
+	rendered := lyric.EnhancedLRC(lines)
 	if !strings.Contains(rendered, "<00:01.00>first <00:01.50>line") {
 		t.Fatalf("rendered = %q, want the separator restored between the word tokens", rendered)
 	}
@@ -238,11 +239,11 @@ func TestLRCLibAlignmentFailureDoesNotDuplicate(t *testing.T) {
 
 func renderLRCLibFixture(t *testing.T, document string) string {
 	t.Helper()
-	lines, err := parseLRCLibLyricsFile([]byte(document))
+	lines, err := lyric.ParseLRCLibLyricsFile([]byte(document))
 	if err != nil {
-		t.Fatalf("parseLRCLibLyricsFile() error = %v, want nil", err)
+		t.Fatalf("lyric.ParseLRCLibLyricsFile() error = %v, want nil", err)
 	}
-	return enhancedLRCFromTimedLines(lines)
+	return lyric.EnhancedLRC(lines)
 }
 
 func TestLRCLibMalformedLyricsFileStaysDegraded(t *testing.T) {
@@ -282,10 +283,10 @@ func TestLRCLibCandidates_ExactInstrumentalFallsBackToSearch(t *testing.T) {
 	if health != lookupHealthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].quality != timingLine {
+	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
 		t.Fatalf("candidates = %#v, want the search fallback line candidate", candidates)
 	}
-	assertLyricsSource(t, candidates[0].response.Source, "LRCLib", "lrc")
+	assertLyricsSource(t, candidates[0].Response.Source, "LRCLib", "lrc")
 	if requests != 2 {
 		t.Fatalf("requests = %d, want get then search", requests)
 	}

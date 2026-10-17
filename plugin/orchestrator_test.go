@@ -8,31 +8,32 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
-func stubSource(id string, calls *[]string, result func() ([]lyricsCandidate, lookupHealth, error)) lyricsSource {
+func stubSource(id string, calls *[]string, result func() ([]lyric.Candidate, lookupHealth, error)) lyricsSource {
 	return lyricsSource{
 		ID:             id,
 		Display:        id,
 		Hosts:          []string{id + ".example.test"},
 		DefaultEnabled: true,
-		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, lookupHealth, error) {
+		Fetch: func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, lookupHealth, error) {
 			*calls = append(*calls, id)
 			return result()
 		},
 	}
 }
 
-func lrcCandidate(word bool) lyricsCandidate {
+func lrcCandidate(word bool) lyric.Candidate {
 	text := "[00:01.00]line text"
 	if word {
 		text = "[00:01.00]<00:01.00>line<00:01.50>text"
 	}
-	return newLyricsCandidate(lyrics.LyricsText{Text: text}, "stub", "elrc")
+	return lyric.NewCandidate(lyrics.LyricsText{Text: text}, "stub", "elrc")
 }
 
-func ttmlCandidate(quality string) lyricsCandidate {
-	return newLyricsCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"" + quality + "\">x</tt>"}, "two", "ttml")
+func ttmlCandidate(quality string) lyric.Candidate {
+	return lyric.NewCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"" + quality + "\">x</tt>"}, "two", "ttml")
 }
 
 func TestLyricsProvider_StageOneWalksFirstThreeImplementedSources(t *testing.T) {
@@ -40,17 +41,17 @@ func TestLyricsProvider_StageOneWalksFirstThreeImplementedSources(t *testing.T) 
 
 	var calls []string
 	sources := []lyricsSource{
-		stubSource("one", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
+		stubSource("one", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
 			return nil, lookupHealthy, nil
 		}),
-		stubSource("two", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
-			return []lyricsCandidate{ttmlCandidate("Word")}, lookupHealthy, nil
+		stubSource("two", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
+			return []lyric.Candidate{ttmlCandidate("Word")}, lookupHealthy, nil
 		}),
-		stubSource("three", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
-			return []lyricsCandidate{ttmlCandidate("Line")}, lookupHealthy, nil
+		stubSource("three", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
+			return []lyric.Candidate{ttmlCandidate("Line")}, lookupHealthy, nil
 		}),
-		stubSource("four", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
-			return []lyricsCandidate{ttmlCandidate("Syllable")}, lookupHealthy, nil
+		stubSource("four", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
+			return []lyric.Candidate{ttmlCandidate("Syllable")}, lookupHealthy, nil
 		}),
 	}
 
@@ -75,13 +76,13 @@ func TestLyricsProvider_StageOneStopsEarlyOnSyllable(t *testing.T) {
 
 	var calls []string
 	sources := []lyricsSource{
-		stubSource("first", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
-			return []lyricsCandidate{lrcCandidate(true)}, lookupHealthy, nil
+		stubSource("first", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
+			return []lyric.Candidate{lrcCandidate(true)}, lookupHealthy, nil
 		}),
-		stubSource("second", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
-			return []lyricsCandidate{ttmlCandidate("Syllable")}, lookupHealthy, nil
+		stubSource("second", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
+			return []lyric.Candidate{ttmlCandidate("Syllable")}, lookupHealthy, nil
 		}),
-		stubSource("third", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
+		stubSource("third", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
 			return nil, lookupHealthy, nil
 		}),
 	}
@@ -100,10 +101,10 @@ func TestLyricsProvider_MergesSourceErrorsIntoJoinedLookupError(t *testing.T) {
 
 	var calls []string
 	sources := []lyricsSource{
-		stubSource("one", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
+		stubSource("one", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
 			return nil, lookupDegraded, errors.New("one down")
 		}),
-		stubSource("two", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
+		stubSource("two", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
 			return nil, lookupDegraded, errors.New("two down")
 		}),
 	}
@@ -124,11 +125,11 @@ func TestLyricsProvider_MergesHealthFromSourceStatuses(t *testing.T) {
 	var calls []string
 	cache := newFakeLyricsCache()
 	sources := []lyricsSource{
-		stubSource("uncertain", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
+		stubSource("uncertain", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
 			return nil, lookupUncertain, nil
 		}),
-		stubSource("line", &calls, func() ([]lyricsCandidate, lookupHealth, error) {
-			return []lyricsCandidate{lrcCandidate(false)}, lookupHealthy, nil
+		stubSource("line", &calls, func() ([]lyric.Candidate, lookupHealth, error) {
+			return []lyric.Candidate{lrcCandidate(false)}, lookupHealthy, nil
 		}),
 	}
 	provider := newLyricsProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
@@ -151,7 +152,7 @@ func TestLyricsProvider_SkipsIncompleteTrackMetadata(t *testing.T) {
 		requests++
 		return &host.HTTPResponse{StatusCode: 200}, nil
 	}, newFakeLyricsCache(), time.Now, []lyricsSource{
-		stubSource("one", &([]string{}), func() ([]lyricsCandidate, lookupHealth, error) { return nil, lookupHealthy, nil }),
+		stubSource("one", &([]string{}), func() ([]lyric.Candidate, lookupHealth, error) { return nil, lookupHealthy, nil }),
 	}, func(lyrics.TrackInfo) error { return nil })
 
 	for _, track := range []lyrics.TrackInfo{

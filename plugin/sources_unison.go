@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 const unisonEndpoint = "https://unison.boidu.dev/lyrics"
@@ -28,13 +29,13 @@ type unisonLyricsEntry struct {
 
 // fetchUnisonLyrics walks the community database through its explicitly
 // documented specificity tiers.
-func fetchUnisonCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyricsCandidate, lookupHealth, error) {
+func fetchUnisonCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, lookupHealth, error) {
 	headers := defaultHeaders()
 
 	health := lookupHealthy
 	retryBroader := true
 	var lookupErrors []error
-	var found *lyricsCandidate
+	var found *lyric.Candidate
 	for i, requestURL := range uniqueRequestURLs(
 		mustRequestURL(unisonRequestURLWithFullMetadata(track)),
 		mustRequestURL(unisonRequestURL(track)),
@@ -54,8 +55,8 @@ func fetchUnisonCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline t
 			continue
 		}
 
-		candidate := newLyricsCandidate(unisonLyrics, "Unison", unisonFormat)
-		if !candidate.present() {
+		candidate := lyric.NewCandidate(unisonLyrics, "Unison", unisonFormat)
+		if !candidate.Present() {
 			lookupErrors = append(lookupErrors, fmt.Errorf("unison API returned malformed %s lyrics", strings.ToUpper(unisonFormat)))
 			health = health.merge(lookupDegraded)
 			continue
@@ -64,7 +65,7 @@ func fetchUnisonCandidates(p *lyricsProvider, track lyrics.TrackInfo, deadline t
 		break
 	}
 	if found != nil {
-		return []lyricsCandidate{*found}, health, nil
+		return []lyric.Candidate{*found}, health, nil
 	}
 	if len(lookupErrors) > 0 {
 		return nil, health, errors.Join(lookupErrors...)
@@ -130,7 +131,7 @@ func unisonRequestURLWithoutOptionalMetadata(track lyrics.TrackInfo) (string, bo
 
 func buildUnisonRequestURL(track lyrics.TrackInfo, includeAlbum, includeDuration bool) (string, bool) {
 	title := strings.TrimSpace(track.Title)
-	artist := trackArtist(track)
+	artist := lyric.TrackArtist(track)
 	if title == "" || artist == "" {
 		return "", false
 	}

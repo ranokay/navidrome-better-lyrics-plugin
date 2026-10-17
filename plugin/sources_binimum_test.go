@@ -8,6 +8,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
 
 func binimumFixture(t *testing.T) []byte {
@@ -17,23 +18,6 @@ func binimumFixture(t *testing.T) []byte {
 		t.Fatalf("read fixture: %v", err)
 	}
 	return raw
-}
-
-func TestArtistMatcherFailsClosedWithoutNameTokens(t *testing.T) {
-	t.Parallel()
-
-	// A name that collapses to no alphanumerics identifies nothing: it must
-	// not alias every returned artist (an empty collaborator split used to
-	// accept any row).
-	if artistTokensMatch("Oasis", "???") {
-		t.Fatal("a punctuation-only wanted artist matched Oasis")
-	}
-	if artistTokensMatch("???", "???") {
-		t.Fatal("two punctuation-only artists collapsed into a match")
-	}
-	if artistTokensMatch("???", "Oasis") {
-		t.Fatal("a punctuation-only returned artist matched Oasis")
-	}
 }
 
 func TestBinimumCandidates_PreservesTTML(t *testing.T) {
@@ -61,10 +45,10 @@ func TestBinimumCandidates_PreservesTTML(t *testing.T) {
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want one", candidates)
 	}
-	if candidate := candidates[0]; candidate.quality == timingUnsynced {
-		t.Fatalf("candidate quality = %v, want graded TTML timing", candidate.quality)
+	if candidate := candidates[0]; candidate.Quality == lyric.TimingUnsynced {
+		t.Fatalf("candidate quality = %v, want graded TTML timing", candidate.Quality)
 	} else {
-		assertLyricsSource(t, candidate.response.Source, "BiniLyrics", "ttml")
+		assertLyricsSource(t, candidate.Response.Source, "BiniLyrics", "ttml")
 	}
 }
 
