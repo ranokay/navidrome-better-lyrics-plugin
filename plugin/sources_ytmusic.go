@@ -255,7 +255,7 @@ func ytmusicWalk(node any, visit func(map[string]any)) {
 // ytmusicRenderHit reads one renderer's fields: the video id, the rendered
 // length, the title column, and the artist column.
 func ytmusicRenderHit(renderer map[string]any) ytmusicSearchHit {
-	hit := ytmusicSearchHit{videoID: ytmusicFindString(renderer, "videoId", 3)}
+	hit := ytmusicSearchHit{videoID: ytmusicFindString(renderer, "videoId", 6)}
 	if lengthText, ok := renderer["lengthText"].(map[string]any); ok {
 		if text := ytmusicFirstRunText(lengthText); text != "" {
 			if parsed, err := parseYTMusicDuration(text); err == nil {

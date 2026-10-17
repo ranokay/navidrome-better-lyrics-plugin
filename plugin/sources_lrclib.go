@@ -33,7 +33,13 @@ func fetchLRCLibLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 		// guaranteed to describe the requested recording, so the returned
 		// identity must match before the record can win (Devin: an unrelated
 		// same-shape record would otherwise become the cached winner).
-		if lrclibRecordMatches(response, track) {
+		matched, gateErr := lrclibRecordMatches(response, track)
+		if gateErr != nil {
+			// A malformed 200 must stay a retryable provider failure, not
+			// melt into a cacheable miss (Greptile).
+			return nil, lookupDegraded, gateErr
+		}
+		if matched {
 			candidate, candErr := lrclibCandidate(p, response)
 			if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
 				return nil, lookupDegraded, candErr
@@ -201,20 +207,21 @@ type lrclibRecord struct {
 }
 
 // lrclibRecordMatches gates a raw /api/get payload on the returned identity
-// and duration before its lyrics may win.
-func lrclibRecordMatches(record []byte, track lyrics.TrackInfo) bool {
+// and duration before its lyrics may win. Decode failures return an error so
+// broken replies stay retryable instead of becoming cached misses (Greptile).
+func lrclibRecordMatches(record []byte, track lyrics.TrackInfo) (bool, error) {
 	var payload struct {
 		TrackName  string  `json:"trackName"`
 		ArtistName string  `json:"artistName"`
 		Duration   float64 `json:"duration"`
 	}
 	if err := json.Unmarshal(record, &payload); err != nil {
-		return false
+		return false, fmt.Errorf("decode LRCLib record: %w", err)
 	}
 	if !lrclibMetadataMatches(payload.TrackName, payload.ArtistName, track) {
-		return false
+		return false, nil
 	}
-	return lrclibDurationsClose(payload.Duration, track)
+	return lrclibDurationsClose(payload.Duration, track), nil
 }
 
 // lrclibRecordMetadataMatches is the search-row variant of the identity gate.

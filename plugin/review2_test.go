@@ -1504,15 +1504,19 @@ func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
 	// playlist extract, then the description shelf (synthetic bodies mirror
 	// the probes).
 	requests := 0
+	nextRequestBody := ""
 	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		requests++
+		if strings.Contains(request.URL, "v1/next") {
+			nextRequestBody = string(request.Body)
+		}
 		switch {
 		case strings.Contains(request.URL, "v1/search"):
 			// Realistic renderer shape: identity columns and arrays sit
 			// between the video id and the rendered length, and the first
 			// row is an unrelated song with the requested runtime (Devin).
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"contents":{"sectionListRenderer":{"contents":[{"musicShelfRenderer":{"contents":[
-				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"overlay":{"musicItemThumbnailOverlayRenderer":{"content":{"playButton":{"watchEndpoint":{"videoId":"AAAAiBz2lyT"}}}}}}},
+				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Other Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"AAAAAAAAA01"}}},
 				{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"JGwWNGJdvx8"}}}
 			]}}]}}}`)}, nil
 		case strings.Contains(request.URL, "v1/next"):
@@ -1547,6 +1551,9 @@ func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
 	}
 	if requests != 3 {
 		t.Fatalf("requests = %d, want search+next+browse", requests)
+	}
+	if !strings.Contains(nextRequestBody, `"videoId":"JGwWNGJdvx8"`) {
+		t.Fatalf("next body = %q, want the identity-matched video id (the unrelated row must be rejected by the title/artist gate)", nextRequestBody)
 	}
 }
 
@@ -1904,5 +1911,45 @@ func TestMusixmatchRejectsUnrelatedSearchRows(t *testing.T) {
 	candidates, health, err := fetchMusixmatchLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song A", Artist: "Artist A", Duration: 240}, time.Now().Add(stageOneLookupBudget))
 	if err != nil || len(candidates) != 0 || health != lookupHealthy {
 		t.Fatalf("result = %#v/%v/%v; want a clean miss", candidates, health, err)
+	}
+}
+
+func TestCredentialSaltFallbackStaysConsistent(t *testing.T) {
+	t.Parallel()
+
+	// When the store refuses the salt write, every fingerprint in this
+	// process must share the same fallback — memoizing an unsaved random salt
+	// would split fingerprints mid-process (Greptile).
+	cache := newFakeLyricsCache()
+	cache.setError = errors.New("kv read-only")
+	provider := newLyricsProviderWithDeps(nil, cache, time.Now, func(key string) (string, bool) {
+		if key == "betterLyricsApiKey" {
+			return "secret", true
+		}
+		return "", false
+	}, nil)
+
+	first := provider.lyricsCredentialsFingerprint()
+	second := provider.lyricsCredentialsFingerprint()
+	if first != second {
+		t.Fatalf("fingerprints split across calls: %q vs %q", first, second)
+	}
+}
+
+func TestLRCLibMalformedExactRecordStaysDegraded(t *testing.T) {
+	t.Parallel()
+
+	// A malformed 200 from /api/get is a retryable provider failure, not a
+	// metadata mismatch that melts into a cached miss (Greptile).
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName": oops`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+
+	_, health, err := fetchLRCLibLyricsCandidates(provider, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(stageOneLookupBudget))
+	if err == nil || health != lookupDegraded {
+		t.Fatalf("result = (%v, %v); want a degraded decode failure", err, health)
 	}
 }

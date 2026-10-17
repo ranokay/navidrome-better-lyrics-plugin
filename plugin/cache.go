@@ -264,10 +264,13 @@ func (p *lyricsProvider) credentialSalt() []byte {
 	if _, err := rand.Read(salt); err != nil {
 		return cacheCredentialPepper
 	}
-	p.credentialSaltBytes = salt
 	if p.cache.SetWithTTL(credentialSaltKey, salt, credentialSaltTTL) != nil {
+		// Keep the fallback consistent while the store refuses writes: the
+		// next call retries the mint so a recovered store gets one stable
+		// salt instead of splitting fingerprints mid-process (Greptile).
 		return cacheCredentialPepper
 	}
+	p.credentialSaltBytes = salt
 	return salt
 }
 
