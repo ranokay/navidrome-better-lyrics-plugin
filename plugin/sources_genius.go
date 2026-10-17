@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"html"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -21,7 +22,7 @@ const (
 var (
 	geniusScriptPattern     = regexp.MustCompile(`(?s)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
 	geniusBreakPattern      = regexp.MustCompile(`<br\s*/?>`)
-	geniusBlockClosePattern = regexp.MustCompile(`</(?:p|div|h\d[^>]*)>`)
+	geniusBlockClosePattern = regexp.MustCompile(`</(?:p|div|h[1-6][^>]*|li|ul|ol)>`)
 	geniusTagPattern        = regexp.MustCompile(`<[^>]*>`)
 )
 
@@ -36,7 +37,7 @@ func fetchGeniusLyricsCandidates(p *lyricsProvider, track lyrics.TrackInfo, dead
 		return nil, lookupHealthy, nil
 	}
 
-	searchURL := geniusSearchEndpoint + "?q=" + title + " " + artist
+	searchURL := geniusSearchEndpoint + "?" + url.Values{"q": {title + " " + artist}}.Encode()
 	response, err := p.sendRequest("Genius search", searchURL, geniusPageHeaders(), deadline)
 	if err != nil {
 		return nil, lookupDegraded, err
@@ -155,12 +156,14 @@ func geniusPageHeaders() map[string]string {
 
 // geniusLyricsText extracts the plain text from the song page: the lyric body
 // rides the Lyrics__Root segment between the first lyric container and the
-// footer. Header containers ("Contributors", language lists, "Read More")
-// ride the same attribute and get dropped; line breaks come from <br> and
-// block closes; entities decode; the embed's escaped angular brackets unfold.
+// footer. Page chrome (the contributors/language/song-bio header block and
+// the editor rails) is removed by its HTML elements with a balanced scan —
+// never by line-text substrings, which would eat real lyric lines ("Genius
+// of love" — Greptile). Line breaks come from <br> and block closes; entities
+// decode; the embed's escaped angular brackets unfold.
 func geniusLyricsText(page []byte, title string) string {
 	document := string(page)
-	start := strings.Index(document, `data-lyrics-container="true"`)
+	start := strings.Index(document, `<div data-lyrics-container="true"`)
 	if start < 0 {
 		return ""
 	}
@@ -168,6 +171,7 @@ func geniusLyricsText(page []byte, title string) string {
 	if marker := strings.Index(segment, "LyricsFooter"); marker > 0 {
 		segment = segment[:marker]
 	}
+	segment = removeGeniusChromeByElements(segment)
 
 	text := geniusScriptPattern.ReplaceAllString(segment, "")
 	text = geniusBreakPattern.ReplaceAllString(text, "\n")
@@ -180,7 +184,7 @@ func geniusLyricsText(page []byte, title string) string {
 		line = strings.TrimSpace(line)
 		line = strings.ReplaceAll(line, "\\u003c", "<")
 		line = strings.ReplaceAll(line, "\\u003e", ">")
-		if line == "" || linesIsChrome(line) {
+		if line == "" {
 			continue
 		}
 		if title != "" && line == title+" Lyrics" {
@@ -191,14 +195,90 @@ func geniusLyricsText(page []byte, title string) string {
 	return strings.Join(lines, "\n")
 }
 
-// linesIsChrome drops the editor sparkline around the lyric body: contributor
-// credits, the language picker, and the read-more expansion rail never belong
-// to the published lyric text.
-func linesIsChrome(line string) bool {
-	for _, marker := range []string{"Contributors", "Read More", "Translations", "Read more", "Add an annotation", "Genius"} {
-		if strings.Contains(line, marker) {
-			return true
+// geniusChromeClassName walks those containers whose entire subgroup is page
+// chrome: the contributors/language/song-bio header and the editor rails. The
+// footer is excluded from the cut list because the lyrics slice already ends
+// at the footer marker; anywhere else the Balanced scan keeps real lyric
+// words inside intact. The matched anchor must live inside a `<div ...>`
+// opening tag, so `<aside>`-hosted chrome never eats other elements.
+var geniusChromePattern = regexp.MustCompile(`class="[^"]*(?:LyricsHeader__Container|SongBioPreview|LyricsEdit-desktop|LyricsEditExplainer|ContributorsCreditSong)`)
+
+// removeGeniusChromeByElements cuts every geniusChromePattern `<div>` subtree
+// with a balanced scan so the surrounding lyrics keep their markup order. The
+// scan walks open/close tags with a name stack; self-closing and void tags
+// skip. A mis-shapen page loses at most a bounded tail instead of looping.
+func removeGeniusChromeByElements(document string) string {
+	searchFrom := 0
+	for {
+		loc := findGeniusChromeDiv(document, searchFrom)
+		if loc < 0 {
+			return document
+		}
+		end := findGeniusElementEnd(document, loc)
+		document = document[:loc] + document[end:]
+		searchFrom = loc
+	}
+}
+
+// findGeniusChromeDiv locates the next chrome anchor whose owning tag is an
+// opening `<div ...>`; anchors that ride non-div elements (an `<aside class>`
+// footer forscénario) get skipped without cutting.
+func findGeniusChromeDiv(document string, from int) int {
+	for search := from; search <= len(document); {
+		anchor := geniusChromePattern.FindStringSubmatchIndex(document[search:])
+		if anchor == nil {
+			return -1
+		}
+		absStart := search + anchor[0]
+		tagStart := strings.LastIndex(document[:absStart], "<div ")
+		if tagStart >= 0 && !strings.Contains(document[tagStart:absStart], ">") {
+			return tagStart
+		}
+		if anchor[1] == 0 {
+			return -1
+		}
+		search = absStart + 1
+	}
+	return -1
+}
+
+var geniusTokenPattern = regexp.MustCompile(`<(/?)([a-zA-Z0-9]+)[^>]*?(/?)>`)
+
+var geniusVoidTags = map[string]bool{
+	"img": true, "br": true, "hr": true, "input": true,
+	"meta": true, "link": true, "source": true, "circle": true,
+	"path": true, "rect": true, "line": true, "use": true,
+}
+
+// findGeniusElementEnd returns the index just past the `</div>` that closes
+// the element opened at openStart, counting only div opens/closes — genius's
+// chrome containers are div-only trees, and `<br/>`/`<path/>` interiors hold
+// no divs in the captured pages.
+func findGeniusElementEnd(document string, openStart int) int {
+	depth := 0
+	cursor := openStart
+	for cursor < len(document) {
+		nextOpen := strings.Index(document[cursor:], "<div")
+		nextClose := strings.Index(document[cursor:], "</div")
+		switch {
+		case nextClose >= 0 && (nextOpen < 0 || nextClose <= nextOpen):
+			at := cursor + nextClose
+			depth--
+			after := at + len("</div")
+			if depth == 0 {
+				closeEnd := strings.IndexByte(document[after:], '>')
+				if closeEnd < 0 {
+					return len(document)
+				}
+				return after + closeEnd + 1
+			}
+			cursor = after
+		case nextOpen >= 0:
+			depth++
+			cursor += nextOpen + len("<div")
+		default:
+			return len(document)
 		}
 	}
-	return false
+	return len(document)
 }

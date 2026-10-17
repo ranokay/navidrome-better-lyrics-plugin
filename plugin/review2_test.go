@@ -1597,3 +1597,49 @@ func TestGeniusChain_ScapesMatchedSong(t *testing.T) {
 		t.Fatalf("gated = %#v/%v/%v, want a clean miss without a metadata match", candidates, hitHealth, err2)
 	}
 }
+
+func TestGeniusSearchEscapesQueryPunctuation(t *testing.T) {
+	t.Parallel()
+
+	// Song metadata reaches the query verbatim: "&", "#", and "+" in titles
+	// break or truncate the search, so every new provider must encode its
+	// query (Greptile P1).
+	requests := 0
+	provider := newLyricsProvider(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		requests++
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"response":{"hits":[]}}`)}, nil
+	})
+
+	fetchGeniusLyricsCandidates(provider, lyrics.TrackInfo{Title: "Love & Hate", Artist: "Artist #1"}, time.Now().Add(stageOneLookupBudget))
+	if requests == 0 {
+		t.Fatal("genius search made no request")
+	}
+}
+
+func TestGeniusKeepsLyricLinesWithChromeWords(t *testing.T) {
+	t.Parallel()
+
+	// Chrome removal works on elements, not lyric words: a line containing
+	// "Genius" is real lyrical content and must survive (Greptile P2).
+	page := []byte(`<!DOCTYPE html><html><body><div data-lyrics-container="true" class="Lyrics__Container">
+		<div class="LyricsHeader__Container"><button class="ContributorsCreditSong__Container">441 Contributors</button>
+		<h1>Love &amp; Hate Lyrics</h1>
+		<div class="SongBioPreview"><p>The song was written in a rush <a href="#">Read More</a></p></div>
+		<ul><li>Türkçe</li><li>Other</li></ul>
+		<p>Some Metadata</p>
+		</div>
+		<div class="Lyrics__Container-sc" data-lyrics-container="true">[Pre-Chorus]<br/>Genius of love<br/>we keep on</div>
+		<aside class="LyricsFooter__Container">Source</aside></body></html>`)
+
+	text := geniusLyricsText(page, "Love & Hate")
+	for _, want := range []string{"[Pre-Chorus]", "Genius of love", "we keep on"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("text = %q, want the lyric line %q kept (chrome removal must be element-scoped)", text, want)
+		}
+	}
+	for _, gone := range []string{"441 Contributors", "Türkçe", "Some Metadata", "Love & Hate Lyrics", "Read More"} {
+		if strings.Contains(text, gone) {
+			t.Fatalf("text = %q, want the page chrome %q removed", text, gone)
+		}
+	}
+}
