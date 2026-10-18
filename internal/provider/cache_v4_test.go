@@ -38,7 +38,7 @@ func TestLyricsProvider_WinnerTTLFollowsTimingQuality(t *testing.T) {
 		text   string
 		want   int64
 	}{
-		{name: "syllable winners live a day", format: "ttml", text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">x</tt>", want: syncedLyricsCacheTTLSeconds},
+		{name: "syllable winners live a day", format: "ttml", text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">x</span></p></tt>", want: syncedLyricsCacheTTLSeconds},
 		{name: "word winners live an hour", format: "elrc", text: "[00:01.00]<00:01.10>word", want: unsyncedLyricsCacheTTLSeconds},
 		{name: "line winners live an hour", format: "lrc", text: "[00:01.00]line", want: unsyncedLyricsCacheTTLSeconds},
 		{name: "unsynced winners live five minutes", format: "plain", text: "plain text", want: negativeLyricsCacheTTLSeconds},
@@ -122,7 +122,7 @@ func TestLyricsProvider_PerSourceCacheReusesResultsAcrossReorders(t *testing.T) 
 
 	cache := newFakeLyricsCache()
 	lineText := "[00:01.00]line"
-	dayText := "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">day</tt>"
+	dayText := "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">day</span></p></tt>"
 	networkSources := []source.Source{
 		stubFetchedCandidate("one", "stub", "lrc", lineText),
 		stubFetchedCandidate("two", "stub", "ttml", dayText),
@@ -134,6 +134,12 @@ func TestLyricsProvider_PerSourceCacheReusesResultsAcrossReorders(t *testing.T) 
 		t.Fatalf("first GetLyrics() error = %v, want nil", err)
 	}
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	assertLyricsSource(t, result.Source, "stub", "lrc")
+	provider.runSweep(track)
+	result, err = provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("GetLyrics() after sweep error = %v, want nil", err)
+	}
 	for _, source := range networkSources {
 		if _, ok := provider.readCachedSourceCandidate(track, source.ID); !ok {
 			t.Fatalf("source %q result missing from per-source cache", source.ID)
@@ -304,7 +310,7 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 		ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
 		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
 			callsTwo++
-			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"}, "stub", "ttml")}, source.Healthy, nil
+			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">rich</span></p></tt>"}, "stub", "ttml")}, source.Healthy, nil
 		},
 	}
 	cache := newFakeLyricsCache()
@@ -327,7 +333,7 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 
 	// The sweep lands the syllable result for the previously skipped source.
 	walkProvider.cacheSourceCandidate(track, "two", lyric.NewCandidate(
-		lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">rich</tt>"},
+		lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">rich</span></p></tt>"},
 		"stub", "ttml"))
 
 	reread := newTestProviderWithSources(nil, cache, func() time.Time { return now }, sources, func(lyrics.TrackInfo) error { return nil })

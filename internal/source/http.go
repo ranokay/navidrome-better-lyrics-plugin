@@ -106,6 +106,17 @@ func IsGlobalRateLimitError(err error) bool {
 	return errors.As(err, &cooldownErr) && cooldownErr.global
 }
 
+// IsRateLimitError distinguishes provider throttling from an ordinary outage.
+// The provider's Retry-After policy must not be replaced by failure backoff.
+func IsRateLimitError(err error) bool {
+	var responseErr *providerHTTPError
+	if errors.As(err, &responseErr) {
+		return responseErr.status == 429 || responseErr.retryAfterSeconds > 0
+	}
+	var cooldownErr *rateLimitCooldownError
+	return errors.As(err, &cooldownErr)
+}
+
 func globalRateLimit(response *host.HTTPResponse) bool {
 	limitType := strings.ToLower(strings.TrimSpace(headerValue(response.Headers, "X-RateLimit-Type")))
 	if limitType != "" {

@@ -34,19 +34,27 @@ func (p *Provider) responsesWithVariants(track lyrics.TrackInfo, sources []sourc
 	}
 
 	for _, src := range sources {
-		if seen[src.Display] {
-			continue
-		}
 		candidate, ok := p.readCachedSourceCandidate(track, src.ID)
 		if !ok || !candidate.Present() {
 			continue
 		}
-		seen[src.Display] = true
+		// Some fetchers return a dynamic upstream label rather than the
+		// catalog display name. Deduplicate by that returned identity, which
+		// also prevents repeating the winner under its catalog alias.
+		candidateProviders := make(map[string]bool)
 		for _, text := range candidate.Response.Lyrics {
 			if text.Source == nil {
 				text.Source = candidate.Response.Source
 			}
+			provider := sourceProvider(text.Source)
+			if provider != "" && seen[provider] {
+				continue
+			}
 			entries = append(entries, text)
+			candidateProviders[provider] = true
+		}
+		for provider := range candidateProviders {
+			seen[provider] = true
 		}
 	}
 

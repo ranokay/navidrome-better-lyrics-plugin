@@ -34,10 +34,10 @@ func lrcCandidate(word bool) lyric.Candidate {
 }
 
 func ttmlCandidate(quality string) lyric.Candidate {
-	return lyric.NewCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"" + quality + "\">x</tt>"}, "two", "ttml")
+	return lyric.NewCandidate(lyrics.LyricsText{Text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"" + quality + "\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">x</span></p></tt>"}, "two", "ttml")
 }
 
-func TestLyricsProvider_StageOneWalksFirstThreeImplementedSources(t *testing.T) {
+func TestLyricsProvider_StageOneStopsAtFirstSynchronizedSource(t *testing.T) {
 	t.Parallel()
 
 	var calls []string
@@ -66,13 +66,13 @@ func TestLyricsProvider_StageOneWalksFirstThreeImplementedSources(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	if want := []string{"one", "two", "three"}; !equalStrings(calls, want) {
-		t.Fatalf("walked sources = %v, want %v (stage one stops after three)", calls, want)
+	if want := []string{"one", "two"}; !equalStrings(calls, want) {
+		t.Fatalf("walked sources = %v, want %v (first synchronized source is ready)", calls, want)
 	}
 	assertLyricsSource(t, result.Source, "two", "ttml")
 }
 
-func TestLyricsProvider_StageOneStopsEarlyOnSyllable(t *testing.T) {
+func TestLyricsProvider_StageOneDoesNotWaitToUpgradeWordTiming(t *testing.T) {
 	t.Parallel()
 
 	var calls []string
@@ -92,8 +92,8 @@ func TestLyricsProvider_StageOneStopsEarlyOnSyllable(t *testing.T) {
 	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}}); err != nil {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
-	if want := []string{"first", "second"}; !equalStrings(calls, want) {
-		t.Fatalf("walked sources = %v, want %v (syllable result ends the walk)", calls, want)
+	if want := []string{"first"}; !equalStrings(calls, want) {
+		t.Fatalf("walked sources = %v, want %v (word timing is ready)", calls, want)
 	}
 }
 

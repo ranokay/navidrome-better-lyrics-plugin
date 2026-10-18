@@ -40,8 +40,8 @@ func TestLyricsProvider_GetLyrics(t *testing.T) {
 		{
 			name:         "returns TTML unchanged",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\">timed text</tt>\n"}`)},
-			wantText:     "  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\">timed text</tt>\n",
+			response:     &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">timed text</span></p></tt>\n"}`)},
+			wantText:     "  <tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\" xml:lang=\"en\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">timed text</span></p></tt>\n",
 			wantProvider: "Better Lyrics",
 			wantFormat:   "ttml",
 			wantRequests: 1,
@@ -96,7 +96,7 @@ func TestLyricsProvider_GetLyrics(t *testing.T) {
 			name:         "surfaces transport failure",
 			track:        lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
 			sendError:    errors.New("network unavailable"),
-			wantError:    "request Better Lyrics API: network unavailable",
+			wantError:    "request Better Lyrics API: HTTP transport failed",
 			wantRequests: 3,
 		},
 		{
@@ -164,7 +164,7 @@ func TestLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
 		requests++
 		return &host.HTTPResponse{
 			StatusCode: 200,
-			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached lyrics</tt>"}`),
+			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">cached lyrics</span></p></tt>"}`),
 		}, nil
 	}, cache, time.Now)
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +65,27 @@ func (p *Provider) lyricsCredentialsFingerprint() string {
 	mac.Write([]byte(config.BetterLyricsAPIKey))
 	mac.Write([]byte{0})
 	mac.Write([]byte(config.MusixmatchUserToken))
+	return fmt.Sprintf("%x", mac.Sum(nil)[:8])
+}
+
+// Positive results stay usable for display after a credential change, but only
+// a result fetched with the relevant current credential covers fresh discovery.
+// Unrelated credentials must not invalidate a healthy source's coverage.
+func (p *Provider) sourceCredentialsFingerprint(sourceID string) string {
+	config := readProviderConfig(p.configLookup)
+	var credential string
+	switch {
+	case sourceID == "better-lyrics" || strings.HasPrefix(sourceID, "better-lyrics-"):
+		credential = config.BetterLyricsAPIKey
+	case sourceID == "musixmatch":
+		credential = config.MusixmatchUserToken
+	default:
+		return ""
+	}
+	mac := hmac.New(sha256.New, p.credentialSalt())
+	mac.Write([]byte(sourceID))
+	mac.Write([]byte{0})
+	mac.Write([]byte(credential))
 	return fmt.Sprintf("%x", mac.Sum(nil)[:8])
 }
 

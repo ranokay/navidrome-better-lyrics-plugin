@@ -46,6 +46,7 @@ func TestProvider_ServesEveryCachedSourceAsAVariant(t *testing.T) {
 		variantSource("three", "line text", "lrc"),
 	}
 	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	provider.runSweep(track)
 
 	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
@@ -77,6 +78,7 @@ func TestProvider_ServesVariantsFromCacheOnReplays(t *testing.T) {
 		variantSource("three", "line text", "lrc"),
 	}
 	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	provider.runSweep(track)
 
 	first, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {
@@ -108,6 +110,7 @@ func TestProvider_SkipsCachedMissesWhenServingVariants(t *testing.T) {
 	if !provider.cacheSourceMiss(track, "three") {
 		t.Fatal("cacheSourceMiss() = false, want the miss marker to be stored")
 	}
+	provider.runSweep(track)
 
 	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 	if err != nil {

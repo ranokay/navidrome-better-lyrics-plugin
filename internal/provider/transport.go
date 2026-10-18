@@ -22,7 +22,7 @@ func (p *Provider) Do(source, method, requestURL string, body []byte, headers ma
 		TimeoutMs: timeout,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", source, err)
+		return nil, fmt.Errorf("request %s: %w", source, safeTransportError(err))
 	}
 	if response == nil {
 		return nil, fmt.Errorf("%s returned no response", source)

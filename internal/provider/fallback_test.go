@@ -24,8 +24,8 @@ func TestLyricsProvider_FallbackOrder(t *testing.T) {
 	}{
 		{
 			name:             "returns Unison TTML before trying Kugou",
-			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">unison rich</tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
-			wantText:         `<tt xmlns:itunes="urn:itunes" itunes:timing="Syllable">unison rich</tt>`,
+			unisonResponse:   &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">unison rich</span></p></tt>","format":"ttml","language":"ko","syncType":"richsync"}}`)},
+			wantText:         `<tt xmlns:itunes="urn:itunes" itunes:timing="Syllable"><p begin="1" end="2"><span begin="1" end="2">unison rich</span></p></tt>`,
 			wantLanguage:     "ko",
 			wantProvider:     "Unison",
 			wantFormat:       "ttml",
@@ -39,7 +39,7 @@ func TestLyricsProvider_FallbackOrder(t *testing.T) {
 			wantLanguage:     "en",
 			wantProvider:     "Unison",
 			wantFormat:       "lrc",
-			wantRequestCount: 5,
+			wantRequestCount: 4,
 		},
 		{
 			name:             "prefers synchronized Kugou over Unison plain text",
@@ -151,12 +151,11 @@ func TestLyricsProvider_UsesUnisonWhenBetterLyricsFails(t *testing.T) {
 		t.Fatalf("GetLyrics() lyrics = %#v, want Unison LRC", result.Lyrics)
 	}
 	assertLyricsSource(t, result.Source, "Unison", "lrc")
-	if len(requests) != 3 {
-		t.Fatalf("GetLyrics() request count = %d, want 3 (Better Lyrics, Unison, Kugou sweep)", len(requests))
+	if len(requests) != 2 {
+		t.Fatalf("GetLyrics() request count = %d, want 2 (Better Lyrics then Unison)", len(requests))
 	}
 	assertRequestEndpoint(t, requests[0], "https://lyrics-api.boidu.dev/getLyrics")
 	assertRequestEndpoint(t, requests[1], "https://unison.boidu.dev/lyrics")
-	assertRequestEndpoint(t, requests[2], "https://lyrics-api.boidu.dev/kugou/getLyrics")
 }
 
 func TestLyricsProvider_UsesKugouAfterBetterLyricsFailureAndUnisonPlainText(t *testing.T) {
@@ -196,7 +195,7 @@ func TestLyricsProvider_RetriesWithoutOptionalMetadata(t *testing.T) {
 
 	responses := []*host.HTTPResponse{
 		{StatusCode: 401, Body: []byte(`{"error":"API key required"}`)},
-		{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached lyrics</tt>"}`)},
+		{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">cached lyrics</span></p></tt>"}`)},
 	}
 	var requests []host.HTTPRequest
 	provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
@@ -257,7 +256,7 @@ func TestLyricsProvider_BroadensBetterLyricsWithoutDroppingDurationFirst(t *test
 		if len(requests) < 3 {
 			return &host.HTTPResponse{StatusCode: 404}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">cached broad match</tt>"}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">cached broad match</span></p></tt>"}`)}, nil
 	})
 
 	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
@@ -352,7 +351,7 @@ func TestLyricsProvider_BroadensAfterAnEmptyTTMLHit(t *testing.T) {
 		if parsed.Query().Has("al") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":""}`)}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">broader cached match</tt>"}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">broader cached match</span></p></tt>"}`)}, nil
 	})
 
 	result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
