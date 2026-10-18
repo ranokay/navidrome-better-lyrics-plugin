@@ -2,7 +2,7 @@
 
 # Navidrome Better Lyrics plugin
 
-A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. Version 0.3.0 resolves tracks through seventeen configurable sources — the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, Musixmatch, NetEase, Soda (Luna), PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
+A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. It resolves tracks through seventeen configurable sources, including the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, Musixmatch, NetEase, Soda (Luna), PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
 
 The plugin does not inject or replace Navidrome's interface. It returns TTML, enhanced LRC, or plain lyrics through Navidrome's Lyrics capability, converting proprietary word-timed formats into enhanced LRC so compatible clients can render word-level highlighting.
 
@@ -55,14 +55,18 @@ With the priority above, Navidrome stops at the first non-empty source. Sidecar 
 
 The plugin walks the enabled sources in configured order:
 
-1. **Stage one — first paint.** On a cache miss it queries the top few implemented
-   sources under an 8-second budget, stopping as soon as a syllable-timed result
-   lands, and returns the best candidate found ( Higher timing quality always wins:
-   syllable > word > line > unsynced ). Word-synced payloads from proprietary
-   formats (QRC, KRC, YRC, LYL, richsync, WSY) are converted to enhanced LRC.
+1. **Stage one: first paint.** On a cache miss it queries up to three enabled
+   sources under a two-second total budget, giving each source at most 750 ms.
+   It returns the first usable synchronized result. Plain text remains a fallback.
+   Word-synced payloads from proprietary formats (QRC, KRC, YRC, LYL, richsync,
+   WSY) are converted to enhanced LRC, including the final word's end marker.
 2. **Stage two — background sweep.** The same lookup enqueues a task that walks
    *every* enabled source for the track and caches each result separately, so the
-   per-song source picker (pending [navidrome/navidrome#6033](https://github.com/navidrome/navidrome/pull/6033)) fills in progressively and returns instantly on replays.
+   per-song source picker (pending [navidrome/navidrome#6033](https://github.com/navidrome/navidrome/pull/6033)) can offer the cached alternatives. Responses return the
+   winner first and label each alternative with its provider and format.
+   Later lookups rank cached results by syllable, word, line, then plain timing.
+   Showing background discoveries automatically requires the matching Navidrome
+   UI changes; stock hosts do not poll for them.
 
 Selection and caching rules:
 
@@ -70,21 +74,33 @@ Selection and caching rules:
   source list, so reordering sources in Settings takes effect on the next lookup.
   Winner TTLs follow timing quality: 24 h for syllable TTML, 1 h for word/line,
   5 min for plain text and complete misses. Per-source results cache for 24 h
-  (synchronized) or 1 h (plain).
+  (synchronized) or 1 h (plain). Per-source clean misses expire after five
+  minutes. Changing a source's credential keeps old positive lyrics readable
+  while allowing the sweep to refresh that source with the new credential.
 - The Better Lyrics endpoints keep their specificity tiers: full
   metadata → without album → title+artist only, with identical-URL dedup. Unison
   follows the same broadening after clean misses. Other sources use a single
   query scoped by a duration drift of at most two seconds. The `401` behavior is
   cache-only ("possibly exists, but not anonymously"), and an optional API key
   turns it into a clean miss.
-- Independent source failures don't block later sources; a global rate limit
+- Independent source failures leave time for later sources; a global rate limit
   observed from one endpoint pauses its sibling endpoints for the rest of that
   lookup and for the cooldown duration. Retry-After values (capped at one hour)
   are honored, with conservative per-source default cooldowns. Provider cooldowns
   persist across plugin instances when the KV store is available; cache/cooldown
-  storage failures fail open rather than making lyrics unavailable.
-- Each HTTP request can run for at most six seconds; the synchronous stage runs
-  under an eight-second budget.
+  storage failures fail open rather than making lyrics unavailable. Ordinary
+  outages get a shared, source-specific retry backoff of five seconds, doubling
+  to at most one minute. Exhausting a foreground allowance defers work to the
+  sweep instead of marking the source as broken.
+- Each background HTTP request can run for at most six seconds. Foreground
+  requests use the smaller remaining source and lookup budgets. The blocking
+  WASI host HTTP interface still runs requests sequentially.
+- [Measured through a local Navidrome build](docs/research/latency-2026-10-18.md):
+  five live cold lookups returned in 113–395 ms. With every provider stalled,
+  the median response fell from 18.05 s to 2.04 s. These small samples measure
+  endpoint latency, including failures, rather than browser paint time.
+- Enhanced LRC preserves the last word's end. Intermediate silence and arbitrary
+  voice metadata remain limited by that format and the host parser.
 - Sources that ship disabled by default (`luna-beat`, `apple-lyrically`) query
   community mirrors with unclear distribution rights; enable them deliberately
   in Settings → Plugins → Better Lyrics.
