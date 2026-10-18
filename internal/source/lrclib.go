@@ -75,9 +75,9 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		return nil, Degraded, fmt.Errorf("decode LRCLib search response: %w", err)
 	}
 	target := int64(math.Round(float64(track.Duration)))
-	var best lrclibRecord
+	var best lyric.Candidate
 	bestDelta := int64(math.MaxInt64)
-	found := false
+	var candidateErrors []error
 	for _, result := range results {
 		// Fuzzy search rows only qualify when their identity matches; the
 		// duration gate then ranks the qualifying candidates, and
@@ -92,28 +92,32 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 				continue
 			}
 		}
-		if delta < bestDelta || !found {
-			best, bestDelta, found = result, delta, true
+		if best.Present() && delta >= bestDelta {
+			continue
+		}
+		rowJSON, err := json.Marshal(result)
+		if err != nil {
+			candidateErrors = append(candidateErrors, fmt.Errorf("re-encode LRCLib match: %w", err))
+			continue
+		}
+		candidate, err := lrclibCandidate(rt, rowJSON)
+		if err != nil {
+			if !errors.Is(err, errNoLRCLibPayload) {
+				candidateErrors = append(candidateErrors, err)
+			}
+			continue
+		}
+		if candidate.Present() {
+			best, bestDelta = candidate, delta
 		}
 	}
-	if !found {
-		return nil, Healthy, nil
+	if best.Present() {
+		return []lyric.Candidate{best}, Healthy, nil
 	}
-
-	bestJSON, err := json.Marshal(best)
-	if err != nil {
-		return nil, Degraded, fmt.Errorf("re-encode LRCLib match: %w", err)
+	if err := errors.Join(candidateErrors...); err != nil {
+		return nil, Degraded, err
 	}
-	matchCandidate, candErr := lrclibCandidate(rt, bestJSON)
-	if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
-		return nil, Degraded, candErr
-	}
-	if candErr != nil || !matchCandidate.Present() {
-		// The duration-matched record is unusable (instrumental, empty): a clean
-		// miss, so later sources still get their turn.
-		return nil, Healthy, nil
-	}
-	return []lyric.Candidate{matchCandidate}, Healthy, nil
+	return nil, Healthy, nil
 }
 
 // fetchLRCLibEndpoint performs one LRCLib HTTP call with the shared status and

@@ -14,13 +14,29 @@ func TestTTMLTimingQuality(t *testing.T) {
 		ttml string
 		want TimingQuality
 	}{
-		{name: "syllable metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><p begin="1"/></tt>`, want: TimingSyllable},
-		{name: "word metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Word"><p begin="1"/></tt>`, want: TimingWord},
-		{name: "line metadata", ttml: `<tt xmlns:i="urn:itunes" i:timing="Line"><p begin="1"/></tt>`, want: TimingLine},
+		{name: "syllable metadata with timed text", ttml: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><p begin="1"><span begin="1" end="2">word</span></p></tt>`, want: TimingSyllable},
+		{name: "word metadata with timed text", ttml: `<tt xmlns:i="urn:itunes" i:timing="Word"><p begin="1"><span begin="1" end="2">word</span></p></tt>`, want: TimingWord},
+		{name: "line metadata with timed text", ttml: `<tt xmlns:i="urn:itunes" i:timing="Line"><p begin="1">line</p></tt>`, want: TimingLine},
+		{name: "metadata alone cannot grade timing", ttml: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><p>plain</p></tt>`, want: TimingUnsynced},
+		{name: "metadata cannot upgrade timed lines", ttml: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><p begin="1">line</p></tt>`, want: TimingLine},
+		{name: "empty timed nodes cannot grade timing", ttml: `<tt xmlns:i="urn:itunes" i:timing="Word"><p begin="1"><span begin="1" end="2"/></p></tt>`, want: TimingUnsynced},
+		{name: "empty timed spans cannot upgrade lines", ttml: `<tt><p begin="1"><span begin="1" end="2"/>line</p></tt>`, want: TimingLine},
 		{name: "timed spans without metadata", ttml: `<tt><p begin="1" end="2"><span begin="1" end="2">word</span></p></tt>`, want: TimingWord},
 		{name: "ignores timed metadata spans", ttml: `<tt><head><text><span begin="1">translation</span></text></head><body><p begin="1">line</p></body></tt>`, want: TimingLine},
 		{name: "timed lines only", ttml: `<tt><p begin="1" end="2">line</p></tt>`, want: TimingLine},
 		{name: "untimed text", ttml: `<tt><p>plain</p></tt>`, want: TimingUnsynced},
+		{name: "invalid begin cannot grade timing", ttml: `<tt><p begin="later">line</p></tt>`, want: TimingUnsynced},
+		{name: "invalid word timing retains line grade", ttml: `<tt><p begin="1"><span begin="NaN">word</span></p></tt>`, want: TimingLine},
+		{name: "reversed range cannot grade timing", ttml: `<tt><p begin="2s" end="1s">line</p></tt>`, want: TimingUnsynced},
+		{name: "empty range cannot grade timing", ttml: `<tt><p begin="1" end="1">line</p></tt>`, want: TimingUnsynced},
+		{name: "zero duration cannot grade timing", ttml: `<tt><p begin="1s" dur="0s">line</p></tt>`, want: TimingUnsynced},
+		{name: "offset units", ttml: `<tt><p begin="1000ms" dur="1s">line</p></tt>`, want: TimingLine},
+		{name: "clock time", ttml: `<tt><p begin="01:02:03.456" end="01:02:05">line</p></tt>`, want: TimingLine},
+		{name: "minute clock time", ttml: `<tt><p begin="3:05.034" end="3:08.123">line</p></tt>`, want: TimingLine},
+		{name: "invalid clock seconds", ttml: `<tt><p begin="1:99.00">line</p></tt>`, want: TimingUnsynced},
+		{name: "invalid clock shape", ttml: `<tt><p begin="1:2:03">line</p></tt>`, want: TimingUnsynced},
+		{name: "negative time", ttml: `<tt><p begin="-1s">line</p></tt>`, want: TimingUnsynced},
+		{name: "timing in metadata cannot grade", ttml: `<tt><head><metadata><p begin="1"><span begin="1">translation</span></p></metadata></head><body><p>plain</p></body></tt>`, want: TimingUnsynced},
 	}
 
 	for _, test := range tests {
@@ -30,6 +46,19 @@ func TestTTMLTimingQuality(t *testing.T) {
 				t.Fatalf("ttmlTimingQuality() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestUntimedTTMLMetadataCannotOutrankTimedLyrics(t *testing.T) {
+	t.Parallel()
+
+	untimed := NewCandidate(lyrics.LyricsText{Text: `<tt xmlns:i="urn:itunes" i:timing="Syllable"><body><p>plain lyrics</p></body></tt>`}, "untimed", "ttml")
+	timed := NewCandidate(lyrics.LyricsText{Text: "[00:01.00]timed lyrics"}, "timed", "lrc")
+	if !untimed.Present() {
+		t.Fatal("untimed TTML must remain available as plain lyrics")
+	}
+	if got := Prefer(untimed, timed).Response.Source.Provider; got != "timed" {
+		t.Fatalf("preferred provider = %q, want timed", got)
 	}
 }
 

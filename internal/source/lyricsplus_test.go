@@ -1,6 +1,7 @@
 package source
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -10,6 +11,120 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
+
+func TestLyricsPlusCandidatesRetainCompleteText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		line    lyricsPlusLine
+		want    string
+		quality lyric.TimingQuality
+	}{
+		{
+			name: "standalone space and zero duration punctuation",
+			line: lyricsPlusLine{Time: 1000, Duration: 1000, Text: "Hello, world!", Syllabus: []lyricsPlusWord{
+				{Time: 1000, Duration: 400, Text: "Hello"},
+				{Time: 1400, Text: ","},
+				{Time: 1400, Text: " "},
+				{Time: 1500, Duration: 500, Text: "world!"},
+			}},
+			want:    "[00:01.00]<00:01.00>Hello<00:01.40>,<00:01.40> <00:01.50>world!<00:02.00>\n",
+			quality: lyric.TimingWord,
+		},
+		{
+			name: "separators live only in complete line",
+			line: lyricsPlusLine{Time: 1000, Duration: 1000, Text: "Hello, world!", Syllabus: []lyricsPlusWord{
+				{Time: 1000, Duration: 500, Text: "Hello"},
+				{Time: 1500, Duration: 500, Text: "world"},
+			}},
+			want:    "[00:01.00]<00:01.00>Hello, <00:01.50>world!<00:02.00>\n",
+			quality: lyric.TimingWord,
+		},
+		{
+			name: "mismatching tokens fall back to complete line",
+			line: lyricsPlusLine{Time: 1000, Duration: 1000, Text: "Hello, world!", Syllabus: []lyricsPlusWord{
+				{Time: 1000, Duration: 500, Text: "different"},
+			}},
+			want:    "[00:01.00]Hello, world!\n",
+			quality: lyric.TimingLine,
+		},
+		{
+			name: "missing words fall back to complete line",
+			line: lyricsPlusLine{Time: 1000, Duration: 1000, Text: "Hello bright world!", Syllabus: []lyricsPlusWord{
+				{Time: 1000, Duration: 500, Text: "Hello"},
+				{Time: 1500, Duration: 500, Text: "world"},
+			}},
+			want:    "[00:01.00]Hello bright world!\n",
+			quality: lyric.TimingLine,
+		},
+		{
+			name: "invalid token timing falls back to complete line",
+			line: lyricsPlusLine{Time: 1000, Duration: 1000, Text: "Hello", Syllabus: []lyricsPlusWord{
+				{Time: -100, Duration: 500, Text: "Hello"},
+			}},
+			want:    "[00:01.00]Hello\n",
+			quality: lyric.TimingLine,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidates := lyricsPlusCandidates(lyricsPlusPayload{Type: "Word", Lyrics: []lyricsPlusLine{test.line}})
+			if len(candidates) != 1 {
+				t.Fatalf("candidates = %#v, want one", candidates)
+			}
+			candidate := candidates[0]
+			if got := candidate.Response.Lyrics[0].Text; got != test.want {
+				t.Fatalf("text = %q, want %q", got, test.want)
+			}
+			if candidate.Quality != test.quality {
+				t.Fatalf("quality = %v, want %v", candidate.Quality, test.quality)
+			}
+		})
+	}
+}
+
+func TestLyricsPlusLiveFixturePreservesEveryLine(t *testing.T) {
+	t.Parallel()
+
+	fixture, err := os.ReadFile("testdata/lyricsplus/get.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload lyricsPlusPayload
+	if err := json.Unmarshal(fixture, &payload); err != nil {
+		t.Fatal(err)
+	}
+	candidates := lyricsPlusCandidates(payload)
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", candidates)
+	}
+	rows := strings.Split(strings.TrimSuffix(candidates[0].Response.Lyrics[0].Text, "\n"), "\n")
+	if len(rows) != len(payload.Lyrics) {
+		t.Fatalf("rendered %d lines, want %d", len(rows), len(payload.Lyrics))
+	}
+	for i, line := range rows {
+		// Remove generated line and word markers to verify the display text.
+		var plain strings.Builder
+		insideMarker := false
+		for _, char := range line {
+			switch char {
+			case '[', '<':
+				insideMarker = true
+			case ']', '>':
+				insideMarker = false
+			default:
+				if !insideMarker {
+					plain.WriteRune(char)
+				}
+			}
+		}
+		if got := plain.String(); got != payload.Lyrics[i].Text {
+			t.Fatalf("line %d = %q, want %q", i, got, payload.Lyrics[i].Text)
+		}
+	}
+}
 
 func TestLyricsPlusCandidates_WordTimingFromLiveFixture(t *testing.T) {
 	t.Parallel()

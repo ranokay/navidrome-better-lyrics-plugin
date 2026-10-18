@@ -1,6 +1,7 @@
 package source
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -10,6 +11,63 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
+
+func TestLRCLibSearchContinuesPastUnusableQualifiedRows(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		row  lrclibRecord
+	}{
+		{name: "instrumental", row: lrclibRecord{Instrumental: true}},
+		{name: "empty", row: lrclibRecord{}},
+		{name: "timestamp only", row: lrclibRecord{SyncedLyrics: "[00:01.00]"}},
+		{name: "malformed word timing", row: lrclibRecord{HasWordSync: true, LyricsFile: "not: [valid"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			first := test.row
+			first.TrackName, first.ArtistName, first.Duration = "Song", "Artist", 200
+			search, err := json.Marshal([]lrclibRecord{
+				first,
+				{TrackName: "Wrong Song", ArtistName: "Artist", Duration: 200, PlainLyrics: "wrong"},
+				{TrackName: "Song", ArtistName: "Artist", Duration: 201, SyncedLyrics: "[00:01.00]usable line"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				if strings.Contains(request.URL, "/api/get") {
+					return &host.HTTPResponse{StatusCode: 404}, nil
+				}
+				return &host.HTTPResponse{StatusCode: 200, Body: search}, nil
+			})
+			candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
+			if err != nil || health != Healthy || len(candidates) != 1 {
+				t.Fatalf("result = %#v/%v/%v, want the usable later match", candidates, health, err)
+			}
+			if got := candidates[0].Response.Lyrics[0].Text; got != "[00:01.00]usable line" {
+				t.Fatalf("lyrics = %q, want usable later match", got)
+			}
+		})
+	}
+}
+
+func TestLRCLibMalformedSearchRowsStayRetryableWithoutUsableFallback(t *testing.T) {
+	t.Parallel()
+
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"trackName":"Song","artistName":"Artist","duration":200,"hasWordSync":true,"lyricsfile":"not: [valid"}]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
+	if len(candidates) != 0 || health != Degraded || err == nil {
+		t.Fatalf("result = %#v/%v/%v, want retryable malformed response", candidates, health, err)
+	}
+}
 
 func TestLRCLibCandidates_PrefersWordSyncedLyricsFile(t *testing.T) {
 	t.Parallel()

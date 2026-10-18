@@ -43,7 +43,7 @@ func TestParseKFamilyLyrics_RelativeAngleTuples(t *testing.T) {
 	}
 
 	output := EnhancedLRC(lines)
-	want := "[00:10.00]<00:10.00>Hello <00:10.50>world\n[00:15.00]wordless line"
+	want := "[00:10.00]<00:10.00>Hello <00:10.50>world<00:11.00>\n[00:15.00]wordless line"
 	if strings.TrimSpace(output) != want {
 		t.Fatalf("enhanced LRC = %q, want %q", output, want)
 	}
@@ -183,6 +183,19 @@ func TestEnhancedLRCWordlessAndWordRenderings(t *testing.T) {
 	}
 	if strings.Contains(out, "duplicated in words") {
 		t.Fatalf("output = %q, want line text suppressed for word-bearing lines (no duplication)", out)
+	}
+}
+
+func TestEnhancedLRCRetainsFinalWordEndBeforeSilence(t *testing.T) {
+	t.Parallel()
+
+	lines := []TimedLine{{StartMs: 1000, EndMs: 6000, Words: []TimedWord{
+		{StartMs: 1200, EndMs: 1800, Text: "Hello "},
+		{StartMs: 1800, EndMs: 2450, Text: "world"},
+	}}}
+	want := "[00:01.00]<00:01.20>Hello <00:01.80>world<00:02.45>\n"
+	if got := EnhancedLRC(lines); got != want {
+		t.Fatalf("EnhancedLRC() = %q, want %q", got, want)
 	}
 }
 
