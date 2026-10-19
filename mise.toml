@@ -1,6 +1,6 @@
 [tools]
-go = "1.25.14"
-"aqua:WebAssembly/binaryen" = "132"
+go = "1.27.2"
+"aqua:WebAssembly/binaryen" = "133"
 
 [tasks.fmt]
 description = "Format Go source"
@@ -28,14 +28,14 @@ run = "mkdir -p dist && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o 
 [tasks.package]
 description = "Package the Navidrome plugin"
 depends = ["build"]
-run = "zip -q -j -FS dist/better-lyrics.ndp dist/plugin.wasm plugin/manifest.json"
+run = "zip -q -j -FS dist/nd-better-lyrics.ndp dist/plugin.wasm plugin/manifest.json"
 
 [tasks.package-check]
 description = "Validate the plugin package contents"
 depends = ["package"]
 run = '''
-unzip -t dist/better-lyrics.ndp
-entries="$(unzip -Z1 dist/better-lyrics.ndp | LC_ALL=C sort)"
+unzip -t dist/nd-better-lyrics.ndp
+entries="$(unzip -Z1 dist/nd-better-lyrics.ndp | LC_ALL=C sort)"
 expected="$(printf 'manifest.json\nplugin.wasm')"
 if [ "$entries" != "$expected" ]; then
   printf 'Unexpected package contents:\n%s\n' "$entries"

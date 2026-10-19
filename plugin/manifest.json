@@ -1,8 +1,8 @@
 {
- "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.63.2/plugins/manifest-schema.json",
- "name": "Better Lyrics",
+ "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.64.2/plugins/manifest-schema.json",
+ "name": "ND Better Lyrics",
  "author": "Yuuta",
- "version": "0.3.1",
+ "version": "0.4.0",
  "description": "Provides lyrics from Better Lyrics, Unison, LRCLib, BiniLyrics, AMLL, Musixmatch, NetEase, Luna, PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius and curated TTML communities",
  "website": "https://github.com/ranokay/navidrome-better-lyrics-plugin",
  "permissions": {

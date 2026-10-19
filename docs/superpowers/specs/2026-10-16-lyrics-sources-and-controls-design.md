@@ -1,4 +1,4 @@
-# Better Lyrics plugin: multi-source lyrics and UI controls
+# ND Better Lyrics plugin: multi-source lyrics and UI controls
 
 Design date: 2026-10-16
 Status: approved and implemented (Phase A); the shipped v0.3.0 catalogue grew past this draft — see "Post-implementation amendments" below.
