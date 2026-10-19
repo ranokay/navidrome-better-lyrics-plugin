@@ -10,7 +10,7 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
-func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) {
+func TestLyricsProvider_SweepUpgradesTheFirstSynchronizedResult(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -35,7 +35,7 @@ func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) 
 			unisonTTML:   unisonSyllable,
 			wantTTML:     unisonSyllable,
 			wantProvider: "Unison",
-			wantRequests: 2,
+			wantRequests: 3,
 		},
 		{
 			name:         "keeps Better Lyrics when timing quality ties",
@@ -50,7 +50,7 @@ func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) 
 			betterTTML:   betterSyllable,
 			wantTTML:     betterSyllable,
 			wantProvider: "Better Lyrics",
-			wantRequests: 1,
+			wantRequests: 3,
 		},
 	}
 
@@ -78,14 +78,18 @@ func TestLyricsProvider_PrefersHigherTimingQualityAcrossProviders(t *testing.T) 
 				}
 			})
 
-			result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			first, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+			if err != nil || requests != 1 {
+				t.Fatalf("foreground lookup = %v, %d requests; want the first synchronized source immediately", err, requests)
+			}
+			assertLyricsSource(t, first.Source, "Better Lyrics", "ttml")
+			provider.runSweep(track)
+			result, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 			if err != nil {
 				t.Fatalf("GetLyrics() error = %v, want nil", err)
 			}
-			if len(result.Lyrics) != 1 {
-				t.Fatalf("GetLyrics() lyrics = %#v, want one result", result.Lyrics)
-			}
-			if result.Lyrics[0].Text != test.wantTTML {
+			if text, _ := winnerText(t, result); text != test.wantTTML {
 				t.Fatalf("GetLyrics() text = %q, want %q", result.Lyrics[0].Text, test.wantTTML)
 			}
 			assertLyricsSource(t, result.Source, test.wantProvider, "ttml")
@@ -117,8 +121,8 @@ func TestLyricsProvider_MalformedBetterLyricsTTMLFallsBack(t *testing.T) {
 		t.Fatalf("GetLyrics() error = %v, want nil because a fallback succeeded", err)
 	}
 	assertLyricsSource(t, result.Source, "Unison", "lrc")
-	if requests != 3 {
-		t.Fatalf("request count = %d, want malformed Better Lyrics, Unison and Kugou", requests)
+	if requests != 2 {
+		t.Fatalf("request count = %d, want malformed Better Lyrics then Unison", requests)
 	}
 }
 

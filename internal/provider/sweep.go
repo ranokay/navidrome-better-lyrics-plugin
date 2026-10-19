@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +45,9 @@ type sweepTaskPayload struct {
 // working and the queue lifecycle can be repaired by reloading the plugin.
 func (p *Provider) OnInit() error {
 	if p.createQueue != nil {
-		_ = p.createQueue(sweepQueueName, 1)
+		if err := p.createQueue(sweepQueueName, 1); err != nil {
+			p.logf(fmt.Sprintf("lyrics sweep queue creation failed; background source discovery unavailable; reload the plugin after checking task-worker configuration: %v", p.safeDiagnosticError(err)))
+		}
 	}
 	return nil
 }
@@ -68,14 +69,14 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	markerKey := ""
 	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
 		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
-		_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepMarkerTTL)
+		_ = p.storeSweepMarker(markerKey, sweepMarkerTTL)
 	}
 	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources)
 	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		// Resume the deferred tail immediately instead of waiting for a replay.
 		if err := p.enqueueSweepSources(payload.Track, deferredIDs); err != nil {
-			p.logf(fmt.Sprintf("sweep continuation enqueue failed: %v", err))
+			p.logf(fmt.Sprintf("sweep continuation enqueue failed: %v", p.safeDiagnosticError(err)))
 		} else {
 			continuationQueued = true
 		}
@@ -84,7 +85,7 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		// The done marker is written for the full configured order, so the
 		// completion check must use that same order: checking the continuation
 		// subset would release the pending marker although the sweep is done.
-		_, done, _ := p.cache.Get(p.doneMarkerKey(payload.Track, markerOrder))
+		done := p.sweepMarkerActive(p.doneMarkerKey(payload.Track, markerOrder))
 		switch {
 		case done:
 			// The completed marker gates duplicates now.
@@ -92,11 +93,11 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 			// A continuation still works this track: keep the queued marker
 			// alive so replays cannot enqueue a parallel full sweep while it
 			// waits behind other songs.
-			_ = p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepQueuedMarkerTTL)
+			_ = p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL)
 		default:
 			// Nothing is pending: release the slot so the next lookup can
 			// retry the incomplete sweep promptly.
-			_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
+			_ = p.storeSweepMarker(markerKey, 1)
 		}
 	}
 	return status, nil
@@ -126,13 +127,13 @@ func (p *Provider) doneMarkerKey(track lyrics.TrackInfo, order []source.Source) 
 
 // cacheTTLForCoveredCandidate maps a covered entry to the TTL it bounds the
 // done marker by: positive candidates use their per-source TTL; a persisted
-// miss uses its one-hour retry window, so a marker cannot outlive the fresh
+// miss uses its five-minute retry window, so a marker cannot outlive the fresh
 // answers it stands for.
 func cacheTTLForCoveredCandidate(candidate lyric.Candidate) int64 {
 	if candidate.Present() {
 		return sourceCacheTTLSeconds(candidate.Quality)
 	}
-	return unsyncedLyricsCacheTTLSeconds
+	return negativeLyricsCacheTTLSeconds
 }
 
 // runSweepSources walks the sources for one track, optionally restricted to the
@@ -210,7 +211,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			// writes) refetch so the pass leaves stamped coverage behind
 			// instead of letting a marker outlive them.
 		}
-		if cooledDown := p.sourceInCooldown(src); cooledDown {
+		if p.sourceInCooldown(src) || p.sourceFailureBackoff(src.ID) > 0 {
 			// A cooled-down source is not covered by this pass, so the pass
 			// cannot be marked done; retry the sweep after the cooldown lapses.
 			cooldownSkipped++
@@ -224,13 +225,18 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			skipped++
 			continue
 		}
-		if p.now().After(deadline) {
+		if !p.now().Before(deadline) {
 			deferred++
 			deferredIDs = append(deferredIDs, src.ID)
 			continue
 		}
+		started := p.now()
 		candidates, fetchHealth, err := src.Fetch(p, track, deadline)
 		if err != nil {
+			if p.now().Before(deadline) {
+				p.rememberSourceFailure(src.ID, err)
+			}
+			p.logSourceFailure(src.ID, started, err)
 			if errors.Is(err, source.ErrLookupBudgetExhausted) {
 				// The search finished against the budget and the lyrics hop
 				// could not start: this source belongs in the continuation,
@@ -248,6 +254,9 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 				}
 			}
 			continue
+		}
+		if fetchHealth <= source.Uncertain {
+			p.resetSourceFailure(src.ID)
 		}
 		if fetchHealth == source.TemporarilySkipped && len(candidates) == 0 {
 			// A temporary skip (token rejection) is neither covered work nor a
@@ -292,10 +301,10 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 				continue
 			}
 			missed++
-			// The miss entry expires within the hour, so it also bounds the
+			// The miss entry expires within five minutes, so it also bounds the
 			// marker's re-check window.
-			if unsyncedLyricsCacheTTLSeconds < coverageTTL {
-				coverageTTL = unsyncedLyricsCacheTTLSeconds
+			if negativeLyricsCacheTTLSeconds < coverageTTL {
+				coverageTTL = negativeLyricsCacheTTLSeconds
 			}
 		}
 	}
@@ -324,7 +333,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 	}
 	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && coveredOthers && cached+missed+skipped == implemented && implemented > 0 {
 		key := p.doneMarkerKey(track, fullOrder)
-		if p.cache.SetWithTTL(key, []byte(p.now().Format(time.RFC3339)), coverageTTL) == nil {
+		if p.storeSweepMarker(key, coverageTTL) == nil {
 			// Also verify the write actually stayed (an oversized write is
 			// dropped); re-read to be sure.
 			if _, exists, _ := p.cache.Get(key); !exists {
@@ -374,7 +383,7 @@ func sharesBetterLyricsHost(src source.Source) bool {
 // sources behind those cooldowns benefit from the same deviating skip logic in the
 // sweep, so enqueuing without a marker check could cause duplicate work.
 func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
-	if _, done, _ := p.cache.Get(p.doneMarkerKey(track, p.activeSources())); done {
+	if p.sweepMarkerActive(p.doneMarkerKey(track, p.activeSources())) {
 		return false
 	}
 	trackKey, ok := lyricsTrackKey(track)
@@ -382,21 +391,36 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 		return false
 	}
 	markerKey := p.sweepPendingMarkerKey(track, trackKey)
-	if _, exists, _ := p.cache.Get(markerKey); exists {
+	if p.sweepMarkerActive(markerKey) {
 		return false
 	}
-	if err := p.cache.SetWithTTL(markerKey, []byte(strconv.FormatInt(p.now().Unix(), 10)), sweepQueuedMarkerTTL); err != nil {
+	if err := p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL); err != nil {
 		// A broken cache must not block lyrics: skip the sweep this round.
 		return false
 	}
 	if err := p.enqueueSweep(track); err != nil {
 		// Release the spot early with a 1-second TTL so the next lookup can retry
 		// the sweep rather than waiting out the whole dedupe window.
-		_ = p.cache.SetWithTTL(markerKey, []byte("release"), 1)
-		p.logf(fmt.Sprintf("sweep enqueue failed: %v", err))
+		_ = p.storeSweepMarker(markerKey, 1)
+		p.logf(fmt.Sprintf("sweep enqueue failed: %v", p.safeDiagnosticError(err)))
 		return false
 	}
 	return true
+}
+
+// Store explicit marker expiries as well as the host TTL, so completion and
+// queue deduplication cannot outlive their bounded coverage on a stale KV read.
+func (p *Provider) storeSweepMarker(key string, ttl int64) error {
+	value, err := json.Marshal(cachedLyricsEnvelope{ExpiresAt: p.now().Add(time.Duration(ttl) * time.Second).Unix()})
+	if err != nil {
+		return err
+	}
+	return p.cache.SetWithTTL(key, value, ttl)
+}
+
+func (p *Provider) sweepMarkerActive(key string) bool {
+	envelope, found := p.readCachedEnvelope(key)
+	return found && envelope.ExpiresAt > p.now().Unix()
 }
 
 // sweepPendingMarkerKey namespaces the dedupe marker by source order and

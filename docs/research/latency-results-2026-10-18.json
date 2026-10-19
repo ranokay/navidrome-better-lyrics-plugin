@@ -1,0 +1,439 @@
+{
+  "measured_at": "2026-10-18",
+  "endpoint": "GET /rest/getLyricsBySongId?enhanced=true",
+  "baseline_plugin_commit": "97bf21482636968b8741c94c7797939f63280f7e",
+  "candidate_wasm_sha256": "2a8b4dfe643f48bf4c9cb072c0a3c60c45adb951c3b32768b281c42cc9194df3",
+  "navidrome_base_commit": "8cb41929357c79c4d437a1ee9e0c9b2a08f0964d",
+  "measurements": [
+    {
+      "scenario": "baseline-first-stall",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 7071.09,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "baseline-first-stall",
+      "track": "Bad Guy",
+      "elapsed_ms": 6848.04,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "BiniLyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "baseline-first-stall",
+      "track": "Shape of You",
+      "elapsed_ms": 6723.28,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "baseline-first-stall",
+      "track": "Blinding Lights",
+      "elapsed_ms": 6890.6,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "BiniLyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "baseline-first-stall",
+      "track": "Hello",
+      "elapsed_ms": 6820.61,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "BiniLyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "baseline-all-stall",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 18046.16,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded\nrequest Unison API: HTTP request to https://unison.boidu.dev/lyrics failed: context deadline exceeded\nrequest BiniLyrics search: HTTP request to https://lyrics-api.binimum.org/ failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "baseline-all-stall",
+      "track": "Bad Guy",
+      "elapsed_ms": 18046.37,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded\nrequest Unison API: HTTP request to https://unison.boidu.dev/lyrics failed: context deadline exceeded\nrequest BiniLyrics search: HTTP request to https://lyrics-api.binimum.org/ failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "baseline-all-stall",
+      "track": "Shape of You",
+      "elapsed_ms": 18045.06,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded\nrequest Unison API: HTTP request to https://unison.boidu.dev/lyrics failed: context deadline exceeded\nrequest BiniLyrics search: HTTP request to https://lyrics-api.binimum.org/ failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "baseline-all-stall",
+      "track": "Blinding Lights",
+      "elapsed_ms": 18047.27,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded\nrequest Unison API: HTTP request to https://unison.boidu.dev/lyrics failed: context deadline exceeded\nrequest BiniLyrics search: HTTP request to https://lyrics-api.binimum.org/ failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "baseline-all-stall",
+      "track": "Hello",
+      "elapsed_ms": 18042.07,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request to https://lyrics-api.boidu.dev/getLyrics failed: context deadline exceeded\nrequest Unison API: HTTP request to https://unison.boidu.dev/lyrics failed: context deadline exceeded\nrequest BiniLyrics search: HTTP request to https://lyrics-api.binimum.org/ failed: context deadline exceeded"
+      }
+    },
+    {
+      "scenario": "candidate-first-stall",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 1639.35,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-first-stall",
+      "track": "Bad Guy",
+      "elapsed_ms": 1578.15,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "BiniLyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-first-stall",
+      "track": "Shape of You",
+      "elapsed_ms": 1471.27,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-first-stall",
+      "track": "Blinding Lights",
+      "elapsed_ms": 1573.0,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "BiniLyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-first-stall",
+      "track": "Hello",
+      "elapsed_ms": 1580.82,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "BiniLyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-all-stall",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 2035.84,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request timed out\nrequest Unison API: HTTP request timed out\nrequest BiniLyrics search: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-all-stall",
+      "track": "Bad Guy",
+      "elapsed_ms": 2039.8,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request timed out\nrequest Unison API: HTTP request timed out\nrequest BiniLyrics search: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-all-stall",
+      "track": "Shape of You",
+      "elapsed_ms": 2031.44,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request timed out\nrequest Unison API: HTTP request timed out\nrequest BiniLyrics search: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-all-stall",
+      "track": "Blinding Lights",
+      "elapsed_ms": 2029.09,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Better Lyrics API: HTTP request timed out\nrequest Unison API: HTTP request timed out\nrequest BiniLyrics search: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-all-stall",
+      "track": "Hello",
+      "elapsed_ms": 2038.61,
+      "status": "failed",
+      "variants": 0,
+      "sources": [],
+      "error": {
+        "code": 0,
+        "message": "Internal Server Error: plugin call failed: request Unison API: HTTP request timed out\nrequest BiniLyrics search: HTTP request timed out\nrequest AMLL search: HTTP request timed out"
+      }
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "cold",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 394.98,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "warm",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 71.91,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "cold",
+      "track": "Bad Guy",
+      "elapsed_ms": 113.49,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "warm",
+      "track": "Bad Guy",
+      "elapsed_ms": 54.51,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "cold",
+      "track": "Shape of You",
+      "elapsed_ms": 314.64,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "warm",
+      "track": "Shape of You",
+      "elapsed_ms": 98.07,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "cold",
+      "track": "Blinding Lights",
+      "elapsed_ms": 112.57,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "warm",
+      "track": "Blinding Lights",
+      "elapsed_ms": 48.51,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "cold",
+      "track": "Hello",
+      "elapsed_ms": 120.38,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "warm",
+      "track": "Hello",
+      "elapsed_ms": 60.16,
+      "status": "ok",
+      "variants": 1,
+      "sources": [
+        "Better Lyrics"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "after-sweep",
+      "track": "Bohemian Rhapsody",
+      "elapsed_ms": 169.4,
+      "status": "ok",
+      "variants": 5,
+      "sources": [
+        "Better Lyrics",
+        "Better Lyrics Portato",
+        "NetEase",
+        "PetitLyrics",
+        "LRCLib"
+      ]
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "after-sweep",
+      "track": "Bad Guy",
+      "elapsed_ms": 148.91,
+      "status": "ok",
+      "variants": 6,
+      "sources": [
+        "Better Lyrics",
+        "BiniLyrics",
+        "Better Lyrics Portato",
+        "NetEase",
+        "PetitLyrics",
+        "LRCLib"
+      ]
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "after-sweep",
+      "track": "Shape of You",
+      "elapsed_ms": 202.25,
+      "status": "ok",
+      "variants": 5,
+      "sources": [
+        "Better Lyrics",
+        "Better Lyrics Portato",
+        "NetEase",
+        "PetitLyrics",
+        "LRCLib"
+      ]
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "after-sweep",
+      "track": "Blinding Lights",
+      "elapsed_ms": 119.6,
+      "status": "ok",
+      "variants": 5,
+      "sources": [
+        "Better Lyrics",
+        "BiniLyrics",
+        "NetEase",
+        "PetitLyrics",
+        "LRCLib"
+      ]
+    },
+    {
+      "scenario": "candidate-live",
+      "phase": "after-sweep",
+      "track": "Hello",
+      "elapsed_ms": 150.83,
+      "status": "ok",
+      "variants": 5,
+      "sources": [
+        "Better Lyrics",
+        "BiniLyrics",
+        "NetEase",
+        "PetitLyrics",
+        "LRCLib"
+      ]
+    }
+  ]
+}

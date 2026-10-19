@@ -27,7 +27,7 @@ func TestLyricsProvider_CachedTierRateLimitOnlyCoolsDownTheFailedQuery(t *testin
 		if parsed.Query().Get("s") == "Wanted" {
 			return &host.HTTPResponse{
 				StatusCode: 200,
-				Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">wanted lyrics</tt>"}`),
+				Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">wanted lyrics</span></p></tt>"}`),
 			}, nil
 		}
 		if parsed.Host == "unison.boidu.dev" {
@@ -82,7 +82,7 @@ func TestLyricsProvider_RetriesAQueryRateLimitWithBroaderMetadata(t *testing.T) 
 		}
 		return &host.HTTPResponse{
 			StatusCode: 200,
-			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">broader cached match</tt>"}`),
+			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">broader cached match</span></p></tt>"}`),
 		}, nil
 	})
 
@@ -216,10 +216,9 @@ func TestLyricsProvider_SharesRetryAfterCooldownAcrossInstances(t *testing.T) {
 	}, cache, func() time.Time { return now })
 
 	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
-	// The walker now pre-gates cooled-down sources, so the shared cooldown shows
-	// up as zero requests to the better-lyrics family instead of a cooldown error.
-	if err != nil {
-		t.Fatalf("second GetLyrics() error = %v, want clean miss", err)
+	// Skipping unavailable sources must remain retryable for the host.
+	if err == nil || !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Fatalf("second GetLyrics() error = %v, want temporary unavailability", err)
 	}
 	if secondRequests != 1 {
 		t.Fatalf("second request count = %d, want one Unison request", secondRequests)
@@ -288,9 +287,9 @@ func TestLyricsProvider_Unison429StartsIndependentCooldown(t *testing.T) {
 	}, cache, func() time.Time { return now })
 
 	_, err = second.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Second", Artist: "Artist"}})
-	// Pre-gating turns "unison API cooldown active" into "no Unison request".
-	if err != nil {
-		t.Fatalf("second GetLyrics() error = %v, want clean miss", err)
+	// Pre-gating prevents a request while keeping incomplete discovery retryable.
+	if err == nil || !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Fatalf("second GetLyrics() error = %v, want temporary unavailability", err)
 	}
 	if secondUnisonRequests != 0 || secondKugouRequests != 1 {
 		t.Fatalf("second requests: Unison=%d Kugou=%d, want 0 and 1", secondUnisonRequests, secondKugouRequests)

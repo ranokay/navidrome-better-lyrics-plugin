@@ -261,6 +261,11 @@ func EnhancedLRC(lines []TimedLine) string {
 			// Wordless lines keep their whole text; word-bearing lines already
 			// rendered each token above, so appending Text again would duplicate it.
 			out.WriteString(line.Text)
+		} else {
+			// The final empty marker closes the last word before any following
+			// silence; the next line's start is not the word's end.
+			last := line.Words[len(line.Words)-1]
+			out.WriteString(inlineLRCStamp(max(last.StartMs, last.EndMs)))
 		}
 		out.WriteByte('\n')
 	}

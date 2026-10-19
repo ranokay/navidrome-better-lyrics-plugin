@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
@@ -155,21 +156,12 @@ func lyricsPlusCandidates(payload lyricsPlusPayload) []lyric.Candidate {
 		line := lyric.TimedLine{
 			StartMs: row.Time,
 			EndMs:   row.Time + row.Duration,
-			Text:    strings.TrimSpace(row.Text),
+			Text:    row.Text,
 		}
 		if line.EndMs < line.StartMs {
 			line.EndMs = line.StartMs
 		}
-		for _, word := range row.Syllabus {
-			if strings.TrimSpace(word.Text) == "" || word.Duration <= 0 {
-				continue
-			}
-			line.Words = append(line.Words, lyric.TimedWord{
-				StartMs: word.Time,
-				EndMs:   word.Time + word.Duration,
-				Text:    word.Text,
-			})
-		}
+		line.Words = lyricsPlusWords(row)
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
@@ -181,4 +173,46 @@ func lyricsPlusCandidates(payload lyricsPlusPayload) []lyric.Candidate {
 		return nil
 	}
 	return []lyric.Candidate{candidate}
+}
+
+// lyricsPlusWords restores separators from the complete line while retaining
+// provider token windows. If tokens disagree with the line or omit a word,
+// line timing preserves the complete text without inventing word timings.
+func lyricsPlusWords(row lyricsPlusLine) []lyric.TimedWord {
+	words := make([]lyric.TimedWord, 0, len(row.Syllabus))
+	cursor := 0
+	for _, token := range row.Syllabus {
+		if token.Text == "" {
+			continue
+		}
+		end := token.Time + token.Duration
+		if token.Time < row.Time || token.Duration < 0 || end < token.Time ||
+			(len(words) > 0 && token.Time < words[len(words)-1].StartMs) {
+			return nil
+		}
+		index := strings.Index(row.Text[cursor:], token.Text)
+		if index < 0 {
+			return nil
+		}
+		gap := row.Text[cursor : cursor+index]
+		if strings.ContainsFunc(gap, func(char rune) bool { return unicode.IsLetter(char) || unicode.IsNumber(char) }) {
+			return nil
+		}
+		cursor += index + len(token.Text)
+		text := token.Text
+		if len(words) == 0 {
+			text = gap + text
+		} else {
+			words[len(words)-1].Text += gap
+		}
+		words = append(words, lyric.TimedWord{StartMs: token.Time, EndMs: end, Text: text})
+	}
+	if len(words) > 0 {
+		remaining := row.Text[cursor:]
+		if strings.ContainsFunc(remaining, func(char rune) bool { return unicode.IsLetter(char) || unicode.IsNumber(char) }) {
+			return nil
+		}
+		words[len(words)-1].Text += remaining
+	}
+	return words
 }

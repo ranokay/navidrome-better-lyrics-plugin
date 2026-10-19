@@ -30,7 +30,6 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 				{StatusCode: 404},
 				{StatusCode: 404},
 				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
-				{StatusCode: 404},
 			},
 			wantProvider: "Unison",
 			wantFormat:   "lrc",
@@ -41,7 +40,6 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			responses: []*host.HTTPResponse{
 				{StatusCode: 503, Body: []byte(`{"error":"provider unavailable"}`)},
 				{StatusCode: 200, Body: []byte(`{"success":true,"data":{"lyrics":"[00:01.00]community line","format":"lrc","language":"en"}}`)},
-				{StatusCode: 404},
 			},
 			wantProvider: "Unison",
 			wantFormat:   "lrc",
@@ -163,16 +161,16 @@ func TestLyricsProvider_DoesNotCacheOperationalFailures(t *testing.T) {
 
 	for range 2 {
 		_, err := provider.GetLyrics(input)
-		if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
-			t.Fatalf("GetLyrics() error = %v, want HTTP 503", err)
+		if err == nil {
+			t.Fatal("GetLyrics() error = nil, want an outage or temporary-unavailability error")
 		}
 	}
 
-	if requests != 6 {
-		t.Fatalf("network request count = %d, want both three-provider lookups", requests)
+	if requests != 3 {
+		t.Fatalf("network request count = %d, want one three-provider lookup before outage backoff", requests)
 	}
-	// Every KV write in the failure path is the sweep marker ("sweep:");
-	// entries under the winner/source namespaces would mean a cached failure.
+	// Outage backoff is separate from lyric coverage: no failure may become a
+	// cached positive or negative lyrics result.
 	for key := range cache.values {
 		if strings.HasPrefix(key, lyricsWinnerCacheKeyPrefix) || strings.HasPrefix(key, lyricsSourceCacheKeyPrefix) {
 			t.Fatalf("cache keys written = %v, want no cached operational failure", cache.values)
@@ -197,7 +195,7 @@ func TestLyricsProvider_SeparatesCacheKeysByDuration(t *testing.T) {
 		requestedDurations = append(requestedDurations, duration)
 		return &host.HTTPResponse{
 			StatusCode: 200,
-			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">lyrics for duration ` + duration + `</tt>"}`),
+			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">lyrics for duration ` + duration + `</span></p></tt>"}`),
 		}, nil
 	}, cache, time.Now)
 
@@ -239,7 +237,7 @@ func TestLyricsProvider_FailsOpenWhenLyricCacheWriteFails(t *testing.T) {
 		}
 		return &host.HTTPResponse{
 			StatusCode: 200,
-			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">fresh lyrics</tt>"}`),
+			Body:       []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">fresh lyrics</span></p></tt>"}`),
 		}, nil
 	}, cache, time.Now)
 

@@ -1,10 +1,73 @@
 package provider
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
+
+const sourceFailureStateTTL = int64(10 * time.Minute / time.Second)
+
+type sourceFailureState struct {
+	Failures uint8 `json:"failures"`
+	Until    int64 `json:"until"`
+}
+
+func sourceFailureKey(sourceID string) string {
+	return "source-failure:v1:" + sourceID
+}
+
+func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
+	value, exists, err := p.cache.Get(sourceFailureKey(sourceID))
+	if err != nil || !exists {
+		return sourceFailureState{}
+	}
+	var state sourceFailureState
+	if json.Unmarshal(value, &state) != nil || state.Until <= 0 || state.Failures == 0 || state.Failures > 5 {
+		return sourceFailureState{}
+	}
+	// Expired host entries must not preserve escalation indefinitely.
+	if p.now().UnixMilli()-state.Until >= sourceFailureStateTTL*1000 {
+		return sourceFailureState{}
+	}
+	if state.Until > p.now().Add(time.Minute).UnixMilli() {
+		return sourceFailureState{}
+	}
+	return state
+}
+
+func (p *Provider) sourceFailureBackoff(sourceID string) time.Duration {
+	state := p.readSourceFailure(sourceID)
+	return max(0, time.UnixMilli(state.Until).Sub(p.now()))
+}
+
+// Ordinary failures get a short source-specific retry window. Rate limits keep
+// their upstream Retry-After policy, and exhausting a lookup budget is not an
+// outage. The KV record lets later songs and plugin instances skip the outage.
+func (p *Provider) rememberSourceFailure(sourceID string, err error) {
+	if errors.Is(err, source.ErrLookupBudgetExhausted) || source.IsRateLimitError(err) {
+		return
+	}
+	state := p.readSourceFailure(sourceID)
+	state.Failures = min(state.Failures+1, 5)
+	delay := min(5*time.Second*time.Duration(1<<(state.Failures-1)), time.Minute)
+	state.Until = p.now().Add(delay).UnixMilli()
+	value, marshalErr := json.Marshal(state)
+	if marshalErr == nil {
+		// A broken store fails open; it must never disable a source.
+		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), value, sourceFailureStateTTL)
+	}
+}
+
+func (p *Provider) resetSourceFailure(sourceID string) {
+	if state := p.readSourceFailure(sourceID); state.Failures > 0 {
+		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+	}
+}
 
 // Cooldown reports the remaining provider-wide cooldown for a key; a cache
 // failure or corrupt value fails open.
@@ -41,7 +104,7 @@ func (p *Provider) RememberCooldown(key string, retryAfter time.Duration) {
 	}
 	ttlSeconds := durationSecondsCeil(time.Unix(untilUnix, 0).Sub(now))
 	if err := p.cache.SetWithTTL(key, []byte(strconv.FormatInt(untilUnix, 10)), ttlSeconds); err != nil {
-		p.logf(fmt.Sprintf("rate-limit cooldown persistence failed: %v", err))
+		p.logf(fmt.Sprintf("rate-limit cooldown persistence failed: %v", p.safeDiagnosticError(err)))
 	}
 }
 

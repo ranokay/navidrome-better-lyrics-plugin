@@ -16,7 +16,7 @@ func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	var request host.HTTPRequest
 	provider := providerForCatalog(func(input host.HTTPRequest) (*host.HTTPResponse, error) {
 		request = input
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">lyrics</tt>"}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"ttml":"<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">lyrics</span></p></tt>"}`)}, nil
 	})
 
 	_, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{
@@ -59,8 +59,8 @@ func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	if request.Headers["User-Agent"] != testUserAgent {
 		t.Errorf("User-Agent header = %q, want the injected identifier", request.Headers["User-Agent"])
 	}
-	if request.TimeoutMs != httpTimeoutMilliseconds {
-		t.Errorf("timeout = %d, want %d", request.TimeoutMs, httpTimeoutMilliseconds)
+	if request.TimeoutMs <= 0 || request.TimeoutMs > int32(stageOneSourceBudget/time.Millisecond) {
+		t.Errorf("timeout = %d, want a positive timeout bounded by %dms", request.TimeoutMs, stageOneSourceBudget/time.Millisecond)
 	}
 }
 
@@ -72,8 +72,8 @@ func TestLyricsProvider_UsesRemainingLookupBudgetForRequestTimeout(t *testing.T)
 	provider := newTestProviderWithDependencies(nil, newFakeLyricsCache(), func() time.Time { return current })
 	deadline := now.Add(stageOneLookupBudget)
 
-	if got, err := provider.requestTimeoutMilliseconds(deadline); err != nil || got != httpTimeoutMilliseconds {
-		t.Fatalf("initial timeout = %d, %v; want %d, nil", got, err, httpTimeoutMilliseconds)
+	if got, err := provider.requestTimeoutMilliseconds(deadline); err != nil || got != int32(stageOneLookupBudget/time.Millisecond) {
+		t.Fatalf("initial timeout = %d, %v; want %d, nil", got, err, stageOneLookupBudget/time.Millisecond)
 	}
 	current = deadline.Add(-1500 * time.Millisecond)
 	if got, err := provider.requestTimeoutMilliseconds(deadline); err != nil || got != 1500 {

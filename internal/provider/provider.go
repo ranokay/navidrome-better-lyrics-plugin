@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -18,7 +19,8 @@ const (
 	// the first sources with an implemented fetch run here, and the background
 	// sweep covers the rest without blocking the response.
 	stageOneImplementedSources = 3
-	stageOneLookupBudget       = 8 * time.Second
+	stageOneLookupBudget       = 2 * time.Second
+	stageOneSourceBudget       = 750 * time.Millisecond
 )
 
 type requestSender func(host.HTTPRequest) (*host.HTTPResponse, error)
@@ -138,6 +140,13 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		// through the unschedulable sweep path.
 		return lyrics.GetLyricsResponse{}, nil
 	}
+
+	// respond serves the winner plus every other cached source-tagged variant,
+	// so hosts that understand per-entry sources can offer a source switcher.
+	respond := func(candidate lyric.Candidate) lyrics.GetLyricsResponse {
+		return p.responsesWithVariants(track, sources, candidate)
+	}
+
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
 		if candidate.Present() {
 			if !sweepComplete {
@@ -151,14 +160,14 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 				}
 				p.maybeEnqueueSweep(track)
 			}
-			return candidate.Response, nil
+			return respond(candidate), nil
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
 		if best := p.readBestFromSourceCache(track, sources); best.Present() {
 			p.cacheWinner(track, sources, best, false)
 			p.maybeEnqueueSweep(track)
-			return best.Response, nil
+			return respond(best), nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -166,23 +175,23 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		if !sweepComplete {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate.Response, nil
+		return respond(candidate), nil
 	}
 	if best := p.readBestFromSourceCache(track, sources); best.Present() {
 		p.cacheWinner(track, sources, best, false)
 		p.maybeEnqueueSweep(track)
-		return best.Response, nil
+		return respond(best), nil
 	}
 
-	candidate, _, coveredAll, err := p.fetchLyrics(input)
+	candidate, health, coveredAll, err := p.fetchLyrics(input)
 	if candidate.Present() {
 		p.cacheWinner(track, sources, candidate, coveredAll)
 		if !coveredAll {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate.Response, nil
+		return respond(candidate), nil
 	}
-	if err == nil {
+	if err == nil && health < source.Degraded {
 		p.cacheNegativeWinner(track, sources, coveredAll)
 		if !coveredAll {
 			// A fully covered negative pass needs no sweep: every implemented
@@ -195,7 +204,10 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		// request exposes.
 		p.maybeEnqueueSweep(track)
 	}
-	return candidate.Response, err
+	if err == nil && health >= source.Degraded {
+		err = errors.New("lyrics sources temporarily unavailable")
+	}
+	return candidate.Response, p.safeDiagnosticError(err)
 }
 
 // activeSources resolves the source order for this lookup: the injected test
@@ -208,7 +220,7 @@ func (p *Provider) activeSources() []source.Source {
 }
 
 // fetchLyrics runs the stage-one pass: the first implemented enabled sources in
-// configured order under a bounded budget, stopping early once a syllable-timed
+// configured order under a bounded budget, stopping on the first synchronized
 // result lands. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
 // are covered by the background sweep (Task 6).
@@ -250,28 +262,46 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 		// negative-winner cycle. Cached positives are served by the
 		// re-rank above the walk.
 		if _, ok := p.readCachedSourceCoverage(track, src.ID); ok {
+			walkedTotal++
 			continue
 		}
 		if coldHostFor(src, coldHosts) != "" {
+			health = health.Merge(source.TemporarilySkipped)
 			continue
 		}
-		if p.sourceInCooldown(src) {
+		if p.sourceInCooldown(src) || p.sourceFailureBackoff(src.ID) > 0 {
 			// Cooldowns are temporary; skipping keeps the slot for the next
 			// implemented source and the sweep retries it later.
+			health = health.Merge(source.TemporarilySkipped)
 			continue
 		}
+		if !p.now().Before(deadline) {
+			lookupErrors = append(lookupErrors, source.ErrLookupBudgetExhausted)
+			break
+		}
 		walked++
-		candidates, sourceHealth, err := src.Fetch(p, track, deadline)
+		started := p.now()
+		sourceDeadline := minTime(deadline, started.Add(stageOneSourceBudget))
+		candidates, sourceHealth, err := src.Fetch(p, track, sourceDeadline)
 		health = health.Merge(sourceHealth)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
 			health = health.Merge(source.Degraded)
+			// The short foreground slot may expire for a healthy, slower
+			// source. Let its full-budget sweep retry without outage backoff.
+			if p.now().Before(sourceDeadline) {
+				p.rememberSourceFailure(src.ID, err)
+			}
+			p.logSourceFailure(src.ID, started, err)
 			if source.IsGlobalRateLimitError(err) {
 				for _, hostName := range src.Hosts {
 					coldHosts[hostName] = true
 				}
 			}
 			continue
+		}
+		if sourceHealth <= source.Uncertain {
+			p.resetSourceFailure(src.ID)
 		}
 		foundCandidate := false
 		for _, candidate := range candidates {
@@ -303,7 +333,7 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 		if coveredThisSource {
 			walkedTotal++
 		}
-		if best.Quality == lyric.TimingSyllable {
+		if best.Present() && best.Quality >= lyric.TimingLine {
 			return best, health, walkedTotal >= implementedTotal, nil
 		}
 	}
@@ -317,6 +347,23 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 	// A clean all-miss walk with full coverage is real: the negative winner
 	// must record that no sweep needs re-walking the same misses.
 	return lyric.Candidate{}, health, walkedTotal >= implementedTotal, nil
+}
+
+func minTime(first, second time.Time) time.Time {
+	if first.Before(second) {
+		return first
+	}
+	return second
+}
+
+func (p *Provider) logSourceFailure(sourceID string, started time.Time, err error) {
+	class := "upstream"
+	if errors.Is(err, source.ErrLookupBudgetExhausted) {
+		class = "budget"
+	} else if source.IsRateLimitError(err) {
+		class = "rate-limit"
+	}
+	p.logf(fmt.Sprintf("lyrics source=%s class=%s elapsed_ms=%d error=%v", sourceID, class, p.now().Sub(started).Milliseconds(), p.safeDiagnosticError(err)))
 }
 
 func coldHostFor(src source.Source, coldHosts map[string]bool) string {

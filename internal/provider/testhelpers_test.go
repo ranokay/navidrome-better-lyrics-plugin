@@ -116,6 +116,17 @@ func assertLyricsSource(t *testing.T, source *lyrics.LyricsSource, wantProvider,
 	}
 }
 
+// winnerText returns the first (winning) variant's text and language under the
+// per-source variant contract: responses may carry several source-tagged
+// entries, so ordering tests assert on the winner instead of the entry count.
+func winnerText(t *testing.T, result lyrics.GetLyricsResponse) (string, string) {
+	t.Helper()
+	if len(result.Lyrics) == 0 {
+		t.Fatalf("GetLyrics() returned no lyrics, want at least the winner")
+	}
+	return result.Lyrics[0].Text, result.Lyrics[0].Lang
+}
+
 type fakeLyricsCache struct {
 	mu         sync.Mutex
 	values     map[string][]byte

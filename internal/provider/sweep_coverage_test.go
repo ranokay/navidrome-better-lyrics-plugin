@@ -23,7 +23,7 @@ func TestGetLyrics_EnqueuesSweepWhenCoverageIsIncomplete(t *testing.T) {
 	// coverage is still incomplete, so the sweep must be scheduled.
 	enqueued := 0
 	cache := newFakeLyricsCache()
-	syllable := stubFetchedCandidate("first", "stub", "ttml", "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\">x</tt>")
+	syllable := stubFetchedCandidate("first", "stub", "ttml", "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">x</span></p></tt>")
 	second := stubFetchedCandidate("second", "stub", "plain", "")
 	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{syllable, second}, func(lyrics.TrackInfo) error {
 		enqueued++
@@ -69,7 +69,7 @@ func TestGetLyrics_NegativeWinnerDefersToFreshPerSourceResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second GetLyrics() error = %v, want nil", err)
 	}
-	if len(result.Lyrics) != 1 || result.Lyrics[0].Text != "[00:01.00]sweep line" {
+	if text, _ := winnerText(t, result); text != "[00:01.00]sweep line" {
 		t.Fatalf("second GetLyrics() = %#v, want the fresh per-source result (Review: negative winner must not shield sweep results)", result)
 	}
 }
@@ -308,8 +308,8 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 		format string
 		want   int64
 	}{
-		{name: "plain tail result bounds the marker to one hour", text: "some plain words", format: "plain", want: unsyncedLyricsCacheTTLSeconds},
-		{name: "misses bound the re-check window to one hour", text: "[00:01.00]timed", format: "lrc", want: unsyncedLyricsCacheTTLSeconds},
+		{name: "miss bounds a plain tail to five minutes", text: "some plain words", format: "plain", want: negativeLyricsCacheTTLSeconds},
+		{name: "misses bound the re-check window to five minutes", text: "[00:01.00]timed", format: "lrc", want: negativeLyricsCacheTTLSeconds},
 		{name: "fully timed coverage still spans a day", text: "[00:02.00]timed", format: "lrc2", want: syncedLyricsCacheTTLSeconds},
 	} {
 		tc := tc
@@ -479,7 +479,7 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 		}}
 	provider := newTestProviderWithSources(nil, cache, func() time.Time { return current }, []source.Source{
 		plainSource,
-		sweepSource("tail", new(int), false, nil),
+		sweepSource("tail", new(int), true, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
 	provider.sweepBudget = 2 * time.Millisecond
 
@@ -658,7 +658,7 @@ func TestAnonymous401sKeepBoundedCoverage(t *testing.T) {
 	t.Parallel()
 
 	// Anonymous Better Lyrics/Portato 401s are cache-only misses: they bound
-	// the sweep (one hour, credential-fingerprinted keys) instead of blocking
+	// the sweep (five minutes, credential-fingerprinted keys) instead of blocking
 	// completion every dedupe cycle.
 	provider := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{
 		{ID: "anon1", Display: "anon1", Hosts: []string{"anon1.example.test"}, DefaultEnabled: true,
@@ -682,8 +682,8 @@ func TestAnonymous401sKeepBoundedCoverage(t *testing.T) {
 		t.Fatal("anonymous cache-only misses are bounded coverage: the sweep must still complete")
 	}
 	ttl := provider.cache.(*fakeLyricsCache).ttlsForKey[provider.doneMarkerKey(track, provider.activeSources())]
-	if ttl != unsyncedLyricsCacheTTLSeconds {
-		t.Fatalf("done marker TTL = %d, want the one-hour miss bound", ttl)
+	if ttl != negativeLyricsCacheTTLSeconds {
+		t.Fatalf("done marker TTL = %d, want the five-minute miss bound", ttl)
 	}
 }
 
@@ -702,7 +702,7 @@ func TestSweepMarkerBoundedByRemainingLifetime(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a source cache key")
 	}
-	expiringSoon := `{"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":` +
+	expiringSoon := `{"generation":1,"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":` +
 		fmt.Sprintf("%d", time.Now().Unix()+60) + `}`
 	if err := cache.SetWithTTL(key, []byte(expiringSoon), 60); err != nil {
 		t.Fatalf("seed cache: %v", err)
@@ -796,8 +796,13 @@ func TestTemporarySkipsDoNotCompleteForegroundCoverage(t *testing.T) {
 	})
 
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
-	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
-		t.Fatalf("GetLyrics() error = %v, want nil", err)
+	if _, err := provider.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err == nil {
+		t.Fatal("GetLyrics() error = nil, want retryable unavailability")
+	}
+	if key, _ := lyricsWinnerCacheKey(track, source.IDs(provider.activeSources())); key != "" {
+		if _, exists, _ := provider.cache.Get(key); exists {
+			t.Fatal("temporary skip became authoritative negative winner coverage")
+		}
 	}
 	if enqueued != 1 {
 		t.Fatalf("enqueues = %d, want the incomplete pass to schedule the sweep", enqueued)

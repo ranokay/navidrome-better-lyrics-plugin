@@ -22,12 +22,13 @@ const (
 	// per-source cache of synchronized results.
 	syncedLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
 	// unsyncedLyricsCacheTTLSeconds covers word/line-quality winners and the
-	// per-source cache of plain results; sources that miss can be retried soon.
+	// per-source cache of plain results.
 	unsyncedLyricsCacheTTLSeconds = int64(time.Hour / time.Second)
 	negativeLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	credentialSaltKey             = "credential-salt:v1"
 	lyricsWinnerCacheKeyPrefix    = "lyrics:v4:winner:"
 	lyricsSourceCacheKeyPrefix    = "lyrics:v4:source:"
+	lyricsCacheGeneration         = 1
 )
 
 type lyricsCacheUsageStore interface {
@@ -77,6 +78,7 @@ func lyricsWinnerCacheKey(track lyrics.TrackInfo, sourceOrder []string) (string,
 }
 
 type cachedLyricsEnvelope struct {
+	Generation    int                      `json:"generation,omitempty"`
 	Quality       lyric.TimingQuality      `json:"quality"`
 	Response      lyrics.GetLyricsResponse `json:"response"`
 	SweepComplete bool                     `json:"sweepComplete,omitempty"`
@@ -116,22 +118,66 @@ func (p *Provider) readCachedCandidate(key string) (lyric.Candidate, bool) {
 // lifetime instead of the original one. Zero means the entry predates
 // expiry stamping and cannot be trusted for derived TTLs.
 func (p *Provider) readCachedCandidateWithExpiry(key string) (lyric.Candidate, int64, bool) {
+	envelope, ok := p.readCachedEnvelope(key)
+	if !ok {
+		return lyric.Candidate{}, 0, false
+	}
+	return cachedCandidate(envelope), envelope.ExpiresAt, true
+}
+
+func cachedCandidate(envelope cachedLyricsEnvelope) lyric.Candidate {
+	candidate := lyric.Candidate{Response: envelope.Response, Quality: envelope.Quality}
+	if envelope.Generation == lyricsCacheGeneration {
+		return candidate
+	}
+	// Older grading trusted TTML metadata alone. Regrade readable legacy
+	// content before it can establish a new winner while its source refreshes.
+	var best lyric.Candidate
+	for _, text := range envelope.Response.Lyrics {
+		provenance := text.Source
+		if provenance == nil {
+			provenance = envelope.Response.Source
+		}
+		format := "elrc"
+		if provenance != nil && provenance.Format != "" {
+			format = provenance.Format
+		} else if strings.HasPrefix(strings.TrimSpace(text.Text), "<") {
+			format = "ttml"
+		}
+		best = lyric.Prefer(best, lyric.NewCandidate(text, "", format))
+	}
+	if !best.Present() {
+		return lyric.Candidate{}
+	}
+	candidate.Quality = best.Quality
+	return candidate
+}
+
+func (p *Provider) readCachedEnvelope(key string) (cachedLyricsEnvelope, bool) {
 	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
-		return lyric.Candidate{}, 0, false
+		return cachedLyricsEnvelope{}, false
 	}
 	var envelope cachedLyricsEnvelope
 	if err := json.Unmarshal(value, &envelope); err != nil {
-		p.logf(fmt.Sprintf("lyrics cache entry decode failed: %v", err))
-		return lyric.Candidate{}, 0, false
+		p.logf(fmt.Sprintf("lyrics cache entry decode failed: %v", p.safeDiagnosticError(err)))
+		return cachedLyricsEnvelope{}, false
 	}
-	return lyric.Candidate{Response: envelope.Response, Quality: envelope.Quality}, envelope.ExpiresAt, true
+	if envelope.ExpiresAt > 0 && envelope.ExpiresAt <= p.now().Unix() {
+		return cachedLyricsEnvelope{}, false
+	}
+	if envelope.ExpiresAt == 0 && len(envelope.Response.Lyrics) == 0 {
+		// Only existing lyrics justify serving a legacy unstamped entry.
+		// An undated miss cannot suppress a fresh provider lookup.
+		return cachedLyricsEnvelope{}, false
+	}
+	return envelope, true
 }
 
-func (p *Provider) storeCandidateValue(key string, candidate lyric.Candidate, ttl int64) bool {
-	value, err := json.Marshal(cachedLyricsEnvelope{Quality: candidate.Quality, Response: candidate.Response, ExpiresAt: p.now().Add(time.Duration(ttl) * time.Second).Unix()})
+func (p *Provider) storeCandidateValue(key string, candidate lyric.Candidate, ttl int64, credentials string) bool {
+	value, err := json.Marshal(cachedLyricsEnvelope{Generation: lyricsCacheGeneration, Quality: candidate.Quality, Response: candidate.Response, Credentials: credentials, ExpiresAt: p.now().Add(time.Duration(ttl) * time.Second).Unix()})
 	if err != nil {
-		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", err))
+		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", p.safeDiagnosticError(err)))
 		return false
 	}
 	return p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, ttl)
@@ -147,14 +193,14 @@ func (p *Provider) storeCandidateBytes(key string, value []byte, oversized bool,
 	if usageStore, ok := p.cache.(lyricsCacheUsageStore); ok {
 		used, err := usageStore.StorageUsed()
 		if err != nil {
-			p.logf(fmt.Sprintf("lyrics cache usage lookup failed: %v", err))
+			p.logf(fmt.Sprintf("lyrics cache usage lookup failed: %v", p.safeDiagnosticError(err)))
 		} else if used >= lyricsCacheMaxBytes-lyricsCacheReservedBytes || used+int64(len(value)) > lyricsCacheMaxBytes-lyricsCacheReservedBytes {
 			p.logf("lyrics cache entry skipped to preserve rate-limit storage headroom")
 			return false
 		}
 	}
 	if err := p.cache.SetWithTTL(key, value, ttl); err != nil {
-		p.logf(fmt.Sprintf("lyrics cache write failed: %v", err))
+		p.logf(fmt.Sprintf("lyrics cache write failed: %v", p.safeDiagnosticError(err)))
 		return false
 	}
 	return true
@@ -177,13 +223,14 @@ func (p *Provider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool
 		return false
 	}
 	value, err := json.Marshal(cachedLyricsEnvelope{
-		Quality:   lyric.TimingUnsynced,
-		ExpiresAt: p.now().Add(time.Duration(unsyncedLyricsCacheTTLSeconds) * time.Second).Unix(),
+		Generation: lyricsCacheGeneration,
+		Quality:    lyric.TimingUnsynced,
+		ExpiresAt:  p.now().Add(time.Duration(negativeLyricsCacheTTLSeconds) * time.Second).Unix(),
 	})
 	if err != nil {
 		return false
 	}
-	if p.cache.SetWithTTL(key, value, unsyncedLyricsCacheTTLSeconds) != nil {
+	if p.cache.SetWithTTL(key, value, negativeLyricsCacheTTLSeconds) != nil {
 		return false
 	}
 	// An oversized/evicted write must not count as coverage.
@@ -204,15 +251,19 @@ func (p *Provider) readCachedSourceCoverage(track lyrics.TrackInfo, sourceID str
 // write-time expiry for remaining-lifetime bounds.
 func (p *Provider) readCachedSourceCoverageWithExpiry(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, int64, bool) {
 	if key, ok := lyricsCacheKeyForSource(track, sourceID); ok {
-		if candidate, expiresAt, found := p.readCachedCandidateWithExpiry(key); found {
-			return candidate, expiresAt, true
+		if envelope, found := p.readCachedEnvelope(key); found && envelope.Generation == lyricsCacheGeneration && envelope.Credentials == p.sourceCredentialsFingerprint(sourceID) {
+			return lyric.Candidate{Response: envelope.Response, Quality: envelope.Quality}, envelope.ExpiresAt, true
 		}
 	}
 	key, ok := p.sourceMissKey(track, sourceID)
 	if !ok {
 		return lyric.Candidate{}, 0, false
 	}
-	return p.readCachedCandidateWithExpiry(key)
+	envelope, found := p.readCachedEnvelope(key)
+	if !found || envelope.Generation != lyricsCacheGeneration {
+		return lyric.Candidate{}, 0, false
+	}
+	return cachedCandidate(envelope), envelope.ExpiresAt, true
 }
 
 // cacheSourceCandidate persists one per-source result and reports whether the
@@ -222,7 +273,7 @@ func (p *Provider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string,
 	if !ok || !candidate.Present() {
 		return false
 	}
-	return p.storeCandidateValue(key, candidate, sourceCacheTTLSeconds(candidate.Quality))
+	return p.storeCandidateValue(key, candidate, sourceCacheTTLSeconds(candidate.Quality), p.sourceCredentialsFingerprint(sourceID))
 }
 
 // readBestFromSourceCache ranks fresh per-source results in configured order; the
@@ -245,13 +296,8 @@ func (p *Provider) readCachedWinner(track lyrics.TrackInfo, order []source.Sourc
 	if !ok {
 		return lyric.Candidate{}, false, false
 	}
-	value, exists, err := p.cache.Get(key)
-	if err != nil || !exists {
-		return lyric.Candidate{}, false, false
-	}
-	var envelope cachedLyricsEnvelope
-	if err := json.Unmarshal(value, &envelope); err != nil {
-		p.logf(fmt.Sprintf("lyrics cache entry decode failed: %v", err))
+	envelope, exists := p.readCachedEnvelope(key)
+	if !exists || envelope.Generation != lyricsCacheGeneration {
 		return lyric.Candidate{}, false, false
 	}
 	if envelope.Credentials != p.lyricsCredentialsFingerprint() {
@@ -259,7 +305,22 @@ func (p *Provider) readCachedWinner(track lyrics.TrackInfo, order []source.Sourc
 		// authorise the current lookup: re-adding a key must re-walk.
 		return lyric.Candidate{}, false, false
 	}
-	return lyric.Candidate{Response: envelope.Response, Quality: envelope.Quality}, true, envelope.SweepComplete
+	sweepComplete := envelope.SweepComplete
+	if sweepComplete {
+		// A positive winner can outlive a sibling's short miss coverage.
+		// Its display TTL must not postpone discovery after that miss expires.
+		for _, src := range order {
+			if src.Fetch == nil {
+				continue
+			}
+			_, expiry, covered := p.readCachedSourceCoverageWithExpiry(track, src.ID)
+			if !covered || expiry <= p.now().Unix() {
+				sweepComplete = false
+				break
+			}
+		}
+	}
+	return lyric.Candidate{Response: envelope.Response, Quality: envelope.Quality}, true, sweepComplete
 }
 
 // cacheWinner stores the selected candidate; negative lookup results live here too
@@ -272,6 +333,7 @@ func (p *Provider) cacheWinner(track lyrics.TrackInfo, order []source.Source, ca
 		return
 	}
 	value, err := json.Marshal(cachedLyricsEnvelope{
+		Generation:    lyricsCacheGeneration,
 		Quality:       candidate.Quality,
 		Response:      candidate.Response,
 		SweepComplete: sweepComplete,
@@ -279,7 +341,7 @@ func (p *Provider) cacheWinner(track lyrics.TrackInfo, order []source.Source, ca
 		ExpiresAt:     p.now().Add(time.Duration(winnerCacheTTLSeconds(candidate.Quality)) * time.Second).Unix(),
 	})
 	if err != nil {
-		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", err))
+		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", p.safeDiagnosticError(err)))
 		return
 	}
 	p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, winnerCacheTTLSeconds(candidate.Quality))
@@ -291,12 +353,13 @@ func (p *Provider) cacheNegativeWinner(track lyrics.TrackInfo, order []source.So
 		return
 	}
 	value, err := json.Marshal(cachedLyricsEnvelope{
+		Generation:    lyricsCacheGeneration,
 		SweepComplete: sweepComplete,
 		Credentials:   p.lyricsCredentialsFingerprint(),
 		ExpiresAt:     p.now().Add(time.Duration(negativeLyricsCacheTTLSeconds) * time.Second).Unix(),
 	})
 	if err != nil {
-		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", err))
+		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", p.safeDiagnosticError(err)))
 		return
 	}
 	p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, negativeLyricsCacheTTLSeconds)

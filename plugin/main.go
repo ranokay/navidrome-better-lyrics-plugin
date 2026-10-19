@@ -19,9 +19,12 @@ var manifestJSON []byte
 
 func init() {
 	p := provider.New(provider.Deps{
-		Send:        host.HTTPSend,
-		Store:       defaultStore(),
-		Now:         time.Now,
+		Send:  host.HTTPSend,
+		Store: defaultStore(),
+		// Hosts may expose a real wall clock without a real monotonic clock.
+		// Discard WASI's synthetic monotonic reading so blocking HTTP calls
+		// consume the source and lookup budgets on those hosts too.
+		Now:         func() time.Time { return time.Now().Round(0) },
 		Config:      defaultConfigLookup(),
 		CreateQueue: createSweepQueue,
 		EnqueueTask: enqueueTask,
