@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/icon.png" alt="Better Lyrics plugin icon" width="180"></p>
+<p align="center"><img src="docs/assets/icon.png" alt="ND Better Lyrics plugin icon" width="180"></p>
 
 # Navidrome Better Lyrics plugin
 
@@ -26,30 +26,40 @@ The plugin does not inject or replace Navidrome's interface. It returns TTML, en
 
 ## Install
 
-1. Download `better-lyrics.ndp` from a release or a successful GitHub Actions run.
+1. Download `nd-better-lyrics.ndp` from a release or a successful GitHub Actions run.
 2. Copy it to Navidrome's plugin folder, which defaults to `<DataFolder>/plugins`.
-3. Enable plugins and add `better-lyrics` after every local source in `LyricsPriority`:
+3. Enable plugins and add `nd-better-lyrics` after every local source in `LyricsPriority`:
 
 ```toml
-LyricsPriority = ".ttml,.yaml,.yml,.elrc,.lrc,.srt,.txt,embedded,better-lyrics"
+LyricsPriority = ".ttml,.yaml,.yml,.elrc,.lrc,.srt,.txt,embedded,nd-better-lyrics"
 
 [Plugins]
 Enabled = true
 ```
 
-The plugin ID comes from the package filename. Keep the file named `better-lyrics.ndp`, or use its new filename in `LyricsPriority`.
+The plugin ID comes from the package filename. Keep the file named `nd-better-lyrics.ndp`, or use its new filename in `LyricsPriority`.
 
 After copying the package, validate it, ask a running Navidrome instance to discover it, and enable it:
 
 ```bash
-navidrome plugin validate better-lyrics.ndp
+navidrome plugin validate nd-better-lyrics.ndp
 navidrome plugin rescan
-navidrome plugin enable better-lyrics
+navidrome plugin enable nd-better-lyrics
 ```
 
 `plugin rescan` is needed when `Plugins.AutoReload` is disabled. Restarting Navidrome or setting `Plugins.AutoReload = true` are alternatives that also discover a newly copied package before it is enabled.
 
-With the priority above, Navidrome stops at the first non-empty source. Sidecar and embedded lyrics therefore win; Better Lyrics is contacted only when every configured local source is empty.
+With the priority above, Navidrome stops at the first non-empty source. Sidecar and embedded lyrics therefore win; ND Better Lyrics is contacted only when every configured local source is empty.
+
+### Upgrade from 0.3.x
+
+Version 0.4.0 renames the package and plugin ID from `better-lyrics` to
+`nd-better-lyrics`. Disable the old plugin, replace its package with
+`nd-better-lyrics.ndp`, and replace `better-lyrics` with `nd-better-lyrics` in
+`LyricsPriority`. Rescan and enable the new plugin as above. Reapply your source
+order, enabled sources, and optional credentials in Settings → Plugins →
+ND Better Lyrics. Navidrome stores settings and caches by plugin ID, so the new
+ID starts with default settings and an empty cache.
 
 ## Provider behavior
 
@@ -103,7 +113,7 @@ Selection and caching rules:
   voice metadata remain limited by that format and the host parser.
 - Sources that ship disabled by default (`luna-beat`, `apple-lyrically`) query
   community mirrors with unclear distribution rights; enable them deliberately
-  in Settings → Plugins → Better Lyrics.
+  in Settings → Plugins → ND Better Lyrics.
 
 Legacy is deprecated and is not queried.
 
@@ -154,7 +164,7 @@ release keeps the existing hosts because both currently serve identical traffic.
 
 ## Settings (navidrome plugin config)
 
-Settings → Plugins → Better Lyrics exposes:
+Settings → Plugins → ND Better Lyrics exposes:
 
 - **Lyric sources** — an ordered list with enable checkboxes; the top row wins
   timing-quality ties. The shipped default order is the catalogue above.
@@ -167,7 +177,7 @@ Settings → Plugins → Better Lyrics exposes:
 The plugin falls back to its built-in defaults when a config save drops or
 empties the source list; a listed-but-disabled source stays disabled. Saving the
 list with every row disabled is a deliberate opt-out: the plugin then performs no
-network fetches at all (and better-lyrics disappears from `LyricsPriority`
+network fetches at all (and nd-better-lyrics disappears from `LyricsPriority`
 behavior until it is re-enabled).
 
 See the Better Lyrics documentation for the current [authentication](https://lyrics-api-docs.boidu.dev/docs/authentication), [rate limits](https://lyrics-api-docs.boidu.dev/docs/rate-limiting), and [response format](https://lyrics-api-docs.boidu.dev/docs/response-format).
@@ -212,7 +222,7 @@ mise run test
 mise run check
 ```
 
-`mise run check` verifies formatting, runs the race-enabled Go tests, builds the WebAssembly module with the standard Go WASI toolchain, packages `dist/better-lyrics.ndp`, and checks the archive.
+`mise run check` verifies formatting, runs the race-enabled Go tests, builds the WebAssembly module with the standard Go WASI toolchain, packages `dist/nd-better-lyrics.ndp`, and checks the archive.
 
 ### Project layout
 
@@ -221,7 +231,7 @@ plugin/              package main: manifest embed, registration, host seams, con
 internal/provider/   orchestration: source walk, sweep, winner cache, config, transport
 internal/source/     upstream adapters, one file per catalog source; fixtures in testdata/
 internal/lyric/      lyric domain: candidates, timing grades, identity matching, word-sync parsers
-dist/                local build output (plugin.wasm, better-lyrics.ndp); not committed
+dist/                local build output (plugin.wasm, nd-better-lyrics.ndp); not committed
 docs/                feasibility research, design specs, and implementation plans
 ```
 
@@ -231,14 +241,14 @@ docs/                feasibility research, design specs, and implementation plan
 
 ## Releases
 
-Every downloadable artifact is named `better-lyrics.ndp`; the version lives inside its `plugin/manifest.json`. To cut a release, set `version` in `plugin/manifest.json` and push a matching tag:
+Every downloadable artifact is named `nd-better-lyrics.ndp`; the version lives inside its `plugin/manifest.json`. To cut a release, set `version` in `plugin/manifest.json` and push a matching tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
-The release workflow verifies that the tag equals `v` plus the manifest version, reruns `mise run check`, and publishes a GitHub release containing `better-lyrics.ndp` with automatically generated notes.
+The release workflow verifies that the tag equals `v` plus the manifest version, reruns `mise run check`, and publishes a GitHub release containing `nd-better-lyrics.ndp` with automatically generated notes.
 
 ## License
 

@@ -1,4 +1,4 @@
-# Better Lyrics fallback plugin feasibility
+# ND Better Lyrics fallback plugin feasibility
 
 Research date: 2026-08-23
 
@@ -125,13 +125,13 @@ Navidrome's lyrics response has no provider, source URL, or attribution field, s
 
 Navidrome does not ask every source and merge results. It evaluates `LyricsPriority` from left to right and returns the first non-empty result. Tokens beginning with `.` are sidecar extensions, `embedded` selects embedded tags, and other tokens select a plugin by its installed package filename/ID ([priority resolver](https://github.com/navidrome/navidrome/blob/23548f40a09f5f8bf9cf1e1bc2d4c2b236777560/core/lyrics/lyrics.go#L48-L124), [sidecar source](https://github.com/navidrome/navidrome/blob/23548f40a09f5f8bf9cf1e1bc2d4c2b236777560/core/lyrics/sources.go#L28-L92)). Source errors are logged and resolution continues to the next entry.
 
-If the installed package is `better-lyrics.ndp`, the recommended configuration is:
+If the installed package is `nd-better-lyrics.ndp`, the recommended configuration is:
 
 ```ini
-LyricsPriority = ".ttml,.yaml,.yml,.elrc,.lrc,.srt,.txt,embedded,better-lyrics"
+LyricsPriority = ".ttml,.yaml,.yml,.elrc,.lrc,.srt,.txt,embedded,nd-better-lyrics"
 ```
 
-This keeps every local source—sidecar first, then embedded tags—ahead of the network provider. If the literal desired policy is “sidecars, then Better Lyrics, then embedded,” move `better-lyrics` immediately before `embedded`; that is less privacy-preserving and creates avoidable network dependence when a track already contains embedded lyrics.
+This keeps every local source—sidecar first, then embedded tags—ahead of the network provider. If the literal desired policy is “sidecars, then ND Better Lyrics, then embedded,” move `nd-better-lyrics` immediately before `embedded`; that is less privacy-preserving and creates avoidable network dependence when a track already contains embedded lyrics.
 
 The plugin should not inspect the music filesystem, search for sidecars, or receive library paths. Navidrome's priority resolver already decides whether local lyrics exist before it calls the plugin. Avoiding library permission gives the module a smaller security boundary and prevents duplicated precedence logic.
 

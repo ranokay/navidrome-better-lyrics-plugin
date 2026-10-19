@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install toolchain
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
-          cache: true
+          cache: false
 
       - name: Verify tag matches the plugin version
         if: github.ref_type == 'tag'
@@ -44,6 +44,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/better-lyrics.ndp \
-            --title "better-lyrics $GITHUB_REF_NAME" \
+          gh release create "$GITHUB_REF_NAME" dist/nd-better-lyrics.ndp \
+            --title "nd-better-lyrics $GITHUB_REF_NAME" \
             --generate-notes
