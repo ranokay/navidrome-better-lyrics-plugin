@@ -63,13 +63,12 @@ ID starts with default settings and an empty cache.
 
 ### Upgrade from 0.4.0
 
-Version 0.4.0 was the last release with the Musixmatch source. Later versions
-remove it at Musixmatch's request. On first load after upgrading, the plugin
-deletes the cached Musixmatch token, its cached lyrics, and the winner cache, so
-the next lookup of each track re-queries the remaining sources. A saved source
-list that still has a `musixmatch` row keeps working because the plugin skips
-unknown ids. Navidrome rejects that row when you next save the settings, so
-delete it first.
+Version 0.4.1 removes the Musixmatch source at Musixmatch's request. On first
+load after upgrading, the plugin deletes the cached Musixmatch token, its cached
+lyrics, and the winner cache, so the next lookup of each track re-queries the
+remaining sources. A saved source list that still has a `musixmatch` row keeps
+working because the plugin skips unknown ids. Navidrome rejects that row when
+you next save the settings, so delete it first.
 
 ## Provider behavior
 
@@ -248,8 +247,8 @@ docs/                feasibility research, design specs, and implementation plan
 Every downloadable artifact is named `nd-better-lyrics.ndp`; the version lives inside its `plugin/manifest.json`. To cut a release, set `version` in `plugin/manifest.json` and push a matching tag:
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
 The release workflow verifies that the tag equals `v` plus the manifest version, reruns `mise run check`, and publishes a GitHub release containing `nd-better-lyrics.ndp` with automatically generated notes.
