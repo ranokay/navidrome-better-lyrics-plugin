@@ -65,8 +65,9 @@ ID starts with default settings and an empty cache.
 
 Version 0.4.1 removes the Musixmatch source at Musixmatch's request. On first
 load after upgrading, the plugin deletes the cached Musixmatch token, its cached
-lyrics, and the winner cache, so the next lookup of each track re-queries the
-remaining sources. A saved source list that still has a `musixmatch` row keeps
+lyrics, cached LyricsPlus results (LyricsPlus used to fall back to Musixmatch),
+and the winner cache, so the next lookup of each track re-queries the remaining
+sources. A saved source list that still has a `musixmatch` row keeps
 working because the plugin skips unknown ids. Navidrome rejects that row when
 you next save the settings, so delete it first.
 

@@ -44,11 +44,14 @@ type prefixDeletingStore interface {
 const removedSourcePurgeMarkerKey = "cache-purge:musixmatch:v1"
 
 // removedSourcePurgePrefixes covers the minted token, the source's own cached
-// results and misses, and every winner entry: winner keys hash the source
-// order, so entries that may hold that source's lyrics cannot be told apart.
+// results and misses, LyricsPlus results (it used to request a Musixmatch
+// backend and caches them under its own id), and every winner entry: winner
+// keys hash the source order, so entries that may hold that source's lyrics
+// cannot be told apart.
 var removedSourcePurgePrefixes = []string{
 	"musixmatch:",
 	lyricsSourceCacheKeyPrefix + "musixmatch:",
+	lyricsSourceCacheKeyPrefix + "lyricsplus:",
 	lyricsWinnerCacheKeyPrefix,
 }
 

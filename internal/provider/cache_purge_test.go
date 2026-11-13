@@ -38,6 +38,7 @@ func TestOnInitPurgesRemovedSourceCacheOnce(t *testing.T) {
 		"musixmatch:token:v1",
 		lyricsSourceCacheKeyPrefix + "musixmatch:track",
 		lyricsSourceCacheKeyPrefix + "musixmatch:track:missing:fp",
+		lyricsSourceCacheKeyPrefix + "lyricsplus:track",
 		lyricsWinnerCacheKeyPrefix + "fp:track",
 	}
 	kept := []string{
@@ -59,7 +60,7 @@ func TestOnInitPurgesRemovedSourceCacheOnce(t *testing.T) {
 	}
 	for _, key := range kept {
 		if _, exists, _ := cache.Get(key); !exists {
-			t.Fatalf("%q was purged; only removed-source data and winners may go", key)
+			t.Fatalf("%q was purged; only data that may hold removed-source lyrics may go", key)
 		}
 	}
 
