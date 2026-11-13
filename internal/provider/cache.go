@@ -35,6 +35,48 @@ type lyricsCacheUsageStore interface {
 	StorageUsed() (int64, error)
 }
 
+type prefixDeletingStore interface {
+	DeleteByPrefix(prefix string) (int64, error)
+}
+
+// removedSourcePurgeMarkerKey records that installations upgraded from a
+// release with the Musixmatch source no longer hold its token or lyrics.
+const removedSourcePurgeMarkerKey = "cache-purge:musixmatch:v1"
+
+// removedSourcePurgePrefixes covers the minted token, the source's own cached
+// results and misses, LyricsPlus results (it used to request a Musixmatch
+// backend and caches them under its own id), and every winner entry: winner
+// keys hash the source order, so entries that may hold that source's lyrics
+// cannot be told apart. Completed sweep markers go too, because they would
+// otherwise claim coverage for the purged LyricsPlus results and block the
+// sweep that refills them when the saved order did not include Musixmatch.
+var removedSourcePurgePrefixes = []string{
+	"musixmatch:",
+	lyricsSourceCacheKeyPrefix + "musixmatch:",
+	lyricsSourceCacheKeyPrefix + "lyricsplus:",
+	lyricsWinnerCacheKeyPrefix,
+	sweepDonePrefix,
+}
+
+// purgeRemovedSourceCache runs once per installation. It stamps the marker
+// only after every prefix is gone so a failed purge retries on the next init.
+func (p *Provider) purgeRemovedSourceCache() {
+	store, ok := p.cache.(prefixDeletingStore)
+	if !ok {
+		return
+	}
+	if _, done, err := p.cache.Get(removedSourcePurgeMarkerKey); err != nil || done {
+		return
+	}
+	for _, prefix := range removedSourcePurgePrefixes {
+		if _, err := store.DeleteByPrefix(prefix); err != nil {
+			p.logf(fmt.Sprintf("removed-source cache purge failed; retrying on next plugin load: %v", p.safeDiagnosticError(err)))
+			return
+		}
+	}
+	_ = p.cache.SetWithTTL(removedSourcePurgeMarkerKey, []byte("1"), credentialSaltTTL)
+}
+
 type noopLyricsCache struct{}
 
 func (noopLyricsCache) Get(string) ([]byte, bool, error) {

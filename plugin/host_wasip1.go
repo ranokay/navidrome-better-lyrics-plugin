@@ -22,6 +22,10 @@ func (hostStore) StorageUsed() (int64, error) {
 	return host.KVStoreGetStorageUsed()
 }
 
+func (hostStore) DeleteByPrefix(prefix string) (int64, error) {
+	return host.KVStoreDeleteByPrefix(prefix)
+}
+
 func defaultStore() provider.Store {
 	return hostStore{}
 }

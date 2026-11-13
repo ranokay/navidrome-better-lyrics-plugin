@@ -13,9 +13,8 @@ type ConfigLookup func(key string) (string, bool)
 // providerConfig is the resolved runtime configuration: enabled sources in saved
 // order plus the optional secrets administrators may paste into the plugins page.
 type providerConfig struct {
-	Sources             []source.Source
-	BetterLyricsAPIKey  string
-	MusixmatchUserToken string
+	Sources            []source.Source
+	BetterLyricsAPIKey string
 }
 
 type sourceSelection struct {
@@ -58,18 +57,14 @@ func readProviderConfig(lookup ConfigLookup) providerConfig {
 		}
 	}
 
-	var apiKey, musixmatchToken string
+	var apiKey string
 	if value, exists := lookup("betterLyricsApiKey"); exists && strings.TrimSpace(value) != "" {
 		apiKey = strings.TrimSpace(value)
 	}
-	if value, exists := lookup("musixmatchUserToken"); exists && strings.TrimSpace(value) != "" {
-		musixmatchToken = strings.TrimSpace(value)
-	}
 
 	return providerConfig{
-		Sources:             current,
-		BetterLyricsAPIKey:  apiKey,
-		MusixmatchUserToken: musixmatchToken,
+		Sources:            current,
+		BetterLyricsAPIKey: apiKey,
 	}
 }
 

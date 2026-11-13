@@ -27,8 +27,7 @@ type fakeRuntime struct {
 	store *fakeStore
 	now   func() time.Time
 
-	betterLyricsAPIKey  string
-	musixmatchUserToken string
+	betterLyricsAPIKey string
 }
 
 func newFakeRuntime(send func(host.HTTPRequest) (*host.HTTPResponse, error)) *fakeRuntime {
@@ -105,10 +104,6 @@ func (r *fakeRuntime) Cache() Store {
 
 func (r *fakeRuntime) BetterLyricsAPIKey() string {
 	return r.betterLyricsAPIKey
-}
-
-func (r *fakeRuntime) MusixmatchUserToken() string {
-	return r.musixmatchUserToken
 }
 
 func (r *fakeRuntime) Cooldown(key string) time.Duration {

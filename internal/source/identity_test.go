@@ -229,27 +229,6 @@ func TestLunaBeatMatchesExactPunctuatedArtistNames(t *testing.T) {
 	}
 }
 
-func TestMusixmatchRejectsUnrelatedSearchRows(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
-		switch {
-		case strings.Contains(request.URL, "/ws/1.1/token.get"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
-		case strings.Contains(request.URL, "/ws/1.1/track.search"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Wrong Song","artist_name":"Wrong Artist","track_length":240}}]}}}`)}, nil
-		default:
-			t.Fatalf("lyrics macro must not be requested for an unrelated row: %s", request.URL)
-			return nil, nil
-		}
-	})
-
-	candidates, health, err := fetchMusixmatch(rt, lyrics.TrackInfo{Title: "Song A", Artist: "Artist A", Duration: 240}, time.Now().Add(testLookupBudget))
-	if err != nil || len(candidates) != 0 || health != Healthy {
-		t.Fatalf("result = %#v/%v/%v; want a clean miss", candidates, health, err)
-	}
-}
-
 func TestBinimumMatchesWithoutDuration(t *testing.T) {
 	t.Parallel()
 
@@ -282,29 +261,6 @@ func TestLunaRejectsContainingArtistNames(t *testing.T) {
 	candidates, health, err := fetchLuna(rt, lyrics.TrackInfo{Title: "Song", Artist: "Pink", Duration: 130}, time.Now().Add(testLookupBudget))
 	if err != nil || len(candidates) != 0 || health != Healthy {
 		t.Fatalf("result = %#v/%v/%v; want the containing artist rejected", candidates, health, err)
-	}
-}
-
-func TestMusixmatchMatchesWithoutDuration(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
-		switch {
-		case strings.Contains(request.URL, "/ws/1.1/token.get"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"user_token":"tok"}}}`)}, nil
-		case strings.Contains(request.URL, "/ws/1.1/track.search"):
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"Song","artist_name":"Artist","track_length":240}}]}}}`)}, nil
-		default:
-			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"message":{"body":{"macro_calls":{"track.subtitles.get":{"header":{"status_code":200},"body":{"subtitle_list":[{"subtitle_body":"[00:01.00]line"}]}}}}}}`)}, nil
-		}
-	})
-
-	candidates, _, err := fetchMusixmatch(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(testLookupBudget))
-	if err != nil {
-		t.Fatalf("fetchMusixmatch() error = %v, want nil", err)
-	}
-	if len(candidates) != 1 {
-		t.Fatalf("candidates = %#v, want the identity match without a duration gate", candidates)
 	}
 }
 

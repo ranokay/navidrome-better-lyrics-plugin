@@ -12,7 +12,7 @@ func TestLiveSearchFixturesDecodeWithRealWireNames(t *testing.T) {
 	t.Parallel()
 
 	// Pin the captured wire shapes: the live payloads disagree with earlier
-	// assumptions (NetEase `dt`, Musixmatch `track_length`, quoted Luna ids)
+	// assumptions (NetEase `dt`, quoted Luna ids)
 	// and each mismatch silently neutralized the source.
 	netease := jsonUnmarshal[neteaseSearchEnvelope](t, "testdata/netease/search.json")
 	song, ok := pickNetEaseSong(netease.Result.Songs, lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 277})
@@ -21,15 +21,6 @@ func TestLiveSearchFixturesDecodeWithRealWireNames(t *testing.T) {
 	}
 	if song.ID != 17822787 || song.Duration != 276866 {
 		t.Fatalf("netease song = %#v, want id 17822787 dur 276866 from `dt`", song)
-	}
-
-	musixmatch := jsonUnmarshal[musixmatchEnvelope](t, "testdata/musixmatch/search.json")
-	if len(musixmatch.Message.Body.TrackList) == 0 {
-		t.Fatal("live Musixmatch fixture has no track_list")
-	}
-	track := musixmatch.Message.Body.TrackList[0].Track
-	if track.TrackID != 360230953 || track.Duration != 234 {
-		t.Fatalf("musixmatch track = %#v, want id 360230953 dur 234 from `track_length`", track)
 	}
 
 	luna := jsonUnmarshal[lunaSearchEnvelope](t, "testdata/luna/search.json")

@@ -12,8 +12,8 @@ import (
 func TestPluginVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := pluginVersion(); got != "0.4.0" {
-		t.Fatalf("pluginVersion() = %q, want 0.4.0", got)
+	if got := pluginVersion(); got != "0.4.1" {
+		t.Fatalf("pluginVersion() = %q, want 0.4.1", got)
 	}
 }
 
@@ -69,19 +69,19 @@ func TestManifestAllowlistsEverySourceHost(t *testing.T) {
 		t.Fatalf("manifest taskqueue maxConcurrency = %d, want 1 for the sweep queue", got)
 	}
 
-	// The config schema must expose the ordered source list plus the two secrets.
+	// The config schema must expose the ordered source list plus the optional
+	// Better Lyrics API key.
 	var schema struct {
 		Properties struct {
-			Sources             json.RawMessage `json:"sources"`
-			BetterLyricsAPIKey  json.RawMessage `json:"betterLyricsApiKey"`
-			MusixmatchUserToken json.RawMessage `json:"musixmatchUserToken"`
+			Sources            json.RawMessage `json:"sources"`
+			BetterLyricsAPIKey json.RawMessage `json:"betterLyricsApiKey"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(typedManifestConfigSchema(), &schema); err != nil {
 		t.Fatalf("decode config schema: %v", err)
 	}
-	if len(schema.Properties.Sources) == 0 || len(schema.Properties.BetterLyricsAPIKey) == 0 || len(schema.Properties.MusixmatchUserToken) == 0 {
-		t.Fatal("manifest config schema must define sources and both optional secrets")
+	if len(schema.Properties.Sources) == 0 || len(schema.Properties.BetterLyricsAPIKey) == 0 {
+		t.Fatal("manifest config schema must define sources and the optional API key")
 	}
 }
 

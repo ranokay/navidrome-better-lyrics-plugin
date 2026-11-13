@@ -11,7 +11,6 @@ var Catalog = []Source{
 	{ID: "luna-beat", Display: "LunaBeat", Hosts: []string{"2755337087.github.io"}, DefaultEnabled: false, Fetch: fetchLunaBeat},
 	{ID: "apple-lyrically", Display: "Apple Music (Lyrically)", Hosts: []string{"itunes.apple.com", "lyrics.paxsenix.org"}, DefaultEnabled: false, Fetch: fetchLyrically},
 	{ID: "better-lyrics-portato", Display: "Better Lyrics Portato", Hosts: []string{"lyrics-api.boidu.dev"}, DefaultEnabled: true, Fetch: fetchPortato},
-	{ID: "musixmatch", Display: "Musixmatch", Hosts: []string{"apic.musixmatch.com"}, DefaultEnabled: true, Fetch: fetchMusixmatch},
 	{ID: "netease", Display: "NetEase", Hosts: []string{"music.163.com"}, DefaultEnabled: true, Fetch: fetchNetEase},
 	{ID: "luna", Display: "Soda (Luna)", Hosts: []string{"api.qishui.com", "beta-luna.douyin.com"}, DefaultEnabled: true, Fetch: fetchLuna},
 	{ID: "petitlyrics", Display: "PetitLyrics", Hosts: []string{"p0.petitlyrics.com"}, DefaultEnabled: true, Fetch: fetchPetitLyrics},

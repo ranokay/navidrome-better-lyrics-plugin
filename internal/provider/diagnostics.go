@@ -58,11 +58,7 @@ func (p *Provider) safeDiagnosticError(err error) error {
 	message = diagnosticQuery.ReplaceAllString(message, "?[redacted]")
 	message = diagnosticCredential.ReplaceAllString(message, "${1}[redacted]")
 	config := readProviderConfig(p.configLookup)
-	token, _, _ := p.cache.Get("musixmatch:token:v1")
-	for _, secret := range []string{config.BetterLyricsAPIKey, config.MusixmatchUserToken, string(token)} {
-		if secret == "" {
-			continue
-		}
+	if secret := config.BetterLyricsAPIKey; secret != "" {
 		for _, form := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
 			message = strings.ReplaceAll(message, form, "[redacted]")
 		}

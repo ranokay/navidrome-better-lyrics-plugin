@@ -152,7 +152,6 @@ func TestCredentialChangesRefreshPositiveSourceCoverageDuringSweep(t *testing.T)
 		{"better-lyrics", "betterLyricsApiKey"},
 		{"better-lyrics-legato", "betterLyricsApiKey"},
 		{"better-lyrics-portato", "betterLyricsApiKey"},
-		{"musixmatch", "musixmatchUserToken"},
 	} {
 		t.Run(tc.sourceID, func(t *testing.T) {
 			config := map[string]string{}
@@ -171,16 +170,6 @@ func TestCredentialChangesRefreshPositiveSourceCoverageDuringSweep(t *testing.T)
 			p.sources = sources
 			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 			p.runSweep(track)
-			// Changing an unrelated credential must not invalidate this source.
-			otherKey := "musixmatchUserToken"
-			if tc.key == otherKey {
-				otherKey = "betterLyricsApiKey"
-			}
-			config[otherKey] = "unrelated"
-			p.runSweep(track)
-			if calls != 1 {
-				t.Fatal("unrelated credential change invalidated positive source coverage")
-			}
 			config[tc.key] = "new credential"
 			result, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
 			if err != nil || calls != 1 || enqueued != 1 {

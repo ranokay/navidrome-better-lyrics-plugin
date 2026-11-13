@@ -56,15 +56,12 @@ func (p *Provider) credentialSalt() []byte {
 }
 
 // lyricsCredentialsFingerprint distinguishes negative coverage stamped under
-// different Better Lyrics API key / Musixmatch token configurations: adding or
-// replacing a credential must re-authorize sources whose misses were recorded
-// anonymously.
+// different Better Lyrics API key configurations: adding or replacing the key
+// must re-authorize sources whose misses were recorded anonymously.
 func (p *Provider) lyricsCredentialsFingerprint() string {
 	config := readProviderConfig(p.configLookup)
 	mac := hmac.New(sha256.New, p.credentialSalt())
 	mac.Write([]byte(config.BetterLyricsAPIKey))
-	mac.Write([]byte{0})
-	mac.Write([]byte(config.MusixmatchUserToken))
 	return fmt.Sprintf("%x", mac.Sum(nil)[:8])
 }
 
@@ -73,15 +70,10 @@ func (p *Provider) lyricsCredentialsFingerprint() string {
 // Unrelated credentials must not invalidate a healthy source's coverage.
 func (p *Provider) sourceCredentialsFingerprint(sourceID string) string {
 	config := readProviderConfig(p.configLookup)
-	var credential string
-	switch {
-	case sourceID == "better-lyrics" || strings.HasPrefix(sourceID, "better-lyrics-"):
-		credential = config.BetterLyricsAPIKey
-	case sourceID == "musixmatch":
-		credential = config.MusixmatchUserToken
-	default:
+	if sourceID != "better-lyrics" && !strings.HasPrefix(sourceID, "better-lyrics-") {
 		return ""
 	}
+	credential := config.BetterLyricsAPIKey
 	mac := hmac.New(sha256.New, p.credentialSalt())
 	mac.Write([]byte(sourceID))
 	mac.Write([]byte{0})

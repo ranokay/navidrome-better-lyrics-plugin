@@ -2,8 +2,8 @@
  "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.64.2/plugins/manifest-schema.json",
  "name": "ND Better Lyrics",
  "author": "Yuuta",
- "version": "0.4.0",
- "description": "Provides lyrics from Better Lyrics, Unison, LRCLib, BiniLyrics, AMLL, Musixmatch, NetEase, Luna, PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius and curated TTML communities",
+ "version": "0.4.1",
+ "description": "Provides lyrics from Better Lyrics, Unison, LRCLib, BiniLyrics, AMLL, NetEase, Luna, PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius and curated TTML communities",
  "website": "https://github.com/ranokay/navidrome-better-lyrics-plugin",
  "permissions": {
   "http": {
@@ -17,7 +17,6 @@
     "2755337087.github.io",
     "itunes.apple.com",
     "lyrics.paxsenix.org",
-    "apic.musixmatch.com",
     "music.163.com",
     "api.qishui.com",
     "beta-luna.douyin.com",
@@ -63,7 +62,6 @@
          "luna-beat",
          "apple-lyrically",
          "better-lyrics-portato",
-         "musixmatch",
          "netease",
          "luna",
          "petitlyrics",
@@ -116,10 +114,6 @@
        "enabled": true
       },
       {
-       "id": "musixmatch",
-       "enabled": true
-      },
-      {
        "id": "netease",
        "enabled": true
       },
@@ -161,11 +155,6 @@
      "type": "string",
      "title": "Better Lyrics API key (optional)",
      "description": "Sent as the X-API-Key header to lyrics-api.boidu.dev only; never logged"
-    },
-    "musixmatchUserToken": {
-     "type": "string",
-     "title": "Musixmatch user token (optional)",
-     "description": "Alternative to the self-minted anonymous token; sent to apic.musixmatch.com only"
     }
    }
   },
@@ -182,13 +171,6 @@
     {
      "type": "Control",
      "scope": "#/properties/betterLyricsApiKey",
-     "options": {
-      "format": "password"
-     }
-    },
-    {
-     "type": "Control",
-     "scope": "#/properties/musixmatchUserToken",
      "options": {
       "format": "password"
      }

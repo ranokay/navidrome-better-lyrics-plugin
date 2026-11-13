@@ -18,7 +18,7 @@ import (
 const (
 	lyricsPlusEndpoint     = "https://lyricsplus.binimum.org"
 	lyricsPlusMirrorOne    = "https://lyricsplus.atomix.one"
-	lyricsPlusSourceOrder  = "apple,lyricsplus,musixmatch"
+	lyricsPlusSourceOrder  = "apple,lyricsplus"
 	lyricsPlusProviderName = "LyricsPlus"
 )
 
