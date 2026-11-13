@@ -33,7 +33,6 @@ type Runtime interface {
 	Now() time.Time
 	Cache() Store
 	BetterLyricsAPIKey() string
-	MusixmatchUserToken() string
 	Cooldown(key string) time.Duration
 	RememberCooldown(key string, retryAfter time.Duration)
 }

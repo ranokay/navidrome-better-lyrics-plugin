@@ -16,8 +16,8 @@
 - Output texts must parse in Navidrome: TTML, enhanced/plain LRC, plain. Word-synced proprietary formats convert to **enhanced LRC**, never generated TTML (pass-through TTML only).
 - Per-request timeout ceiling 6 s (`httpTimeoutMilliseconds`). Stage-1 synchronous pass budget: 8 s. Stage-1 sources: first 3 enabled in config order, syllable early-stop.
 - Cache TTLs (v4): winner — syllable 24 h, word/line 1 h, unsynced 5 min, all-miss 5 min; per-source — synced quality 24 h, unsynced 1 h. Winner key includes sha256 fingerprint of the enabled+ordered source list. Store cap/count rules of `cache.go` stay.
-- All HTTP hosts go in `permissions.http.requiredHosts`. Secrets (`betterLyricsApiKey`, `musixmatchUserToken`) are sent only to `lyrics-api.boidu.dev` / `apic.musixmatch.com`, only in headers, never logged.
-- User-Agent: default `NavidromeBetterLyricsPlugin/<version> (+https://github.com/ranokay/navidrome-better-lyrics-plugin)`; Musixmatch uses `Dalvik/2.1.0 (Linux; U; Android 10)`, Luna uses `com.luna.music/100198030 (Linux; U; Android 15)`.
+- All HTTP hosts go in `permissions.http.requiredHosts`. The secret `betterLyricsApiKey` is sent only to `lyrics-api.boidu.dev`, only in headers, never logged.
+- User-Agent: default `NavidromeBetterLyricsPlugin/<version> (+https://github.com/ranokay/navidrome-better-lyrics-plugin)`, Luna uses `com.luna.music/100198030 (Linux; U; Android 15)`.
 - Provenance: `Source.Provider` = source display name, `Source.Format` = `ttml`|`elrc`|`lrc`|`plain`. This replaces today's constant `"ttml"`; tests that assert it are updated.
 - LyricsPriority, local-source precedence, and README install steps do not change.
 - Tests: table-driven, fake sender injected via provider constructor; run `mise exec -- go test -race ./plugin ./...` locally as needed; `mise run check` gates every push/PR.
@@ -39,7 +39,6 @@
 - Create: `plugin/testdata/amll/search.json`, `plugin/testdata/amll/get.json`
 - Create: `plugin/testdata/lunabeat/manifest.json`, `plugin/testdata/lunabeat/songs.json`, `plugin/testdata/lunabeat/song.ttml`
 - Create: `plugin/testdata/lyrically/search.json`, `plugin/testdata/lyrically/lyrics.json`
-- Create: `plugin/testdata/musixmatch/token.json`, `plugin/testdata/musixmatch/search.json`, `plugin/testdata/musixmatch/subtitles.json`
 - Create: `plugin/testdata/netease/search.json`, `plugin/testdata/netease/lyric.json`
 - Create: `plugin/testdata/luna/search.json`, `plugin/testdata/luna/detail.json`
 - Create: `plugin/testdata/petitlyrics/word.xml`
@@ -57,7 +56,6 @@
   - amll: `https://api.amll.dev/v1/lyrics/search?musicName=Live%20Forever&artistName=Oasis` → search.json; `https://api.amll.dev/v1/lyrics/get?id=<id>&format=ttml` → get.json
   - lunabeat: `https://2755337087.github.io/ttml-hub/api/v1/manifest.json`; `https://2755337087.github.io/ttml-hub/api/v1/songs.json`; one matched `path` → song.ttml
   - lyrically: `https://itunes.apple.com/search?term=Oasis%20Live%20Forever&media=music&entity=song&limit=5` → search.json; `https://lyrics.paxsenix.org/apple-music/lyrics?id=<trackId>` → lyrics.json
-  - musixmatch: `https://apic.musixmatch.com/ws/1.1/token.get?app_id=android-player-v1.0&user_language=en&t=<hex>` (UA `Dalvik/2.1.0 (Linux; U; Android 10)`, header `Cookie: AWSELB=0; AWSELBCORS=0`) → token.json; `.../track.search?q_track=Live%20Forever&q_artist=Oasis&page_size=5&usertoken=<token>&format=json&app_id=android-player-v1.0` → search.json; `.../macro.subtitles.get?namespace=lyrics_richsynched&optional_calls=track.richsync&subtitle_format=lrc&track_id=<id>&f_subtitle_length_max_deviation=40&usertoken=<token>&format=json&app_id=android-player-v1.0` → subtitles.json. If the token endpoint challenges (`hint:"captcha"`), retry once after 60 s; if still blocked, save the error response and write search/subtitles fixtures by hand from the Morphe reference (`MorpheApp/morphe-patches` `MusixmatchProvider.java`) marking them `reconstructed`.
   - netease: `curl -X POST https://music.163.com/api/cloudsearch/pc -d "s=Oasis Live Forever&type=1&offset=0&limit=10"` → search.json; `https://music.163.com/api/song/lyric/v1?id=<id>&lv=-1&kv=-1&tv=-1&rv=-1&yv=-1` → lyric.json
   - luna: `https://api.qishui.com/luna/search/track?aid=386088&app_name=luna&version_code=100198030&package=com.luna.music&device_id=<20hex>&iid=<20hex>&q=Oasis%20Live%20Forever&cursor=0&count=20&_rticket=<epochms>` (UA `com.luna.music/100198030 (Linux; U; Android 15)`) → search.json; `https://beta-luna.douyin.com/luna/h5/seo_track?track_id=<id>&device_platform=web` (desktop Chrome UA) → detail.json. If geo-blocked, reconstruct both from `LunaProvider.java` and mark.
   - petitlyrics: `curl -X POST https://p0.petitlyrics.com/api/GetPetitLyricsData.php -d "clientAppId=p1110417&terminalType=10&lyricsType=3&key_title=Live%20Forever&key_artist=Oasis&key_album=(What's the Story) Morning Glory?"` → word.xml (decode base64 `lyricsData` before saving if the XML wrapper is outside it)
@@ -80,9 +78,9 @@
 - Produces (used by Tasks 3–6, 11–21):
   - `type configLookup func(key string) (string, bool)`
   - `type lyricsSource struct { ID, Display string; Hosts []string; DefaultEnabled bool; Fetch func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, error) }` — `Fetch` may be nil here; Tasks 11–21 assign real fetchers (the field compiles as `func(*lyricsProvider, lyrics.TrackInfo, time.Time) ([]lyricsCandidate, error)`).
-  - `var allSources = []lyricsSource{...}` in config order: `better-lyrics`, `unison`, `binimum`, `amll`, `luna-beat`, `apple-lyrically`, `better-lyrics-portato`, `musixmatch`, `netease`, `luna`, `petitlyrics`, `lrclib`, `better-lyrics-legato`, `lyricify` (display names: "Better Lyrics", "Unison", "BiniLyrics", "AMLL", "LunaBeat", "Apple Music (Lyrically)", "Better Lyrics Portato", "Musixmatch", "NetEase", "Soda (Luna)", "PetitLyrics", "LRCLib", "Better Lyrics Legato", "Lyricify"; `luna-beat` and `apple-lyrically` `DefaultEnabled: false`, all others true).
-  - `type providerConfig struct { Sources []lyricsSource; BetterLyricsAPIKey, MusixmatchUserToken string }`
-  - `func readProviderConfig(lookup configLookup) providerConfig` — reads `sources` JSON blob (`[{"id":..., "enabled":...}]`), preserves array order, drops unknown ids, appends missing catalog sources with default enabled state in catalog order, empty/missing/invalid → full default set; reads optional `betterLyricsApiKey`, `musixmatchUserToken`.
+  - `var allSources = []lyricsSource{...}` in config order: `better-lyrics`, `unison`, `binimum`, `amll`, `luna-beat`, `apple-lyrically`, `better-lyrics-portato`, `netease`, `luna`, `petitlyrics`, `lrclib`, `better-lyrics-legato`, `lyricify` (display names: "Better Lyrics", "Unison", "BiniLyrics", "AMLL", "LunaBeat", "Apple Music (Lyrically)", "Better Lyrics Portato", "NetEase", "Soda (Luna)", "PetitLyrics", "LRCLib", "Better Lyrics Legato", "Lyricify"; `luna-beat` and `apple-lyrically` `DefaultEnabled: false`, all others true).
+  - `type providerConfig struct { Sources []lyricsSource; BetterLyricsAPIKey string }`
+  - `func readProviderConfig(lookup configLookup) providerConfig` — reads `sources` JSON blob (`[{"id":..., "enabled":...}]`), preserves array order, drops unknown ids, appends missing catalog sources with default enabled state in catalog order, empty/missing/invalid → full default set; reads optional `betterLyricsApiKey`.
   - `func defaultConfigLookup() configLookup` — wasip1: `host.ConfigGet`; native: `func(string)(string,bool){return "",false}` (build-tag files, mirroring `cache_host_native.go`).
 - Consumes: `lyricsCandidate` (`quality.go`), `lyrics.TrackInfo` (PDK), `host.ConfigGet` (PDK).
 
@@ -90,7 +88,7 @@
   - `TestAllSources_CatalogOrderAndDefaults` — asserts 14 entries in the documented order, ids unique, `luna-beat`/`apple-lyrically` disabled by default, every host string in each `Hosts` field has no scheme.
   - `TestReadProviderConfig_PreservesOrderAndDropsUnknown` — lookup returns `[{"id":"lrclib","enabled":true},{"id":"bogus","enabled":true},{"id":"better-lyrics","enabled":false}]` → `Sources` = `[lrclib, better-lyrics]` in that order.
   - `TestReadProviderConfig_FallsBackToDefaults` — lookup returns `("", false)`, `"[]"`, `"not json"`, and `"[{\"id\":\"lrclib\"}]"` (missing enabled → treated as enabled=false) → every case yields the documented full default set (Review Focus #1) except the last (lrclib explicitly disabled + rest default).
-  - `TestReadProviderConfig_ReadsSecrets` — lookup returns `{"betterLyricsApiKey":"k","musixmatchUserToken":"t"}` parsed into the struct fields.
+  - `TestReadProviderConfig_ReadsSecrets` — lookup returns `{"betterLyricsApiKey":"k"}` parsed into the struct field.
 - [ ] **Step 2: Run** `go test ./plugin -run TestReadProviderConfig -run TestAllSources -v` → FAIL (undefined: readProviderConfig).
 - [ ] **Step 3: Implement** `plugin/sources.go` + the two build-tag lookup files. Keep the JSON blob read exactly as `host.ConfigGet("sources")` (documented runtime shape).
 - [ ] **Step 4: Run** again → PASS all 4 tests.
@@ -233,17 +231,9 @@
 
 ---
 
-### Task 9: Musixmatch richsync parser
+### Task 9: (removed)
 
-**Files:**
-- Modify: `plugin/wordsync.go`, `plugin/wordsync_test.go`
-
-**Interfaces:**
-- Produces: `func parseRichsync(body string) ([]timedLine, error)` — body is a JSON string of `[{"ts":<sec float>,"te":<sec float>,"l":[{"c":"text","o":<ms offset>}], ...}]`; word start = round(ts*1000)+o when o>0 else word-less timed line; missing word end → start+40 ms minimum as the reference implementation does.
-- Consumes: fixture `plugin/testdata/musixmatch/subtitles.json` (from Task 1) — the parser takes only the `richsync_body` string; test drives it with a trimmed version inline plus the fixture under `t.Skip` if absent.
-
-- [ ] **Step 1: Failing tests** (inline JSON: `"[{\"ts\":12.4,\"te\":13.9,\"l\":[{\"c\":\"He\",\"o\":0},{\"c\":\"llo\",\"o\":120}]}]"` → line at 12400, words 12400–12400+40, 12520+40/12520+…) plus no-words line falls back to line timing.
-- [ ] **Steps 2–5:** run FAIL → implement → PASS → commit `feat: parse Musixmatch richsync to timed lines`.
+> **Removed 2026-11-13.** The Musixmatch source and its richsync parser were removed at Musixmatch's request. This plan no longer describes them.
 
 ---
 
@@ -323,18 +313,9 @@
 
 ---
 
-### Task 15: Source — Musixmatch
+### Task 15: (removed)
 
-**Files:**
-- Create: `plugin/sources_musixmatch.go`, `plugin/sources_musixmatch_test.go`
-- Modify: `plugin/sources.go`
-
-**Interfaces:**
-- Consumes: `token.get?app_id=android-player-v1.0&user_language=en&t=<hex>` (UA `Dalvik/2.1.0 (Linux; U; Android 10)`, `Cookie: AWSELB=0; AWSELBCORS=0`) → `{"message":{"header":{"status_code":200},"body":{"user_token":"…"}}}` cached in KV `musixmatch:token:v1` (TTL 10 days, refreshed on 401); `track.search?q_track=&q_artist=&q_duration=&page_size=5&s_track_rating=desc&usertoken=&format=json&app_id=android-player-v1.0` → pick by duration delta ≤2 s then rating order; `macro.subtitles.get?namespace=lyrics_richsynched&optional_calls=track.richsync&subtitle_format=lrc&track_id=&f_subtitle_length_max_deviation=40&usertoken=…` → Task 9 parser on `richsync_body`; fallback `subtitle_body` (LRC → line).
-- Produces: `fetchMusixmatchLyrics` — config `musixmatchUserToken` short-circuits minting (no `token.get` call); captcha (`hint:"captcha"`) or 401 → drop the KV token, skip attempt silently this lookup (no retry); candidates: richsync → elrc word; subtitles → lrc line; `lyrics_body` plain. 429 → `rate-limit:musixmatch:global:v1`.
-
-- [ ] **Step 1: Failing tests**: mint-once-then-cache (fake cache asserts one token.get across two lookups); richsync path yields word elrc; captcha body → no lyrics + token dropped; config token → zero `token.get` requests.
-- [ ] **Steps 2–5:** FAIL → implement → PASS → commit `feat: add Musixmatch source with token caching`.
+> **Removed 2026-11-13.** The Musixmatch source and its richsync parser were removed at Musixmatch's request. This plan no longer describes them.
 
 ---
 
@@ -391,7 +372,7 @@
 - Modify: `plugin/plugin_test.go` (schema sanity assertions if needed)
 
 **Interfaces:**
-- Produces: `"version": "0.2.0"`; `"config"` block: schema (draft-07) `sources` array-of-objects (items `{id: enum of the 14 ids, enabled: bool}`, `default:` the catalog default order with `luna-beat`/`apple-lyrically` `enabled:false`), `betterLyricsApiKey`, `musixmatchUserToken` (strings); uiSchema `VerticalLayout` with `{"type":"Control","scope":"#/properties/sources","options":{"showSortButtons":true}}` and password-format controls on both secrets. `permissions.http.requiredHosts` = previously allowed hosts + `lrc.red`, `api.amll.dev`, `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`, `apic.musixmatch.com`, `music.163.com`, `api.qishui.com`, `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`, `api.lyricify.app`, `lrclib.net`; `"permissions.taskqueue": {"reason":"Background sweep refreshes per-source lyric caches for recently played tracks","maxConcurrency":1}`.
+- Produces: `"version": "0.2.0"`; `"config"` block: schema (draft-07) `sources` array-of-objects (items `{id: enum of the 14 ids, enabled: bool}`, `default:` the catalog default order with `luna-beat`/`apple-lyrically` `enabled:false`), `betterLyricsApiKey` (string); uiSchema `VerticalLayout` with `{"type":"Control","scope":"#/properties/sources","options":{"showSortButtons":true}}` and a password-format control on the secret. `permissions.http.requiredHosts` = previously allowed hosts + `lrc.red`, `api.amll.dev`, `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`, `music.163.com`, `api.qishui.com`, `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`, `api.lyricify.app`, `lrclib.net`; `"permissions.taskqueue": {"reason":"Background sweep refreshes per-source lyric caches for recently played tracks","maxConcurrency":1}`.
 - Consumes: manifest schema v0.63.2 ($schema line stays).
 - Note: `Hosts` lists in `sources.go` entries must match this allowlist exactly — add a small test asserting every `allSources[i].Hosts` entry is present in the manifest's `requiredHosts` (read via `manifestJSON`).
 
@@ -408,9 +389,9 @@
 
 **Includes:**
 - Source table (name / sync level / enabled by default / notes incl. unofficial flags).
-- Config how-to: Settings → Plugins → Better Lyrics → the reorderable source table; defaults; two optional secrets (none is required; no key is issued today for Better Lyrics).
+- Config how-to: Settings → Plugins → Better Lyrics → the reorderable source table; defaults; one optional secret (not required; no key is issued today for Better Lyrics).
 - Updated `Provider behavior` section: stage-1 fast pass + background sweep + per-source cache; the picker experience pending #6033.
-- Privacy section: metadata now disclosed to every host in the allowlist (per-host one-liner); "unofficial endpoints can change without notice" warning; attribution lines for LRCLib, Unison, AMLL/LunaBeat (community), BiniLyrics, Musixmatch (copyright/backlink fields preserved in provenance notes), Lyrically mirror.
+- Privacy section: metadata now disclosed to every host in the allowlist (per-host one-liner); "unofficial endpoints can change without notice" warning; attribution lines for LRCLib, Unison, AMLL/LunaBeat (community), BiniLyrics, Lyrically mirror.
 - Note that sources are only contacted for tracks with no local lyrics.
 - [ ] **Step 1:** rewrite sections; **Step 2:** `mise run check` → PASS; **Step 3: Commit** `git add README.md docs/superpowers/specs/2026-10-16-lyrics-sources-and-controls-design.md && git commit -m "docs: document multi-source behavior, config and provider disclosures"`.
 

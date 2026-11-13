@@ -26,10 +26,8 @@ decision ledger lives in
   context only.
 - **Lyricify grades line and word only.** Enhanced LRC cannot carry the
   `[from:AppleSyllable]` syllable tier, so the claim below narrows to word.
-- **Musixmatch's word and line tiers ride the optional admin token.** The
-  anonymous self-minted token currently answers without subtitle macros
-  (verified live), so richsync/subtitles need the configured user token; the
-  richsync test rides a reconstructed fixture (`plugin/testdata/fixtures.md`).
+- **Musixmatch source removed (2026-11-13).** Removed at Musixmatch's request,
+  with its token config and richsync parser.
 - **PetitLyrics rows are identity-gated.** The lookup response carries
   per-row `title`/`artist`/`lyricsType`; rows now have to match the request
   and the requested tier instead of `songs[0]` being taken as-is.
@@ -67,12 +65,6 @@ Better Lyrics extension for YouTube Music:
    - `apple-lyrically` "Apple Music (Lyrically)" — `itunes.apple.com/search` for the
      iTunes track id, then `lyrics.paxsenix.org/apple-music/lyrics?id=`. Word-synced
      enhanced LRC (elrc) or Apple TTML; elrc passes through unchanged. Third-party mirror.
-   - `musixmatch` "Musixmatch" — `apic.musixmatch.com`: anonymous `token.get`
-     (`app_id=android-player-v1.0`, intermittently captcha-gated → retried on the next
-     lookup), optional admin-pasted user token from config, `track.search`,
-     `macro.subtitles.get`. Word richsync → enhanced LRC; line LRC; plain.
-     *(Shipped: the anonymous token answers without subtitle macros, so the word and
-     line tiers need the configured user token — see the amendments.)*
    - `netease` "NetEase" — `music.163.com/api/cloudsearch/pc` (form POST) then
      `music.163.com/api/song/lyric/v1`. Word YRC → enhanced LRC; line LRC; plain.
      Unauthenticated plain API; no eapi crypto.
@@ -135,7 +127,7 @@ Better Lyrics extension for YouTube Music:
 
 ## Decided by the owner
 
-- Include grey-area / unofficial endpoints (Musixmatch, NetEase, Luna, PetitLyrics,
+- Include grey-area / unofficial endpoints (NetEase, Luna, PetitLyrics,
   Lyricify, Lyrically). Lyricify is in as a source; its LYL→LRC conversion shares the
   word-sync pipeline and it is the lowest-priority word source.
 - The per-song source switcher and the timing offset go into navidrome PR #6033.
@@ -180,7 +172,7 @@ Better Lyrics extension for YouTube Music:
   sources that cannot fit the remaining budget.
   *(Shipped without `cooldownDefaults` or the cost rank — see the amendments.)*
 - One shared word-sync converter module produces *enhanced LRC* from: QRC, KRC, YRC,
-  Lyricify LYL/LYS, Musixmatch richsync, PetitLyrics WSY (see the settled call above).
+  Lyricify LYL/LYS, PetitLyrics WSY (see the settled call above).
   Reuse `quality.go` grading with the new enhanced-LRC word sniff.
 - **Two-stage fetch (replaces a single walk).** Stage 1, synchronous: on a cold miss
   the plugin fetches only the first three enabled sources in config order (stopping
@@ -203,7 +195,7 @@ Better Lyrics extension for YouTube Music:
   amendments.)*
 - Manifest: `permissions.http.requiredHosts` adds `lrc.red`, `api.amll.dev`,
   `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`,
-  `apic.musixmatch.com`, `music.163.com`, `api.qishui.com`,
+  `music.163.com`, `api.qishui.com`,
   `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`,
   `api.lyricify.app`, `lrclib.net`; `permissions.taskqueue` is added
   (`maxConcurrency` 1) for the background sweep; version bumps to 0.2.0.
@@ -212,8 +204,8 @@ Better Lyrics extension for YouTube Music:
 - Config schema (draft-07 + uiSchema, JSONForms 2.5.2 semantics):
   - `sources`: array of `{id (enum), enabled (bool)}` rendered as a table with
     `showSortButtons: true`; read back as one JSON blob via `host.ConfigGet("sources")`.
-  - `betterLyricsApiKey` and `musixmatchUserToken`: password-format strings, both
-    optional; sent only to their own allowlisted hosts and never logged.
+  - `betterLyricsApiKey`: optional password-format string; sent only to its own
+    allowlisted host and never logged.
 - README: source table, per-host privacy disclosure, attribution lines, and an
   explicit "unofficial endpoints can break" note.
 
@@ -236,7 +228,7 @@ starts there after the plugin ships; it will get its own design note):
 ## Verification
 
 - `mise run check` stays green: fmt, race tests, WASM build, package check.
-- Unit tests per converter with saved fixtures (QRC, KRC, YRC, LYL, WSY, richsync,
+- Unit tests per converter with saved fixtures (QRC, KRC, YRC, LYL, WSY,
   LRCLib lyricsfile YAML); per-source request shaping and status handling tests against
   the fake sender harness; config parsing tests incl. missing/invalid config; cooldown
   and budget-exhaustion tests; sweep-task tests (enqueue on cold miss, dedupe via the

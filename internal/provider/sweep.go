@@ -41,9 +41,11 @@ type sweepTaskPayload struct {
 	Sources []string         `json:"sources,omitempty"`
 }
 
-// OnInit creates the permanent sweep queue. Failing here is non-fatal: lyrics keep
-// working and the queue lifecycle can be repaired by reloading the plugin.
+// OnInit purges cached data from removed sources and creates the permanent
+// sweep queue. Failing here is non-fatal: lyrics keep working and the queue
+// lifecycle can be repaired by reloading the plugin.
 func (p *Provider) OnInit() error {
+	p.purgeRemovedSourceCache()
 	if p.createQueue != nil {
 		if err := p.createQueue(sweepQueueName, 1); err != nil {
 			p.logf(fmt.Sprintf("lyrics sweep queue creation failed; background source discovery unavailable; reload the plugin after checking task-worker configuration: %v", p.safeDiagnosticError(err)))

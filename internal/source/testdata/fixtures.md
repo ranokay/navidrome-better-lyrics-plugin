@@ -19,9 +19,6 @@ Notes that affect parser/shaper tests:
   - `[s,d]word(abs,dur)` / `[s,d]word(abs,dur,0)` absolute-paren — boidu QRC and NetEase YRC.
 - netease lyric pulls for Live Forever / 晴天 / 稻香 / 告白气球 returned **no `yrc`** with
   the plain API on 2026-10-16; YRC parse tests use an inline reconstructed sample.
-- musixmatch's anonymous minted token cannot fetch subtitles on 2026-10-16
-  (`macro_calls` bodies all null — saved as `subtitles-null.json`); the richsync fixture
-  is reconstructed. `word` unit field: `ts`/`te` seconds, `o` offset ms.
 - lrclib `get` without `album_name` matched an unrelated instrumental release for
   "Live Forever / Oasis"; the fill fixture is "Shape of You / Ed Sheeran" which includes
   `lyricsfile` and `syncedLyrics`. Score tests therefore cover miss-on-duration.
@@ -37,10 +34,6 @@ Notes that affect parser/shaper tests:
 | lunabeat/song.ttml | live | "confidence" / Gareth.T — Apple-style `[itunes:timing="Word"]` |
 | lyrically/search.json | live | iTunes search for Shape of You — 3 of 5 results kept |
 | lyrically/lyrics.json | live-derived | `elrc`, `elrcMultiPerson`, `ttmlContent`, `content`, `plain`, `lrc` keys; truncated |
-| musixmatch/token.json | live | `user_token` minted, OAuth app `android-player-v1.0` |
-| musixmatch/search.json | live | Shape of You match, 5 candidates |
-| musixmatch/subtitles-null.json | live | anonymous token: every macro body null (negative fixture) |
-| musixmatch/subtitles.json | reconstructed | richsync frames per documented schema; used by Task tests |
 | netease/search.json | live | Live Forever / Oasis, 3 of 10 results; `duration` ms |
 | netease/lyric.json | live | line LRC with leading rich-JSON credit lines (`{"t":…,"c":[…]}`), no `yrc` for probed songs |
 | luna/search.json | live | Live Forever / Oasis, 2 entries (huge real payload trimmed) |

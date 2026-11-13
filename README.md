@@ -2,7 +2,7 @@
 
 # Navidrome Better Lyrics plugin
 
-A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. It resolves tracks through seventeen configurable sources, including the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, Musixmatch, NetEase, Soda (Luna), PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
+A Navidrome lyrics-provider plugin that fills the gap when a track has no local lyrics. It resolves tracks through sixteen configurable sources, including the Better Lyrics API (syllable TTML / word-synced QQ "Portato" / line-synced Kugou "Legato"), the Unison community database, BiniLyrics, AMLL, LRCLib, NetEase, Soda (Luna), PetitLyrics, Lyricify, LyricsPlus, YouTube Music, Genius, and two community mirrors (LunaBeat and an Apple Music mirror via Lyrically).
 
 The plugin does not inject or replace Navidrome's interface. It returns TTML, enhanced LRC, or plain lyrics through Navidrome's Lyrics capability, converting proprietary word-timed formats into enhanced LRC so compatible clients can render word-level highlighting.
 
@@ -61,6 +61,16 @@ order, enabled sources, and optional credentials in Settings → Plugins →
 ND Better Lyrics. Navidrome stores settings and caches by plugin ID, so the new
 ID starts with default settings and an empty cache.
 
+### Upgrade from 0.4.0
+
+Version 0.4.0 was the last release with the Musixmatch source. Later versions
+remove it at Musixmatch's request. On first load after upgrading, the plugin
+deletes the cached Musixmatch token, its cached lyrics, and the winner cache, so
+the next lookup of each track re-queries the remaining sources. A saved source
+list that still has a `musixmatch` row keeps working because the plugin skips
+unknown ids. Navidrome rejects that row when you next save the settings, so
+delete it first.
+
 ## Provider behavior
 
 The plugin walks the enabled sources in configured order:
@@ -68,7 +78,7 @@ The plugin walks the enabled sources in configured order:
 1. **Stage one: first paint.** On a cache miss it queries up to three enabled
    sources under a two-second total budget, giving each source at most 750 ms.
    It returns the first usable synchronized result. Plain text remains a fallback.
-   Word-synced payloads from proprietary formats (QRC, KRC, YRC, LYL, richsync,
+   Word-synced payloads from proprietary formats (QRC, KRC, YRC, LYL,
    WSY) are converted to enhanced LRC, including the final word's end marker.
 2. **Stage two — background sweep.** The same lookup enqueues a task that walks
    *every* enabled source for the track and caches each result separately, so the
@@ -133,7 +143,6 @@ Legacy is deprecated and is not queried.
 | LunaBeat | word TTML | **off** | `2755337087.github.io` | static community hub, unclear licensing |
 | Apple Music (Lyrically) | word elrc/TTML | **off** | `itunes.apple.com`, `lyrics.paxsenix.org` | third-party mirror with unknown longevity |
 | Better Lyrics Portato | word (QRC→elrc) | on | `lyrics-api.boidu.dev/qq/getLyrics` | QQ word sync via the same API |
-| Musixmatch | word (richsync→elrc) / line / plain | on | `apic.musixmatch.com` | the anonymous self-minted token currently answers without subtitle macros (intermittently captcha-gated); the optional user-token config unlocks the word and line tiers |
 | NetEase | word (YRC→elrc) / line | on | `music.163.com` | unauthenticated plain API; YRC only where available |
 | Soda (Luna) | word (KRC→elrc) / line | on | `api.qishui.com`, `beta-luna.douyin.com` | unofficial endpoints, client UA required |
 | PetitLyrics | word (WSY→elrc) / plain | on | `p0.petitlyrics.com` | uses the official app's client id; official client-binary decoding of the line-tier binary is not implemented |
@@ -146,10 +155,9 @@ Legacy is deprecated and is not queried.
 
 Not carried over from the Better Lyrics extension's list:
 
-- **PaxSenix: Spotify / PaxSenix: Musixmatch** — the `lyrics.paxsenix.org`
+- **PaxSenix backends other than Apple Music** — the `lyrics.paxsenix.org`
   backends beyond `/apple-music/lyrics` were shut down ("no longer available";
-  verified live). Spotify-word lyrics have no other keyless source, and native
-  Musixmatch (this plugin's own source) is richer than the mirror.
+  verified live). Spotify-word lyrics have no other keyless source.
 - **lrc.red as a separate source** — BiniLyrics and Unison already cover the
   same Apple-graded TTML store (BiniLyrics fetches `lrc.red/s/{isrc}.ttml`
   directly).
@@ -170,9 +178,6 @@ Settings → Plugins → ND Better Lyrics exposes:
   timing-quality ties. The shipped default order is the catalogue above.
 - **Better Lyrics API key** — optional; sent only as the `X-API-Key` header to
   `lyrics-api.boidu.dev`, never logged or included in URLs.
-- **Musixmatch user token** — optional; sent only to `apic.musixmatch.com`,
-  replacing the anonymous self-minted token when a captcha challenge appears,
-  and the only credential that currently unlocks the line and word tiers.
 
 The plugin falls back to its built-in defaults when a config save drops or
 empties the source list; a listed-but-disabled source stays disabled. Saving the
@@ -192,7 +197,6 @@ Using this plugin sends song metadata (title, artist, album, duration), the Navi
 - `lyrics-api.binimum.org` and `lrc.red`: title, artist, album, and duration, then the matched record's `lyricsUrl`.
 - `lyricsplus.binimum.org` and `lyricsplus.atomix.one` (LyricsPlus): title, artist, album, and duration, with mirror rotation.
 - `api.amll.dev`: title, artist, and album.
-- `apic.musixmatch.com`: title, artist, duration, plus the anonymous (or admin-configured) user token in the query string as the documented client does.
 - `music.163.com` (NetEase): title, artist, duration, and the matched song's id in the query string. Unofficial endpoints may change without notice.
 - `api.qishui.com` and `beta-luna.douyin.com` (Soda/Luna): title, artist, duration, and generated device identifiers that imitate the Android client; large search payloads are part of that API's contract.
 - `p0.petitlyrics.com`: title, artist, album, and the official app's `clientAppId`.

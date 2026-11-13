@@ -21,7 +21,3 @@ func (p *Provider) Cache() source.Store {
 func (p *Provider) BetterLyricsAPIKey() string {
 	return readProviderConfig(p.configLookup).BetterLyricsAPIKey
 }
-
-func (p *Provider) MusixmatchUserToken() string {
-	return readProviderConfig(p.configLookup).MusixmatchUserToken
-}
