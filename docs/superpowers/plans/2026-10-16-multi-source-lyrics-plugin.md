@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn the single-backend Better Lyrics Navidrome plugin into a config-driven multi-source resolver (14 sources incl. grey-area endpoints) with a two-stage fetch: fast synchronous pass + background sweep cache.
+**Goal:** Turn the single-backend Better Lyrics Navidrome plugin into a config-driven multi-source resolver (13 sources incl. grey-area endpoints) with a two-stage fetch: fast synchronous pass + background sweep cache.
 
 **Architecture:** A source registry replaces the hardcoded walk in `plugin/main.go`. Each source is a descriptor with a `fetch` function; converters normalize proprietary word-synced formats to enhanced LRC; an in-memory-free KV layout (`lyrics:v4:*`) caches per source and per track with a config fingerprint on the winner key; a `taskqueue` worker sweeps the remaining sources after a cold miss. Sync-quality grading in `quality.go` is reused with one addition (enhanced-LRC word sniff).
 
@@ -85,7 +85,7 @@
 - Consumes: `lyricsCandidate` (`quality.go`), `lyrics.TrackInfo` (PDK), `host.ConfigGet` (PDK).
 
 - [ ] **Step 1: Write failing tests** in `plugin/sources_test.go`:
-  - `TestAllSources_CatalogOrderAndDefaults` — asserts 14 entries in the documented order, ids unique, `luna-beat`/`apple-lyrically` disabled by default, every host string in each `Hosts` field has no scheme.
+  - `TestAllSources_CatalogOrderAndDefaults` — asserts 13 entries in the documented order, ids unique, `luna-beat`/`apple-lyrically` disabled by default, every host string in each `Hosts` field has no scheme.
   - `TestReadProviderConfig_PreservesOrderAndDropsUnknown` — lookup returns `[{"id":"lrclib","enabled":true},{"id":"bogus","enabled":true},{"id":"better-lyrics","enabled":false}]` → `Sources` = `[lrclib, better-lyrics]` in that order.
   - `TestReadProviderConfig_FallsBackToDefaults` — lookup returns `("", false)`, `"[]"`, `"not json"`, and `"[{\"id\":\"lrclib\"}]"` (missing enabled → treated as enabled=false) → every case yields the documented full default set (Review Focus #1) except the last (lrclib explicitly disabled + rest default).
   - `TestReadProviderConfig_ReadsSecrets` — lookup returns `{"betterLyricsApiKey":"k"}` parsed into the struct field.
@@ -372,7 +372,7 @@
 - Modify: `plugin/plugin_test.go` (schema sanity assertions if needed)
 
 **Interfaces:**
-- Produces: `"version": "0.2.0"`; `"config"` block: schema (draft-07) `sources` array-of-objects (items `{id: enum of the 14 ids, enabled: bool}`, `default:` the catalog default order with `luna-beat`/`apple-lyrically` `enabled:false`), `betterLyricsApiKey` (string); uiSchema `VerticalLayout` with `{"type":"Control","scope":"#/properties/sources","options":{"showSortButtons":true}}` and a password-format control on the secret. `permissions.http.requiredHosts` = previously allowed hosts + `lrc.red`, `api.amll.dev`, `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`, `music.163.com`, `api.qishui.com`, `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`, `api.lyricify.app`, `lrclib.net`; `"permissions.taskqueue": {"reason":"Background sweep refreshes per-source lyric caches for recently played tracks","maxConcurrency":1}`.
+- Produces: `"version": "0.2.0"`; `"config"` block: schema (draft-07) `sources` array-of-objects (items `{id: enum of the 13 ids, enabled: bool}`, `default:` the catalog default order with `luna-beat`/`apple-lyrically` `enabled:false`), `betterLyricsApiKey` (string); uiSchema `VerticalLayout` with `{"type":"Control","scope":"#/properties/sources","options":{"showSortButtons":true}}` and a password-format control on the secret. `permissions.http.requiredHosts` = previously allowed hosts + `lrc.red`, `api.amll.dev`, `2755337087.github.io`, `lyrics.paxsenix.org`, `itunes.apple.com`, `music.163.com`, `api.qishui.com`, `beta-luna.douyin.com`, `p0.petitlyrics.com`, `api.credits.fm`, `api.lyricify.app`, `lrclib.net`; `"permissions.taskqueue": {"reason":"Background sweep refreshes per-source lyric caches for recently played tracks","maxConcurrency":1}`.
 - Consumes: manifest schema v0.63.2 ($schema line stays).
 - Note: `Hosts` lists in `sources.go` entries must match this allowlist exactly — add a small test asserting every `allSources[i].Hosts` entry is present in the manifest's `requiredHosts` (read via `manifestJSON`).
 
