@@ -40,6 +40,7 @@ func TestOnInitPurgesRemovedSourceCacheOnce(t *testing.T) {
 		lyricsSourceCacheKeyPrefix + "musixmatch:track:missing:fp",
 		lyricsSourceCacheKeyPrefix + "lyricsplus:track",
 		lyricsWinnerCacheKeyPrefix + "fp:track",
+		sweepDonePrefix + "fp:track",
 	}
 	kept := []string{
 		credentialSaltKey,

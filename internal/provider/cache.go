@@ -47,12 +47,15 @@ const removedSourcePurgeMarkerKey = "cache-purge:musixmatch:v1"
 // results and misses, LyricsPlus results (it used to request a Musixmatch
 // backend and caches them under its own id), and every winner entry: winner
 // keys hash the source order, so entries that may hold that source's lyrics
-// cannot be told apart.
+// cannot be told apart. Completed sweep markers go too, because they would
+// otherwise claim coverage for the purged LyricsPlus results and block the
+// sweep that refills them when the saved order did not include Musixmatch.
 var removedSourcePurgePrefixes = []string{
 	"musixmatch:",
 	lyricsSourceCacheKeyPrefix + "musixmatch:",
 	lyricsSourceCacheKeyPrefix + "lyricsplus:",
 	lyricsWinnerCacheKeyPrefix,
+	sweepDonePrefix,
 }
 
 // purgeRemovedSourceCache runs once per installation. It stamps the marker
