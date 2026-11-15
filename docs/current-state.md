@@ -1,0 +1,156 @@
+# Current contracts and follow-ups
+
+Maintained by the plugin maintainers. Snapshot checked on 2026-11-15. Update this
+record when an audit issue, dependency, supported host, or upstream prerequisite
+changes. The README describes installation and provider behavior; this document
+records ownership, compatibility holds, and the evidence still needed.
+
+The audit fixes below are local, unpublished branch work. The latest published
+plugin remains v0.4.1. Local commits, passing tests, upstream merge, and a published
+plugin release are separate states.
+
+## Implementation sequence
+
+The issue tracker owns acceptance criteria. Historical unchecked plans are not
+additional work. Plugin maintainers own each row and update its status after
+verification and delivery.
+
+| Issue | State in this snapshot | Exit condition |
+|---|---|---|
+| [#19: cache freshness and control capacity](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/19) | Implemented locally, `698728d` | Aged-cache and near-capacity regressions pass; replay cannot renew fetched freshness. |
+| [#20: usable payloads and text preservation](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/20) | Implemented locally, `6e78322`, `db95463` | Metadata-only lyrics are rejected, LRCLib text is preserved, malformed Lyrically data remains retryable, and equivalent YTM JSON behaves identically. |
+| [#21: release and build simplification](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/21) | Implemented locally, `54e77cb` | Future manifest versions pass the version invariant, release tags match, and manual runs expose a package artifact. |
+| [#22: dependency and schema updates](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/22) | Implemented locally, `773459e` | Native/race, vet, module, workflow, schema, and WASI package checks pass while provenance is preserved. |
+| [#23: current documentation](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/23) | This documentation change | Archived plans are non-executable; current contracts, owners, and upstream exit conditions are explicit. |
+| [#24: payload and timestamp bounds](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/24) | Next implementation slice, after #23 | Reviewed host/application bounds prevent unbounded expansion and wrapped timestamps; captured fixtures and regressions pass. |
+| [#25: runtime and provider qualification](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/25) | Follows #24 | Disposable-host commands and outcomes cover installation, KV quota/freshness, tasks/continuations, reload, config, credentials, and latency; refreshed wire evidence is dated and minimized. |
+
+The full local gate passed after #22. Final integrated checks must cover the
+remaining edits. #25 owns fresh runtime qualification; a WASI build alone does
+not establish real host behavior or current provider availability. A compatible
+UI build is needed only for its additional UI/provenance checks, not for
+released-host installation and task tests.
+
+## Settled product contracts
+
+- Keep the sixteen source IDs, ordering semantics, and defaults. LunaBeat,
+  Apple Music via Lyrically, YouTube Music, and Genius are disabled by default.
+  Intentional unofficial-provider support and mirror defaults are settled choices.
+- Local sidecar and embedded lyrics retain precedence through `LyricsPriority`.
+  An explicitly disabled source stays disabled. Empty/missing source config uses
+  defaults; a saved list with every row disabled opts out of network fetching.
+- Foreground lookup queries at most three enabled sources, with a two-second
+  total budget and 750 ms per source, and stops at the first usable synchronized
+  result. A sequential background sweep populates per-source caches.
+- The plugin already returns cached, source-tagged variants, winner first.
+  Timing quality ranks syllable, word, line, then plain; configured order breaks
+  ties. This work does not require a new plugin fetch-by-source endpoint.
+- TTL expiry bounds fetched freshness. Changing credentials retains readable
+  positive lyrics while allowing refresh. Keep upgrade purges for removed
+  Musixmatch data and affected LyricsPlus/winner caches.
+- Preserve original TTML and convert supported proprietary word timing to
+  enhanced LRC. PetitLyrics LSY/line-binary decoding is intentionally unsupported;
+  word and plain tiers remain supported. It is not a parked implementation task.
+- Navidrome owns player controls. Preserve the approved source selector,
+  track/source-local timing offsets, and client-side download decisions.
+  Server-side sidecar writes and retain-forever controls are outside the product
+  contract, not unfinished plugin work. Keep static Unison attribution.
+
+## Upstream dependencies
+
+The latest released Navidrome is [v0.64.2](https://github.com/navidrome/navidrome/releases/tag/v0.64.2).
+The following states were checked live on 2026-11-15; recheck before changing a
+compatibility claim or replacing the PDK.
+
+| Dependency | Verified state | Owner and exit condition |
+|---|---|---|
+| [#5733: responsive sidebar](https://github.com/navidrome/navidrome/pull/5733) | Open, unmerged, head `7905e1f` | Navidrome maintainers/PR author own delivery. Plugin maintainers update the UI requirement after a released host includes it and UI qualification passes. |
+| [#6033: provenance and controls](https://github.com/navidrome/navidrome/pull/6033) | Open, unmerged, head `a730db2a` | Navidrome maintainers/PR author own the host/API/UI. Replace the fork only when an upstream PDK retains both response-level and per-entry source metadata and released/compatible host checks pass. |
+| [#6032: earlier coalescing proposal](https://github.com/navidrome/navidrome/pull/6032) | Closed without merge | Historical reference only. No pending work depends on this PR. Use #6465 for the actual host behavior. |
+| [#6465: plugin response cache/coalescing](https://github.com/navidrome/navidrome/pull/6465) | Merged 2026-11-15; absent from v0.64.2 | Navidrome maintainers own release delivery. Plugin maintainers qualify builds containing it under #25 and update release-specific documentation when shipped. |
+
+Builds containing #6465 cache the entire plugin response per plugin/track for
+five minutes, including misses and errors. They coalesce concurrent lookups
+with a one-minute timeout. A poll during that cache lifetime does not call the
+plugin, so it cannot reveal new sweep results or immediately apply source and
+credential changes. The old five-second/sixty-second progressive-fill plan is
+not the current contract for this route.
+
+The baseline is eventual refresh on a request after host-cache expiry. Prompt
+progressive discovery requires an explicit upstream refresh/invalidation
+contract and verification of that route against a running host. Carry that
+dependency through #6033 and #25 rather than adding another plugin cache or
+promising that client polling bypasses the host cache.
+
+## Dependencies and upgrades
+
+Plugin maintainers own tool/module/schema updates in #22 and subsequent
+maintenance changes. Version declarations in `go.mod`, `go.sum`, `mise.toml`,
+and workflows remain the source of truth. The reviewed 2026-11-15 choices are:
+
+| Dependency | Choice and reason | Condition for changing the choice |
+|---|---|---|
+| Go | 1.27.4, current stable security/bugfix release | A newer stable toolchain passes native/race and standard Go WASI package checks. |
+| Extism Go PDK | v1.1.3, latest stable | A newer release preserves the host boundary and passes the same checks. |
+| Navidrome PDK | Explicit provenance fork revision `a730db2a`, current #6033 branch head | Upstream provides the same optional source fields. The fork's default `@latest` currently omits them, so it is not a compatible replacement. |
+| YAML | `go.yaml.in/yaml/v4` v4.0.0 for the plugin parser | New releases preserve supported lyricsfile fixtures, safe error behavior, and one-document validation. |
+| Schema validator | `github.com/santhosh-tekuri/jsonschema/v6` v6.0.3, test-only | New versions preserve offline host/config/default validation. |
+| Host manifest schema | Immutable v0.64.2 snapshot in `plugin/testdata` | A reviewed released schema changes. The current upstream and provenance-branch schemas are byte-identical to this snapshot; refresh its provenance and validation together when needed. |
+| Config schema | JSON Schema Draft 7 as consumed by the host | Change only with demonstrated host/JSONForms support; using the manifest schema's newer dialect here is not an automatic upgrade. |
+| Workflow tooling | mise-action v5.2.8, checkout v7.0.1, upload-artifact v7.0.2, all SHA-pinned; actionlint 1.7.12 and shellcheck 0.11.0 in the gate | Review newer release notes and update the applicable pins together with successful workflow checks. Binaryen was unused and removed. |
+| Remaining indirect modules | Latest compatible versions for retained module paths | Keep graph overrides only where they advance retained dependencies. Remove redundant pins with tidy; adding an unused new major does not upgrade its old-major consumer. |
+| Provider services | Existing catalog hosts and disclosure/default policy | Maintainers refresh bounded wire evidence under #25. Change or remove a source for a verified contract/policy failure with its matching config/cache migration. |
+
+The original `gopkg.in/yaml.v3` path remains in dependency tests at its latest
+version, v3.0.1; it no longer parses plugin input. Maintained YAML v3 in other
+dependency tests is v3.0.6. These separate module paths cannot be consolidated
+by changing this plugin's import alone. Their removal depends on their consumers
+upgrading or disappearing from the retained graph.
+
+YAML v4 uses `Load`, which rejects extra YAML documents. Unknown provider fields
+remain accepted. This is a deliberate stricter boundary than legacy `Unmarshal`;
+preserve its regression tests on future upgrades. Upstream's
+[migration guide](https://github.com/yaml/go-yaml/blob/v4.0.0/docs/v3-to-v4-migration.md)
+documents the distinction and node-hook compatibility.
+
+For a dependency update, review primary release notes, update retained imports
+and pins, tidy, inspect the resulting graph for compatible updates, and run
+`mise run check`. Keep the provenance replacement until its exit condition is
+met. A rollback restores the reviewed code/imports, module files, tool/workflow
+pins, and schema snapshot together in a follow-up change; restoring only a
+module version after an API migration is insufficient. These upgrades do not
+introduce a persistent cache-schema migration.
+
+### Advisory dispositions
+
+The initial audit produced version-level matches, not a demonstrated exploit:
+
+| Advisory | Disposition in the updated branch |
+|---|---|
+| [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), `crypto/x509.Verify` | Fixed by Go 1.27.4; the fix first shipped in 1.27.3. |
+| [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859), server `MaxBytesReader` race | Fixed by Go 1.27.4. |
+| [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860), `x/net/html.Parse` quadratic work | The affected x/net module was removed by graph cleanup. Its fixed version is v0.62.0; `x/net/html` was not imported by the plugin WASI build. |
+| [GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866), `x/net/html.Render` raw-text namespace handling | Same removal disposition; fixed upstream in v0.62.0. |
+
+The update checked sixteen retained module/toolchain versions against OSV and
+returned zero matches. This is version-inventory evidence, not a successful
+`govulncheck` call-graph analysis or a proof that the software has no vulnerabilities.
+The embedded YouTube Music web-client key is an intentionally public provider
+identifier; the owner explicitly accepted that single scanner detection.
+That exception does not apply to user-supplied Better Lyrics credentials.
+
+## Historical evidence
+
+The four documents under `superpowers/plans` and `superpowers/specs` are archived
+snapshots. Their commands, personal checkout paths, missing skill references,
+and unchecked boxes are not current execution instructions. Preserve their
+settled decisions without treating superseded budgets, source counts, or
+prerequisites as implementation requirements.
+
+[Feasibility research](research/lyrics-plugin-feasibility.md) records the initial
+2026-08-23 investigation. [Latency research](research/latency-2026-10-18.md) and its
+raw measurements record one 2026-10-18 host/build cohort. They do not qualify
+today's provider endpoints, browser paint, playback, or #6465 cache behavior.
+Fresh evidence and any concrete unavailable-environment next action belong to
+#25. Test fixtures are development inputs, excluded from `.ndp` packages, and
+their capture/synthetic provenance remains alongside the fixture files.

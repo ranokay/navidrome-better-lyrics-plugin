@@ -220,10 +220,10 @@ func (p *Provider) activeSources() []source.Source {
 }
 
 // fetchLyrics runs the stage-one pass: the first implemented enabled sources in
-// configured order under a bounded budget, stopping on the first synchronized
-// result lands. Each successful source result is cached per source so later
+// configured order under a bounded budget, stopping at the first usable
+// synchronized result. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
-// are covered by the background sweep (Task 6).
+// are covered by the background sweep.
 func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, source.Health, bool, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {

@@ -190,7 +190,7 @@ func TestLyricsProvider_CachesSuccessfulResultsAcrossInstances(t *testing.T) {
 		t.Fatalf("cached result = %#v, want %#v", secondResult, firstResult)
 	}
 	assertLyricsSource(t, secondResult.Source, "Better Lyrics", "ttml")
-	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, catalogSources(defaultCatalogIDs)); ttl != syncedLyricsCacheTTLSeconds {
-		t.Fatalf("positive cache TTL = %d, want %d", ttl, syncedLyricsCacheTTLSeconds)
+	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 123}, catalogSources(defaultCatalogIDs)); ttl != lyricsCacheDayTTLSeconds {
+		t.Fatalf("positive cache TTL = %d, want %d", ttl, lyricsCacheDayTTLSeconds)
 	}
 }

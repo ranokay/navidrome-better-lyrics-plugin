@@ -68,9 +68,9 @@ func readProviderConfig(lookup ConfigLookup) providerConfig {
 	}
 }
 
-// sourcesFromSelections preserves the admin-saved order, drops unknown ids, and
-// keeps only explicitly enabled entries. An empty result means the blob was
-// missing, unreadable, or enabled nothing, and the caller falls back to defaults.
+// sourcesFromSelections preserves the saved order and drops unknown or disabled
+// entries. An omitted enabled field means true. The caller applies defaults only
+// for an empty saved list and appends unlisted default-enabled sources.
 func sourcesFromSelections(selections []sourceSelection) []source.Source {
 	ordered := make([]source.Source, 0, len(selections))
 	for _, selection := range selections {

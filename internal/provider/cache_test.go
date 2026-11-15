@@ -33,7 +33,7 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			},
 			wantProvider: "Unison",
 			wantFormat:   "lrc",
-			wantTTL:      unsyncedLyricsCacheTTLSeconds,
+			wantTTL:      lyricsCacheHourTTLSeconds,
 		},
 		{
 			name: "uses the word-grade TTL after a Better Lyrics failure",
@@ -43,7 +43,7 @@ func TestLyricsProvider_CachesFallbackResultsBasedOnLookupHealth(t *testing.T) {
 			},
 			wantProvider: "Unison",
 			wantFormat:   "lrc",
-			wantTTL:      unsyncedLyricsCacheTTLSeconds,
+			wantTTL:      lyricsCacheHourTTLSeconds,
 		},
 		{
 			name: "uses the negative TTL for plain text after a Kugou failure",
@@ -143,8 +143,8 @@ func TestLyricsProvider_UsesUncertainTTLAfterCacheOnly401(t *testing.T) {
 		t.Fatalf("GetLyrics() error = %v, want nil", err)
 	}
 	assertLyricsSource(t, result.Source, "Unison", "lrc")
-	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 181}, catalogSources(defaultCatalogIDs)); ttl != unsyncedLyricsCacheTTLSeconds {
-		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, unsyncedLyricsCacheTTLSeconds)
+	if ttl := cache.winnerTTL(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 181}, catalogSources(defaultCatalogIDs)); ttl != lyricsCacheHourTTLSeconds {
+		t.Fatalf("cache TTL = %d, want uncertain TTL %d", ttl, lyricsCacheHourTTLSeconds)
 	}
 }
 

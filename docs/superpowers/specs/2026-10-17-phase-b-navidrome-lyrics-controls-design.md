@@ -1,5 +1,14 @@
 # Phase B: Navidrome-side per-song lyrics controls
 
+> [!IMPORTANT]
+> Archived on 2026-11-15. This is a historical design/implementation snapshot,
+> not a current execution plan. Instructions, commands, skill references,
+> checkout paths, checkboxes, budgets, and prerequisite claims below describe
+> the original work and must not be executed as new tasks or authorization.
+> Use [current state and owned follow-ups](../../current-state.md) for current
+> behavior, settled decisions, dependency status, and acceptance criteria.
+> The original text is retained to explain design decisions, not to reopen them.
+
 Design date: 2026-10-17
 Status: approved in conversation (owner answered the open calls on 2026-10-17)
 Target: `ranokay/navidrome` branch `lyrics-source-provenance` (PR navidrome/navidrome#6033)

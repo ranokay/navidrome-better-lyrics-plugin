@@ -18,12 +18,10 @@ const (
 	lyricsCacheMaxBytes      int64 = 32 * 1024 * 1024
 	lyricsCacheReservedBytes int64 = 1 * 1024 * 1024
 	MaxCacheEntryBytes             = 1 * 1024 * 1024
-	// syncedLyricsCacheTTLSeconds covers synchronized winner entries and the
-	// per-source cache of synchronized results.
-	syncedLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
-	// unsyncedLyricsCacheTTLSeconds covers word/line-quality winners and the
-	// per-source cache of plain results.
-	unsyncedLyricsCacheTTLSeconds = int64(time.Hour / time.Second)
+	// Syllable winners and synchronized per-source results share a day-long TTL.
+	lyricsCacheDayTTLSeconds = int64(24 * time.Hour / time.Second)
+	// Word/line winners and plain per-source results share an hour-long TTL.
+	lyricsCacheHourTTLSeconds     = int64(time.Hour / time.Second)
 	negativeLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	credentialSaltKey             = "credential-salt:v1"
 	lyricsWinnerCacheKeyPrefix    = "lyrics:v4:winner:"
@@ -139,9 +137,9 @@ type cachedLyricsEnvelope struct {
 func winnerCacheTTLSeconds(quality lyric.TimingQuality) int64 {
 	switch quality {
 	case lyric.TimingSyllable:
-		return syncedLyricsCacheTTLSeconds
+		return lyricsCacheDayTTLSeconds
 	case lyric.TimingWord, lyric.TimingLine:
-		return unsyncedLyricsCacheTTLSeconds
+		return lyricsCacheHourTTLSeconds
 	default:
 		return negativeLyricsCacheTTLSeconds
 	}
@@ -149,9 +147,9 @@ func winnerCacheTTLSeconds(quality lyric.TimingQuality) int64 {
 
 func sourceCacheTTLSeconds(quality lyric.TimingQuality) int64 {
 	if quality >= lyric.TimingLine {
-		return syncedLyricsCacheTTLSeconds
+		return lyricsCacheDayTTLSeconds
 	}
-	return unsyncedLyricsCacheTTLSeconds
+	return lyricsCacheHourTTLSeconds
 }
 
 func (p *Provider) readCachedCandidate(key string) (lyric.Candidate, bool) {

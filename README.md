@@ -7,14 +7,13 @@ A Navidrome lyrics-provider plugin that fills the gap when a track has no local 
 The plugin does not inject or replace Navidrome's interface. It returns TTML, enhanced LRC, or plain lyrics through Navidrome's Lyrics capability, converting proprietary word-timed formats into enhanced LRC so compatible clients can render word-level highlighting.
 
 > [!NOTE]
-> **Pending upstream — [navidrome/navidrome#5733](https://github.com/navidrome/navidrome/pull/5733) (responsive lyrics sidebar).**
-> The sidebar UI that renders these lyrics lives in that PR and is not in a released Navidrome yet.
-> *When it ships:* update this paragraph and the sidebar mention under Requirements; lyrics work on stock Navidrome either way.
-
-> [!NOTE]
-> **Pending upstream — [navidrome/navidrome#6033](https://github.com/navidrome/navidrome/pull/6033) (lyrics source provenance).**
-> This plugin already reports the selected provider and format through the optional provenance contract from that PR, but current Navidrome hosts ignore the extra metadata.
-> *When it ships:* remove the temporary PDK `replace` in `go.mod` (see Development), point the PDK link under License back at upstream, and simplify the Unison attribution below.
+> As checked on 2026-11-15, the latest Navidrome release is v0.64.2.
+> The responsive sidebar ([#5733](https://github.com/navidrome/navidrome/pull/5733))
+> and source provenance/controls ([#6033](https://github.com/navidrome/navidrome/pull/6033))
+> remain open upstream. The plugin already returns labeled variants; displaying
+> those labels and controls requires a compatible host build.
+> [Current contracts and remaining work](docs/current-state.md) distinguish
+> released support, local changes, and upstream dependencies.
 
 ## Requirements
 
@@ -85,8 +84,8 @@ The plugin walks the enabled sources in configured order:
    per-song source picker (pending [navidrome/navidrome#6033](https://github.com/navidrome/navidrome/pull/6033)) can offer the cached alternatives. Responses return the
    winner first and label each alternative with its provider and format.
    Later lookups rank cached results by syllable, word, line, then plain timing.
-   Showing background discoveries automatically requires the matching Navidrome
-   UI changes; stock hosts do not poll for them.
+   Background discoveries become visible when the host calls the plugin again.
+   Automatic refresh depends on the host and UI behavior described below.
 
 Selection and caching rules:
 
@@ -99,6 +98,9 @@ Selection and caching rules:
   failure may therefore take up to five minutes to appear on a later request.
   Polling during that period returns the cached response. The plugin's own
   per-source caches and cooldowns still apply when Navidrome calls it.
+  That host change merged on 2026-11-15 and is not in the latest released
+  v0.64.2. Treat refresh after cache expiry as the baseline; prompt progressive
+  discovery requires an explicit upstream invalidation or refresh contract.
 - The winner cache keys score against a fingerprint of the enabled and ordered
   source list, so reordering sources in Settings takes effect the next time
   Navidrome calls the plugin.
@@ -136,11 +138,6 @@ Selection and caching rules:
   in Settings → Plugins → ND Better Lyrics.
 
 Legacy is deprecated and is not queried.
-
-> [!NOTE]
-> **Pending upstream — [navidrome/navidrome#6032](https://github.com/navidrome/navidrome/pull/6032) (host-side request coalescing).**
-> Navidrome currently creates separate plugin calls for concurrent requests of the same track; PR #6032 coalesces them in the host. Until that change is present in the running Navidrome build, identical simultaneous cold lookups can still reach this plugin independently.
-> *When it ships:* delete this block.
 
 ## Source catalogue
 
@@ -217,14 +214,16 @@ Using this plugin sends song metadata (title, artist, album, duration), the Navi
 
 Because several providers are **unofficial endpoints scraped or reverse-engineered by other open-source apps, they can break or change without notice**. Every source is off-switchable in Settings, and local lyrics always win `LyricsPriority` before fetchers run.
 
-Lyrics are supplied by the enabled providers and their upstream contributors. This repository does not bundle lyrics. Users are responsible for complying with the terms and copyright rules that apply in their jurisdiction.
+Lyrics are supplied by the enabled providers and their upstream contributors.
+The repository includes minimized provider responses and synthetic lyrics for
+tests, with [fixture provenance](internal/source/testdata/fixtures.md).
+Test fixtures are excluded from the downloadable plugin package. Users are
+responsible for complying with the terms and copyright rules that apply in
+their jurisdiction.
 
 Thanks to [Better Lyrics](https://betterlyrics.org/) for making its synchronized-lyrics API available.
 
 Lyrics from Unison ([unison.boidu.dev](https://unison.boidu.dev/)). Unison requires this attribution.
-
-> [!NOTE]
-> **Pending upstream — navidrome/navidrome#6033.** Once the provenance contract ships, hosts that display the source will identify Unison (or Better Lyrics/Kugou) beside the lyrics automatically; until then this static attribution is what users see.
 
 ## Development
 
@@ -245,6 +244,7 @@ host schema in `plugin/testdata`, without network access.
 LRCLib lyricsfile parsing uses YAML v4 and requires exactly one YAML document.
 Unknown provider fields remain supported. Go toolchain and dependency updates
 must preserve the standard WASI build and the optional provenance contract.
+See [dependency holds, advisory dispositions, and upgrade checks](docs/current-state.md#dependencies-and-upgrades).
 
 ### Project layout
 
@@ -254,12 +254,13 @@ internal/provider/   orchestration: source walk, sweep, winner cache, config, tr
 internal/source/     upstream adapters, one file per catalog source; fixtures in testdata/
 internal/lyric/      lyric domain: candidates, timing grades, identity matching, word-sync parsers
 dist/                local build output (plugin.wasm, nd-better-lyrics.ndp); not committed
-docs/                feasibility research, design specs, and implementation plans
+docs/                current-state contract and archived research/design history
 ```
 
-> [!NOTE]
-> **Pending upstream — navidrome/navidrome#6033.** The implementation temporarily replaces the released Go PDK with the additive provenance contract from that PR. Older Navidrome hosts ignore the optional source metadata and continue receiving the lyrics; compatible hosts display it.
-> *When it ships:* delete the `replace` directive in `go.mod`, run `go mod tidy`, and remove this block.
+The Go PDK replacement retains the optional provenance contract from #6033.
+Upstream's current PDK lacks those fields. Keep the explicit provenance revision
+until an upstream PDK provides the same entry and response metadata and passes
+the compatibility checks in [current state](docs/current-state.md#upstream-dependencies).
 
 ## Releases
 
@@ -280,7 +281,4 @@ Running it on a branch builds a development package without publishing a release
 
 The original source in this repository remains available under the [MIT License](LICENSE).
 
-Packaged `.ndp` artifacts statically include the [Navidrome Go PDK](https://github.com/ranokay/navidrome/tree/lyrics-source-provenance/plugins/pdk/go), which is licensed under GPL-3.0. Distribution of the combined artifact must comply with the PDK's GPL-3.0 terms. The Better Lyrics API and Unison are separate network services; no server, database, or extension source is copied into this plugin.
-
-> [!NOTE]
-> **Pending upstream — navidrome/navidrome#6033.** The PDK link above points at the `lyrics-source-provenance` branch because the packaged PDK currently comes from that PR. When #6033 merges upstream, link the PDK from `navidrome/navidrome` instead and drop this block.
+Packaged `.ndp` artifacts statically include the [pinned Navidrome Go PDK](https://github.com/ranokay/navidrome/tree/a730db2a7cd9bd5eae2a0fcb9472b871d606e9c1/plugins/pdk/go), which is licensed under GPL-3.0. Distribution of the combined artifact must comply with the PDK's GPL-3.0 terms. The Better Lyrics API and Unison are separate network services; no server, database, or extension source is copied into this plugin.

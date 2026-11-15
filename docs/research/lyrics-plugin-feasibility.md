@@ -2,6 +2,13 @@
 
 Research date: 2026-08-23
 
+> [!NOTE]
+> Historical research, retained with its original date and source revisions.
+> Its MVP scope, release gates, license recommendation, authentication facts,
+> and upstream status describe that investigation, not current instructions.
+> [Current state](../current-state.md) records the implemented contract and
+> preserves the owner's later decisions.
+
 ## Verdict
 
 This is feasible as a **Navidrome backend lyrics provider**, with an important boundary: a `.ndp` plugin cannot add, replace, or inject web UI. Navidrome plugin packages contain a manifest and a WebAssembly module, and the public lyrics capability returns lyric text to Navidrome's existing lyrics pipeline; it exposes no JavaScript, CSS, React, or sidebar registration hook ([Navidrome package loader](https://github.com/navidrome/navidrome/blob/23548f40a09f5f8bf9cf1e1bc2d4c2b236777560/plugins/package.go#L12-L94), [lyrics capability](https://github.com/navidrome/navidrome/blob/23548f40a09f5f8bf9cf1e1bc2d4c2b236777560/plugins/capabilities/lyrics.go#L3-L26)).
