@@ -1,0 +1,18 @@
+{
+  "contents": {"musicShelfRenderer": {"contents": [
+    {"musicResponsiveListItemRenderer": {
+      "playlistItemData": {"videoId": "AAAAAAAAA01"},
+      "flexColumns": [
+        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Shape of You"}]}}},
+        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
+          {"text": "Ed Sheeran", "navigationEndpoint": {"browseEndpoint": {"browseId": "UC_fixture_artist"}}},
+          {"text": " • "},
+          {"text": "Shape of You", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPRE_fixture_album"}}},
+          {"text": " • "},
+          {"text": "3:54"}
+        ]}}},
+        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "9.6B plays"}]}}}
+      ]
+    }}
+  ]}}
+}

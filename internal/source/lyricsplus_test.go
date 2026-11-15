@@ -70,7 +70,7 @@ func TestLyricsPlusCandidatesRetainCompleteText(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			candidates := lyricsPlusCandidates(lyricsPlusPayload{Type: "Word", Lyrics: []lyricsPlusLine{test.line}})
+			candidates := lyricsPlusCandidates(lyricsPlusPayload{Lyrics: []lyricsPlusLine{test.line}})
 			if len(candidates) != 1 {
 				t.Fatalf("candidates = %#v, want one", candidates)
 			}

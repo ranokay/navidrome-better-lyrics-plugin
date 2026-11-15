@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"net/url"
 	"testing"
 	"time"
@@ -8,6 +9,21 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
+
+func TestTransportBoundsBodyBeforeAdapterDecoding(t *testing.T) {
+	for _, size := range []int{8 << 20, (8 << 20) + 1} {
+		p := newTestProviderWithDependencies(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+			return &host.HTTPResponse{StatusCode: 200, Body: bytes.Repeat([]byte("x"), size)}, nil
+		}, nil, time.Now)
+		response, err := p.Do("source", "GET", "https://example.test", nil, nil, time.Now().Add(time.Minute))
+		if size == 8<<20 && (err != nil || response == nil) {
+			t.Fatalf("body at cap was rejected: %v", err)
+		}
+		if size > 8<<20 && (err == nil || response != nil) {
+			t.Fatal("oversized HTTP body reached the adapter")
+		}
+	}
+}
 
 func TestLyricsProvider_GetLyricsBuildsRequest(t *testing.T) {
 	t.Parallel()

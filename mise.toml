@@ -1,6 +1,7 @@
 [tools]
-go = "1.27.2"
-"aqua:WebAssembly/binaryen" = "133"
+go = "1.27.4"
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
 
 [tasks.fmt]
 description = "Format Go source"
@@ -19,6 +20,22 @@ fi
 [tasks.test]
 description = "Run race-enabled unit tests"
 run = "go test -race ./..."
+
+[tasks.workflow-check]
+description = "Validate GitHub Actions workflows"
+run = "actionlint .github/workflows/ci.yml .github/workflows/release.yml"
+
+[tasks.vet]
+description = "Check Go code with vet"
+run = "go vet ./..."
+
+[tasks.mod-check]
+description = "Verify downloaded module contents"
+run = "go mod verify"
+
+[tasks.qualification-runner-check]
+description = "Check qualification runner input validation and cleanup"
+run = "python3 -B -m unittest discover -s scripts/host-qualification -p '*_test.py'"
 
 [tasks.build]
 description = "Build the Navidrome WebAssembly plugin"
@@ -47,6 +64,10 @@ fi
 description = "Run all checks and build the package"
 run = '''
 mise run fmt-check
+mise run workflow-check
+mise run vet
+mise run mod-check
 mise run test
+mise run qualification-runner-check
 mise run package-check
 '''

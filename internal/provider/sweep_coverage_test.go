@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -263,7 +262,7 @@ func TestGetLyrics_ConfigWithEverySourceDisabledSkipsScheduling(t *testing.T) {
 	// must return without filling the task queue with unschedulable sweeps.
 	selections := make([]sourceSelection, 0, len(source.Catalog))
 	for _, src := range source.Catalog {
-		selections = append(selections, sourceSelection{ID: src.ID, Enabled: ptrBool(false)})
+		selections = append(selections, sourceSelection{ID: src.ID, Enabled: new(false)})
 	}
 	raw, err := json.Marshal(selections)
 	if err != nil {
@@ -310,9 +309,8 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 	}{
 		{name: "miss bounds a plain tail to five minutes", text: "some plain words", format: "plain", want: negativeLyricsCacheTTLSeconds},
 		{name: "misses bound the re-check window to five minutes", text: "[00:01.00]timed", format: "lrc", want: negativeLyricsCacheTTLSeconds},
-		{name: "fully timed coverage still spans a day", text: "[00:02.00]timed", format: "lrc2", want: syncedLyricsCacheTTLSeconds},
+		{name: "fully timed coverage still spans a day", text: "[00:02.00]timed", format: "lrc2", want: lyricsCacheDayTTLSeconds},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cache := newFakeLyricsCache()
 			tailFormat := tc.format
@@ -497,8 +495,8 @@ func TestSweep_ContinuationFoldsCachedSiblingTTL(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a done marker from the continuation")
 	}
-	if ttl != unsyncedLyricsCacheTTLSeconds {
-		t.Fatalf("done marker TTL = %d, want the plain sibling's %d entry to bound the continuation marker", ttl, unsyncedLyricsCacheTTLSeconds)
+	if ttl != lyricsCacheHourTTLSeconds {
+		t.Fatalf("done marker TTL = %d, want the plain sibling's %d entry to bound the continuation marker", ttl, lyricsCacheHourTTLSeconds)
 	}
 }
 
@@ -702,8 +700,8 @@ func TestSweepMarkerBoundedByRemainingLifetime(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a source cache key")
 	}
-	expiringSoon := `{"generation":1,"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":` +
-		fmt.Sprintf("%d", time.Now().Unix()+60) + `}`
+	expiringSoon := fmt.Sprintf(`{"generation":%d,"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":%d}`,
+		lyricsCacheGeneration, time.Now().Unix()+60)
 	if err := cache.SetWithTTL(key, []byte(expiringSoon), 60); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
@@ -847,7 +845,7 @@ func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
 			}},
 		sweepSource("tail", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
-	provider.enqueueSweepSources = func(lyrics.TrackInfo, []string) error {
+	provider.enqueueSweepSources = func(lyrics.TrackInfo, []string, int) error {
 		continuations++
 		return nil
 	}
@@ -941,7 +939,7 @@ func TestSweep_EnqueuesContinuationForDeferredSources(t *testing.T) {
 	// package var mutation).
 	provider := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	provider.sweepBudget = -time.Second
-	provider.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string) error {
+	provider.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string, _ int) error {
 		deferredPassed = ids
 		return nil
 	}
@@ -968,16 +966,20 @@ func TestSweep_MarksCachedOnlyAfterRealStore(t *testing.T) {
 
 	status := provider.runSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"})
 	assertContains(t, status, "cached=0")
-	if provider.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) == false {
-		// Without coverage the next lookup must still be allowed to re-sweep.
+	if provider.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) {
+		t.Fatal("a failed claim write must not enqueue an untracked sweep")
 	}
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, []source.Source{healthy})); exists {
 		t.Fatal("done marker recorded although the KV store rejected the lyrics write")
 	}
+	cache.setError = nil
+	if !provider.maybeEnqueueSweep(track) {
+		t.Fatal("storage recovery must allow a fresh sweep without false coverage")
+	}
 }
 
-func TestSweep_DoneMarkerFingesprintsSourceOrder(t *testing.T) {
+func TestSweep_DoneMarkerFingerprintsSourceOrder(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
@@ -987,7 +989,7 @@ func TestSweep_DoneMarkerFingesprintsSourceOrder(t *testing.T) {
 
 	reordered := []source.Source{sourcesA[1], sourcesA[0]}
 	providerB := newTestProviderWithSources(nil, cache, time.Now, reordered, func(lyrics.TrackInfo) error { return nil })
-	if providerB.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) == false {
+	if !providerB.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) {
 		t.Fatal("a reorder fingerprint key inherits the old done marker; the newly ranked source would never be swept")
 	}
 }
@@ -996,7 +998,8 @@ func TestGetLyrics_SweepEnqueueFailureReleasesSlot(t *testing.T) {
 	t.Parallel()
 
 	cache := newFakeLyricsCache()
-	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+	now := time.Unix(9000, 0)
+	provider := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{
 		sweepSource("one", new(int), false, errors.New("miss")),
 	}, func(lyrics.TrackInfo) error {
 		return errors.New("queue unavailable")
@@ -1012,19 +1015,12 @@ func TestGetLyrics_SweepEnqueueFailureReleasesSlot(t *testing.T) {
 	if !exists {
 		t.Fatal("marker missing, want an early-release marker")
 	}
-	value, _ := strconv.Atoi(string(raw))
-	_ = value
-	if _, ok, _ := cache.Get(provider.sweepPendingMarkerKey(track, trackKey)); !ok {
-		t.Fatal("marker vanished, want it retained until its short release TTL lapses")
+	var marker cachedLyricsEnvelope
+	if err := json.Unmarshal(raw, &marker); err != nil {
+		t.Fatal(err)
 	}
-	// The release marker must expire almost immediately (1 s) — assert its TTL.
-	found := false
-	for _, ttl := range cache.ttls {
-		if ttl == 1 {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("release marker TTL not found in %v, want a 1-second slot release", cache.ttls)
+	key := provider.sweepPendingMarkerKey(track, trackKey)
+	if ttl := cache.ttlsForKey[key]; ttl != 1 || marker.ExpiresAt != now.Unix()+1 {
+		t.Fatalf("release marker TTL=%d expiry=%d, want 1 second and %d", ttl, marker.ExpiresAt, now.Unix()+1)
 	}
 }

@@ -1,6 +1,7 @@
 package lyric
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 
@@ -80,10 +81,8 @@ func ArtistMatch(returned, wanted string) bool {
 	}
 	wantNames := splitArtistNames(wanted)
 	for _, rowName := range splitArtistNames(returned) {
-		for _, wantName := range wantNames {
-			if rowName == wantName {
-				return true
-			}
+		if slices.Contains(wantNames, rowName) {
+			return true
 		}
 	}
 	return false

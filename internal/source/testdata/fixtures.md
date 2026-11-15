@@ -1,6 +1,6 @@
 # Lyrics provider wire fixtures
 
-Probes run 2026-10-16 (UTC) by the implementation agent. A `derived` fixture keeps the
+Original probes ran 2026-10-16 (UTC); dated additions are noted below. A `derived` fixture keeps the
 real response structure but is trimmed so files stay small and well-formed; a
 `reconstructed` fixture was never fetched live — it is hand-written from the Morphe
 reference parser (`MorpheApp/morphe-patches`,
@@ -47,4 +47,12 @@ Notes that affect parser/shaper tests:
 
 | lyricsplus/get.json | live 2026-10 | apple-backed LyricsPlus mirror payload (`/v2/lyrics/get?...&source=apple`): `type:Word`, syllabus tokens |
 | genius/search.json + page.html | live 2026-10 | keyless `genius.com/api/search` + the matched song page slice from the first lyric container to the footer |
-| ytmusic | synthetic | minimal innertube shapes mirroring the live probes (search rows with `lengthText`, watch-next `MPLYt_` browseId, `musicDescriptionShelfRenderer` description runs); the muxer keys are public-web-client facts |
+| ytmusic inline cases | synthetic | legacy search rows with `lengthText`, watch-next `MPLYt_` browseId, and description runs |
+| ytmusic/search-filtered.json | derived 2026-11-15 | current filtered song-search metadata runs; public title/artist/duration, synthetic browse/video IDs, no lyric text |
+
+The 2026-11-15 YTM probe confirmed that filtered song search exposes duration in
+unlinked metadata runs and artist identities in `UC*` browse links. Album
+`MPRE*` links remain separate. The existing three-hop chain returned lyrics
+after applying this layout; lyric content was neither recorded nor printed.
+The filter and role mapping were cross-checked against
+[ytmusicapi's parser at 86fcd17](https://github.com/sigma67/ytmusicapi/blob/86fcd17ee3ff0d19bc807558d4e1a637df395143/ytmusicapi/parsers/songs.py).

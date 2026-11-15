@@ -114,7 +114,7 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 // otherwise vanilla LRC payload ({"t":…,"c":[…]}).
 func stripNetEaseCreditLines(text string) string {
 	var kept []string
-	for _, row := range strings.Split(text, "\n") {
+	for row := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(row), "{") {
 			continue
 		}

@@ -1,5 +1,14 @@
 # Phase B: per-song lyrics controls (Navidrome PR #6033) — Implementation Plan
 
+> [!IMPORTANT]
+> Archived on 2026-11-15. This is a historical design/implementation snapshot,
+> not a current execution plan. Instructions, commands, skill references,
+> checkout paths, checkboxes, budgets, and prerequisite claims below describe
+> the original work and must not be executed as new tasks or authorization.
+> Use [current state and owned follow-ups](../../current-state.md) for current
+> behavior, settled decisions, dependency status, and acceptance criteria.
+> The original text is retained to explain design decisions, not to reopen them.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the Phase B contract (per-entry lyrics source, all source-tagged variants in one response) and the three player controls (source switcher, timing offset, download) on top of `navidrome/navidrome#6033`.

@@ -2,10 +2,43 @@ package lyric
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestLRCLibUnalignableWordsPreserveOriginalLine(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, text string
+		words      []string
+	}{
+		{"first mismatch", "first line", []string{"FIRST", "line"}},
+		{"middle mismatch", "first middle line", []string{"first", "MIDDLE", "line"}},
+		{"last mismatch", "first line again", []string{"first", "line!"}},
+		{"omitted word", "first middle line", []string{"first", "line"}},
+		{"missing suffix", "first line again", []string{"first", "line"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			document := fmt.Sprintf("version: '1.0'\nlines:\n- start_ms: 1000\n  end_ms: 2500\n  text: %s\n  words:\n", test.text)
+			for i, word := range test.words {
+				document += fmt.Sprintf("  - text: %s\n    start_ms: %d\n    end_ms: %d\n", word, 1000+i*300, 1300+i*300)
+			}
+			lines, err := ParseLRCLibLyricsFile([]byte(document))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(lines) != 1 || lines[0].StartMs != 1000 || lines[0].EndMs != 2500 || len(lines[0].Words) != 0 {
+				t.Fatalf("lines = %#v, want original line timing without words", lines)
+			}
+			if got, want := EnhancedLRC(lines), "[00:01.00]"+test.text+"\n"; got != want {
+				t.Fatalf("rendered = %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 func TestParsePetitWSY(t *testing.T) {
 	t.Parallel()
@@ -97,6 +130,17 @@ func TestParseLRCLibLyricsFile(t *testing.T) {
 	}
 	if lines[1].Words != nil || lines[1].Text != "second line" {
 		t.Fatalf("line 2 = %#v, want wordless line", lines[1])
+	}
+}
+
+func TestLRCLibLyricsFileRequiresOneYAMLDocument(t *testing.T) {
+	t.Parallel()
+	const valid = "version: '1.0'\nlines:\n- start_ms: 1000\n  end_ms: 2000\n  text: lyric\n"
+	if _, err := ParseLRCLibLyricsFile([]byte(valid + "---\nlines: []\n")); err == nil {
+		t.Fatal("a second YAML document must not be silently ignored")
+	}
+	if _, err := ParseLRCLibLyricsFile([]byte(valid + "extra_provider_field: tolerated\n")); err != nil {
+		t.Fatalf("future provider fields must remain compatible: %v", err)
 	}
 }
 

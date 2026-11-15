@@ -132,17 +132,22 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}
 	}
+	malformedTTML := false
 	if ttml := strings.TrimSpace(mirror.TTMLContent); ttml != "" {
 		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: ttml}, "Apple Music (Lyrically)", "ttml")
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}
+		malformedTTML = !lyric.EmptyDocument(ttml, "ttml")
 	}
 	if plain := strings.TrimSpace(mirror.Plain); plain != "" {
 		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: plain}, "Apple Music (Lyrically)", "plain")
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}
+	}
+	if malformedTTML {
+		return nil, Degraded, fmt.Errorf("Lyrically lyrics returned malformed TTML")
 	}
 	return nil, Healthy, nil
 }

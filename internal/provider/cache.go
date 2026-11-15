@@ -14,21 +14,20 @@ import (
 )
 
 const (
-	CacheMaxSize                   = "32MB"
-	lyricsCacheMaxBytes      int64 = 32 * 1024 * 1024
+	CacheMaxSize = "32MB"
+	// Navidrome parses the manifest's MB unit as decimal, not MiB.
+	lyricsCacheMaxBytes      int64 = 32_000_000
 	lyricsCacheReservedBytes int64 = 1 * 1024 * 1024
 	MaxCacheEntryBytes             = 1 * 1024 * 1024
-	// syncedLyricsCacheTTLSeconds covers synchronized winner entries and the
-	// per-source cache of synchronized results.
-	syncedLyricsCacheTTLSeconds = int64(24 * time.Hour / time.Second)
-	// unsyncedLyricsCacheTTLSeconds covers word/line-quality winners and the
-	// per-source cache of plain results.
-	unsyncedLyricsCacheTTLSeconds = int64(time.Hour / time.Second)
+	// Syllable winners and synchronized per-source results share a day-long TTL.
+	lyricsCacheDayTTLSeconds = int64(24 * time.Hour / time.Second)
+	// Word/line winners and plain per-source results share an hour-long TTL.
+	lyricsCacheHourTTLSeconds     = int64(time.Hour / time.Second)
 	negativeLyricsCacheTTLSeconds = int64(5 * time.Minute / time.Second)
 	credentialSaltKey             = "credential-salt:v1"
 	lyricsWinnerCacheKeyPrefix    = "lyrics:v4:winner:"
 	lyricsSourceCacheKeyPrefix    = "lyrics:v4:source:"
-	lyricsCacheGeneration         = 1
+	lyricsCacheGeneration         = 2
 )
 
 type lyricsCacheUsageStore interface {
@@ -129,15 +128,19 @@ type cachedLyricsEnvelope struct {
 	// derived TTLs by the entry's remaining life. Entries without it
 	// are treated as unsafely-aged and refreshed.
 	ExpiresAt int64 `json:"expiresAt,omitempty"`
+	// SourceExpiresAt preserves a winner's fetched-result lifetime when cached
+	// source data is promoted again. Older winners lack this bound and must be
+	// rebuilt from their source entries instead of renewing their age.
+	SourceExpiresAt int64 `json:"sourceExpiresAt,omitempty"`
 }
 
 // winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.
 func winnerCacheTTLSeconds(quality lyric.TimingQuality) int64 {
 	switch quality {
 	case lyric.TimingSyllable:
-		return syncedLyricsCacheTTLSeconds
+		return lyricsCacheDayTTLSeconds
 	case lyric.TimingWord, lyric.TimingLine:
-		return unsyncedLyricsCacheTTLSeconds
+		return lyricsCacheHourTTLSeconds
 	default:
 		return negativeLyricsCacheTTLSeconds
 	}
@@ -145,9 +148,9 @@ func winnerCacheTTLSeconds(quality lyric.TimingQuality) int64 {
 
 func sourceCacheTTLSeconds(quality lyric.TimingQuality) int64 {
 	if quality >= lyric.TimingLine {
-		return syncedLyricsCacheTTLSeconds
+		return lyricsCacheDayTTLSeconds
 	}
-	return unsyncedLyricsCacheTTLSeconds
+	return lyricsCacheHourTTLSeconds
 }
 
 func (p *Provider) readCachedCandidate(key string) (lyric.Candidate, bool) {
@@ -272,7 +275,7 @@ func (p *Provider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool
 	if err != nil {
 		return false
 	}
-	if p.cache.SetWithTTL(key, value, negativeLyricsCacheTTLSeconds) != nil {
+	if !p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, negativeLyricsCacheTTLSeconds) {
 		return false
 	}
 	// An oversized/evicted write must not count as coverage.
@@ -319,18 +322,22 @@ func (p *Provider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string,
 }
 
 // readBestFromSourceCache ranks fresh per-source results in configured order; the
-// earlier source wins timing-quality ties because lyric.Prefer keeps the
-// current candidate.
-func (p *Provider) readBestFromSourceCache(track lyrics.TrackInfo, order []source.Source) lyric.Candidate {
+// earlier source wins timing-quality ties. The expiry follows the selected
+// source so a derived winner cannot acquire a new fetched-result lifetime.
+func (p *Provider) readBestFromSourceCache(track lyrics.TrackInfo, order []source.Source) (lyric.Candidate, int64) {
 	var best lyric.Candidate
+	var expiresAt int64
 	for _, source := range order {
-		candidate, ok := p.readCachedSourceCandidate(track, source.ID)
+		key, ok := lyricsCacheKeyForSource(track, source.ID)
 		if !ok {
 			continue
 		}
-		best = lyric.Prefer(best, candidate)
+		candidate, expiry, ok := p.readCachedCandidateWithExpiry(key)
+		if ok && candidate.Present() && (!best.Present() || candidate.Quality > best.Quality) {
+			best, expiresAt = candidate, expiry
+		}
 	}
-	return best
+	return best, expiresAt
 }
 
 func (p *Provider) readCachedWinner(track lyrics.TrackInfo, order []source.Source) (lyric.Candidate, bool, bool) {
@@ -345,6 +352,11 @@ func (p *Provider) readCachedWinner(track lyrics.TrackInfo, order []source.Sourc
 	if envelope.Credentials != p.lyricsCredentialsFingerprint() {
 		// Winner coverage recorded under different credentials does not
 		// authorise the current lookup: re-adding a key must re-walk.
+		return lyric.Candidate{}, false, false
+	}
+	if len(envelope.Response.Lyrics) > 0 && envelope.SourceExpiresAt <= p.now().Unix() {
+		// Rebuild old, unbounded winners from valid source entries. In
+		// particular, an old renewal must not hide a fresh miss or downgrade.
 		return lyric.Candidate{}, false, false
 	}
 	sweepComplete := envelope.SweepComplete
@@ -370,23 +382,36 @@ func (p *Provider) readCachedWinner(track lyrics.TrackInfo, order []source.Sourc
 // sweepComplete records whether the producing lookup covered every implemented
 // enabled source, so cached hits know whether a sweep is still pending.
 func (p *Provider) cacheWinner(track lyrics.TrackInfo, order []source.Source, candidate lyric.Candidate, sweepComplete bool) {
+	p.cacheWinnerUntil(track, order, candidate, sweepComplete, p.now().Add(time.Duration(sourceCacheTTLSeconds(candidate.Quality))*time.Second).Unix())
+}
+
+func (p *Provider) cacheWinnerUntil(track lyrics.TrackInfo, order []source.Source, candidate lyric.Candidate, sweepComplete bool, sourceExpiresAt int64) {
 	key, ok := lyricsWinnerCacheKey(track, source.IDs(order))
 	if !ok {
 		return
 	}
+	now := p.now().Unix()
+	expiresAt := min(now+winnerCacheTTLSeconds(candidate.Quality), sourceExpiresAt)
+	ttl := expiresAt - now
+	if ttl <= 0 {
+		// Legacy source entries without a fetched expiry remain readable, but
+		// cannot authorize another persisted winner lifetime.
+		return
+	}
 	value, err := json.Marshal(cachedLyricsEnvelope{
-		Generation:    lyricsCacheGeneration,
-		Quality:       candidate.Quality,
-		Response:      candidate.Response,
-		SweepComplete: sweepComplete,
-		Credentials:   p.lyricsCredentialsFingerprint(),
-		ExpiresAt:     p.now().Add(time.Duration(winnerCacheTTLSeconds(candidate.Quality)) * time.Second).Unix(),
+		Generation:      lyricsCacheGeneration,
+		Quality:         candidate.Quality,
+		Response:        candidate.Response,
+		SweepComplete:   sweepComplete,
+		Credentials:     p.lyricsCredentialsFingerprint(),
+		ExpiresAt:       expiresAt,
+		SourceExpiresAt: sourceExpiresAt,
 	})
 	if err != nil {
 		p.logf(fmt.Sprintf("lyrics cache encode failed: %v", p.safeDiagnosticError(err)))
 		return
 	}
-	p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, winnerCacheTTLSeconds(candidate.Quality))
+	p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, ttl)
 }
 
 func (p *Provider) cacheNegativeWinner(track lyrics.TrackInfo, order []source.Source, sweepComplete bool) {

@@ -67,7 +67,7 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 		"username": {randomLyricifyUsername()},
 		"isrc":     {encoded},
 	}
-	response, err = get(rt, "Lyricify lyrics", lyricifyMobileLyricsURL+"?"+query.Encode(), lyricifyAcceptGzipHeaders(), deadline)
+	response, err = get(rt, "Lyricify lyrics", lyricifyMobileLyricsURL+"?"+query.Encode(), lyricifyLyricsHeaders(), deadline)
 	if err != nil {
 		return nil, Degraded, err
 	}
@@ -157,7 +157,7 @@ func lyricifyHeaders() map[string]string {
 	}
 }
 
-func lyricifyAcceptGzipHeaders() map[string]string {
+func lyricifyLyricsHeaders() map[string]string {
 	return map[string]string{
 		"Accept": "application/json",
 		// Deliberately no Accept-Encoding here: the host client disables

@@ -25,17 +25,18 @@ type Candidate struct {
 // NewCandidate grades one source payload; contentless or malformed payloads
 // yield the zero candidate so they cannot outrank usable fallbacks.
 func NewCandidate(text lyrics.LyricsText, provider, format string) Candidate {
-	if !hasLyricContent(text.Text, format) {
-		// A well-formed but empty or metadata-only payload (e.g. `<tt></tt>`)
-		// must not become a present candidate that outranks usable fallbacks.
+	if len(text.Text) > MaxDocumentBytes {
 		return Candidate{}
 	}
 	quality := TimingUnsynced
+	if format != "ttml" && !hasLyricContent(text.Text, format) {
+		return Candidate{}
+	}
 	switch format {
 	case "ttml":
-		var valid bool
-		quality, valid = inspectTTMLTimingQuality(text.Text)
-		if !valid {
+		var valid, hasContent bool
+		quality, hasContent, valid = inspectTTMLTimingQuality(text.Text)
+		if !valid || !hasContent {
 			return Candidate{}
 		}
 	case "lrc", "elrc":

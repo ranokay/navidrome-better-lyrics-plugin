@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,6 +30,9 @@ const (
 	// behind a concurrency-1 backlog; OnTaskExecute refreshes it again when
 	// execution starts and releases it when an incomplete run finishes.
 	sweepQueuedMarkerTTL = int64(30 * time.Minute / time.Second)
+	// A source that cannot finish within a fresh full budget must not keep a
+	// concurrency-one queue occupied forever. A later lookup may start again.
+	maxSweepStalledPasses = 2
 )
 
 // defaultSweepBudget bounds one sweep invocation. The task worker's own callback
@@ -37,8 +41,9 @@ const (
 const defaultSweepBudget = 24 * time.Second
 
 type sweepTaskPayload struct {
-	Track   lyrics.TrackInfo `json:"track"`
-	Sources []string         `json:"sources,omitempty"`
+	Track         lyrics.TrackInfo `json:"track"`
+	Sources       []string         `json:"sources,omitempty"`
+	StalledPasses int              `json:"stalledPasses,omitempty"`
 }
 
 // OnInit purges cached data from removed sources and creates the permanent
@@ -76,8 +81,14 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources)
 	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
-		// Resume the deferred tail immediately instead of waiting for a replay.
-		if err := p.enqueueSweepSources(payload.Track, deferredIDs); err != nil {
+		stalledPasses := 0
+		if slices.Equal(payload.Sources, deferredIDs) {
+			stalledPasses = min(max(payload.StalledPasses, 0), maxSweepStalledPasses) + 1
+		}
+		// A shrinking tail is progress; an unchanged tail gets bounded retries.
+		if stalledPasses >= maxSweepStalledPasses {
+			p.logf("lyrics sweep stopped after repeated budget exhaustion; a later lookup can retry")
+		} else if err := p.enqueueSweepSources(payload.Track, deferredIDs, stalledPasses); err != nil {
 			p.logf(fmt.Sprintf("sweep continuation enqueue failed: %v", p.safeDiagnosticError(err)))
 		} else {
 			continuationQueued = true
@@ -112,12 +123,12 @@ func (p *Provider) runSweep(track lyrics.TrackInfo) string {
 	return status
 }
 
-// sweepDoneMarkerKey fingerprints the enabled source order into the done key so
-// reordering or rescaling the catalog invalidates satisfied sweeps.
+// sweepDoneMarkerKey includes generation and source order: older coverage must
+// not suppress discovery after a parser/cache-policy upgrade or source change.
 func sweepDoneMarkerKey(track lyrics.TrackInfo, order []source.Source) string {
 	trackKey, _ := lyricsTrackKey(track)
 	digest := sha256.Sum256([]byte(strings.Join(source.IDs(order), "|")))
-	return fmt.Sprintf("%s%x:%s", sweepDonePrefix, digest, trackKey)
+	return fmt.Sprintf("%sg%d:%x:%s", sweepDonePrefix, lyricsCacheGeneration, digest, trackKey)
 }
 
 // doneMarkerKey is the provider-view done key: it also carries the credential
@@ -372,12 +383,7 @@ func (p *Provider) sourceInCooldown(src source.Source) bool {
 }
 
 func sharesBetterLyricsHost(src source.Source) bool {
-	for _, hostName := range src.Hosts {
-		if hostName == "lyrics-api.boidu.dev" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(src.Hosts, "lyrics-api.boidu.dev")
 }
 
 // maybeEnqueueSweep triggers the background sweep for a track unless one already
@@ -430,5 +436,5 @@ func (p *Provider) sweepMarkerActive(key string) bool {
 // the old marker window.
 func (p *Provider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
 	digest := sha256.Sum256([]byte(strings.Join(source.IDs(p.activeSources()), "|")))
-	return fmt.Sprintf("%s%s:%x:%s", sweepMarkerPrefix, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)
+	return fmt.Sprintf("%sg%d:%s:%x:%s", sweepMarkerPrefix, lyricsCacheGeneration, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)
 }

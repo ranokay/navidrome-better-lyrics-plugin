@@ -2,6 +2,7 @@ package lyric
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -9,6 +10,9 @@ import (
 // ParsePetitWSY parses PetitLyrics' word-synced WSY payload (plain XML with
 // per-line and per-word millisecond windows).
 func ParsePetitWSY(data []byte) ([]TimedLine, error) {
+	if err := checkXMLBounds(data); err != nil {
+		return nil, fmt.Errorf("decode WSY: %w", err)
+	}
 	var doc petitWSYDocument
 	if err := xml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("decode WSY: %w", err)
@@ -23,6 +27,9 @@ func ParsePetitWSY(data []byte) ([]TimedLine, error) {
 		for _, word := range row.Words {
 			if word.StartMs == 0 && word.EndMs == 0 {
 				continue
+			}
+			if !validTimingWindow(word.StartMs, word.EndMs) {
+				return nil, errors.New("invalid WSY word timing")
 			}
 			line.Words = append(line.Words, TimedWord{StartMs: word.StartMs, EndMs: word.EndMs, Text: word.Text})
 		}

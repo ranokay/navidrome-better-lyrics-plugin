@@ -46,7 +46,7 @@ func fetchLyricsPlus(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]
 
 	var lookupErrors []error
 	cooledMirrors := 0
-	for i, endpoint := range []string{lyricsPlusEndpoint, lyricsPlusMirrorOne} {
+	for _, endpoint := range []string{lyricsPlusEndpoint, lyricsPlusMirrorOne} {
 		// Host-scoped cooldowns only remove the affected mirror from this
 		// lookup; the healthy sibling still serves.
 		if host := lyricsPlusEndpointHost(endpoint); rt.Cooldown(GlobalCooldownKey(host)) > 0 {
@@ -57,9 +57,6 @@ func fetchLyricsPlus(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]
 		response, err := get(rt, "LyricsPlus lyrics", requestURL, rt.DefaultHeaders(), deadline)
 		if err != nil {
 			lookupErrors = append(lookupErrors, err)
-			if len(lookupErrors) > i {
-				continue
-			}
 			continue
 		}
 		switch response.StatusCode {
@@ -120,11 +117,6 @@ func lyricsPlusEndpointHost(endpoint string) string {
 }
 
 type lyricsPlusPayload struct {
-	Type     string `json:"type"`
-	Metadata struct {
-		Source   string `json:"source"`
-		Language string `json:"language"`
-	} `json:"metadata"`
 	Lyrics []lyricsPlusLine `json:"lyrics"`
 }
 
@@ -141,9 +133,8 @@ type lyricsPlusWord struct {
 	Text     string `json:"text"`
 }
 
-// lyricsPlusCandidates flattens the payload into one enhanced-LRC candidate:
-// type Word payloads keep their per-token syllabus; type Line renders line
-// stamps only. The source field is preserved for provenance display.
+// lyricsPlusCandidates retains valid word tokens, falling back to complete
+// line text and line timing when tokens do not align.
 func lyricsPlusCandidates(payload lyricsPlusPayload) []lyric.Candidate {
 	if len(payload.Lyrics) == 0 {
 		return nil

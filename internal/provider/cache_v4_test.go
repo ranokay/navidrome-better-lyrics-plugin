@@ -38,9 +38,9 @@ func TestLyricsProvider_WinnerTTLFollowsTimingQuality(t *testing.T) {
 		text   string
 		want   int64
 	}{
-		{name: "syllable winners live a day", format: "ttml", text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">x</span></p></tt>", want: syncedLyricsCacheTTLSeconds},
-		{name: "word winners live an hour", format: "elrc", text: "[00:01.00]<00:01.10>word", want: unsyncedLyricsCacheTTLSeconds},
-		{name: "line winners live an hour", format: "lrc", text: "[00:01.00]line", want: unsyncedLyricsCacheTTLSeconds},
+		{name: "syllable winners live a day", format: "ttml", text: "<tt xmlns:itunes=\"urn:itunes\" itunes:timing=\"Syllable\"><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">x</span></p></tt>", want: lyricsCacheDayTTLSeconds},
+		{name: "word winners live an hour", format: "elrc", text: "[00:01.00]<00:01.10>word", want: lyricsCacheHourTTLSeconds},
+		{name: "line winners live an hour", format: "lrc", text: "[00:01.00]line", want: lyricsCacheHourTTLSeconds},
 		{name: "unsynced winners live five minutes", format: "plain", text: "plain text", want: negativeLyricsCacheTTLSeconds},
 	}
 
@@ -342,5 +342,7 @@ func TestGetLyrics_UpgradeCachedWinnerFromFreshSweepResults(t *testing.T) {
 		t.Fatalf("second GetLyrics() error = %v, want nil", err)
 	}
 	assertLyricsSource(t, result.Source, "stub", "ttml")
-	_ = callsTwo
+	if callsTwo != 0 {
+		t.Fatalf("cached upgrade fetched source two %d times, want no network fetch", callsTwo)
+	}
 }

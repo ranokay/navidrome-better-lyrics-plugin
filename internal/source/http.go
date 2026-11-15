@@ -98,8 +98,7 @@ func providerRateLimitResponseError(source string, response *host.HTTPResponse, 
 // IsGlobalRateLimitError reports whether the error is the provider-wide rate
 // limit the walk and sweep policy key off (not a per-query throttle).
 func IsGlobalRateLimitError(err error) bool {
-	var responseErr *providerHTTPError
-	if errors.As(err, &responseErr) {
+	if responseErr, ok := errors.AsType[*providerHTTPError](err); ok {
 		return responseErr.status == 429 && responseErr.globalRateLimit
 	}
 	var cooldownErr *rateLimitCooldownError
@@ -109,8 +108,7 @@ func IsGlobalRateLimitError(err error) bool {
 // IsRateLimitError distinguishes provider throttling from an ordinary outage.
 // The provider's Retry-After policy must not be replaced by failure backoff.
 func IsRateLimitError(err error) bool {
-	var responseErr *providerHTTPError
-	if errors.As(err, &responseErr) {
+	if responseErr, ok := errors.AsType[*providerHTTPError](err); ok {
 		return responseErr.status == 429 || responseErr.retryAfterSeconds > 0
 	}
 	var cooldownErr *rateLimitCooldownError

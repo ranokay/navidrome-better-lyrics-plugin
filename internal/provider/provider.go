@@ -63,7 +63,7 @@ type Provider struct {
 	sources []source.Source
 	// enqueueSweepSources re-enqueues a continuation carrying only the sources a
 	// sweep had to defer when its budget ran out.
-	enqueueSweepSources func(lyrics.TrackInfo, []string) error
+	enqueueSweepSources func(lyrics.TrackInfo, []string, int) error
 	// sweepBudget overrides defaultSweepBudget (0 = default); tests shrink it to
 	// force deferrals deterministically.
 	sweepBudget time.Duration
@@ -103,21 +103,21 @@ func New(deps Deps) *Provider {
 		p.logf = func(string) {}
 	}
 	p.enqueueSweep = func(lyrics.TrackInfo) error { return nil }
-	p.enqueueSweepSources = func(lyrics.TrackInfo, []string) error { return nil }
+	p.enqueueSweepSources = func(lyrics.TrackInfo, []string, int) error { return nil }
 	if deps.EnqueueTask != nil {
 		enqueue := deps.EnqueueTask
 		p.enqueueSweep = func(track lyrics.TrackInfo) error {
-			return enqueueSweepTask(enqueue, track, nil)
+			return enqueueSweepTask(enqueue, track, nil, 0)
 		}
-		p.enqueueSweepSources = func(track lyrics.TrackInfo, sources []string) error {
-			return enqueueSweepTask(enqueue, track, sources)
+		p.enqueueSweepSources = func(track lyrics.TrackInfo, sources []string, stalledPasses int) error {
+			return enqueueSweepTask(enqueue, track, sources, stalledPasses)
 		}
 	}
 	return p
 }
 
-func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track lyrics.TrackInfo, sources []string) error {
-	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources})
+func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track lyrics.TrackInfo, sources []string, stalledPasses int) error {
+	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources, StalledPasses: stalledPasses})
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 
 	sources := p.activeSources()
 	if len(sources) == 0 {
-		// Deliberate all-disabled opt-out (documented `sources: []` config):
+		// Deliberate all-disabled opt-out (every configured source toggled off):
 		// serve nothing without touching the winner cache or task queue — an
 		// empty source order creates no key and would wedge every lookup
 		// through the unschedulable sweep path.
@@ -154,8 +154,8 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 				// was written: re-rank before serving.
 				// Ties adopt the per-source preferred candidate,
 				// which respects configured order.
-				if best := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
-					p.cacheWinner(track, sources, best, false)
+				if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
+					p.cacheWinnerUntil(track, sources, best, false, expiry)
 					candidate = best
 				}
 				p.maybeEnqueueSweep(track)
@@ -164,8 +164,8 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
-		if best := p.readBestFromSourceCache(track, sources); best.Present() {
-			p.cacheWinner(track, sources, best, false)
+		if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
+			p.cacheWinnerUntil(track, sources, best, false, expiry)
 			p.maybeEnqueueSweep(track)
 			return respond(best), nil
 		}
@@ -177,8 +177,8 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		}
 		return respond(candidate), nil
 	}
-	if best := p.readBestFromSourceCache(track, sources); best.Present() {
-		p.cacheWinner(track, sources, best, false)
+	if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
+		p.cacheWinnerUntil(track, sources, best, false, expiry)
 		p.maybeEnqueueSweep(track)
 		return respond(best), nil
 	}
@@ -220,10 +220,10 @@ func (p *Provider) activeSources() []source.Source {
 }
 
 // fetchLyrics runs the stage-one pass: the first implemented enabled sources in
-// configured order under a bounded budget, stopping on the first synchronized
-// result lands. Each successful source result is cached per source so later
+// configured order under a bounded budget, stopping at the first usable
+// synchronized result. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
-// are covered by the background sweep (Task 6).
+// are covered by the background sweep.
 func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, source.Health, bool, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
@@ -380,14 +380,8 @@ func (p *Provider) requestTimeoutMilliseconds(deadline time.Time) (int32, error)
 	if remaining <= 0 {
 		return 0, source.ErrLookupBudgetExhausted
 	}
-	perRequest := time.Duration(httpTimeoutMilliseconds) * time.Millisecond
-	if remaining < perRequest {
-		perRequest = remaining
-	}
-	milliseconds := (perRequest + time.Millisecond - 1) / time.Millisecond
-	if milliseconds < 1 {
-		milliseconds = 1
-	}
+	perRequest := min(remaining, time.Duration(httpTimeoutMilliseconds)*time.Millisecond)
+	milliseconds := max((perRequest+time.Millisecond-1)/time.Millisecond, 1)
 	return int32(milliseconds), nil
 }
 

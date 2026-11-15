@@ -1,5 +1,4 @@
 {
- "$schema": "https://raw.githubusercontent.com/navidrome/navidrome/refs/tags/v0.64.2/plugins/manifest-schema.json",
  "name": "ND Better Lyrics",
  "author": "Yuuta",
  "version": "0.4.1",

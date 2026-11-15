@@ -1,14 +1,23 @@
 # ND Better Lyrics plugin: multi-source lyrics and UI controls
 
+> [!IMPORTANT]
+> Archived on 2026-11-15. This is a historical design/implementation snapshot,
+> not a current execution plan. Instructions, commands, skill references,
+> checkout paths, checkboxes, budgets, and prerequisite claims below describe
+> the original work and must not be executed as new tasks or authorization.
+> Use [current state and owned follow-ups](../../current-state.md) for current
+> behavior, settled decisions, dependency status, and acceptance criteria.
+> The original text is retained to explain design decisions, not to reopen them.
+
 Design date: 2026-10-16
 Status: approved and implemented (Phase A); the shipped v0.3.0 catalogue grew past this draft — see "Post-implementation amendments" below.
 
 ## Post-implementation amendments (2026-10-17)
 
 Recorded after the v0.3.0 implementation. The sections below keep their original
-text, with markers where they no longer describe the shipped plugin; the full
-decision ledger lives in
-`.superpowers/sdd/2026-10-16-multi-source-lyrics-plugin/progress.md`.
+text, with markers where they no longer described that release. The original
+working ledger was not versioned with this repository; maintained decisions and
+follow-ups now live in [current state](../../current-state.md).
 
 - **Catalogue grew to seventeen ids.** `lyricsplus` (community Apple-timing
   mirrors), `yt-music` (public innertube client, disabled by default), and

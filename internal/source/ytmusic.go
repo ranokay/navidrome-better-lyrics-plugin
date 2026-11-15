@@ -2,8 +2,9 @@ package source
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"regexp"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,12 +28,6 @@ const (
 	ytmusicClientVersion  = "1.20261001.01.00"
 )
 
-var (
-	// The watch-next response carries the song's playlist id; browsing it
-	// yields the lyrics description shelf.
-	ytmusicBrowseIDPattern = regexp.MustCompile(`"browseId":"(MPLYt_[A-Za-z0-9_-]+)"`)
-)
-
 // fetchYTMusic resolves the plain, edited lyric text of the
 // official YouTube Music "Lyrics" tab for the best duration-tight video:
 // search, then the watch-next playlist id of the matched song, then the
@@ -47,6 +42,8 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	searchBody, err := json.Marshal(map[string]any{
 		"context": innertubeContext(),
 		"query":   title + " " + artist,
+		// The songs filter includes recording duration in metadata runs.
+		"params": "EgWKAQIIAWoMEA4QChADEAQQCRAF",
 	})
 	if err != nil {
 		return nil, Degraded, err
@@ -96,7 +93,12 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 		// a lyrics browse id is a cacheable miss.
 		return nil, Degraded, fmt.Errorf("decode YouTube Music watch response: %w", err)
 	}
-	playlistID := firstStringMatch(response.Body, ytmusicBrowseIDPattern)
+	playlistID := ""
+	ytmusicWalk(watchTree, func(node map[string]any) {
+		if id, ok := node["browseId"].(string); ok && playlistID == "" && strings.HasPrefix(id, "MPLYt_") && len(id) > len("MPLYt_") {
+			playlistID = id
+		}
+	})
 	if playlistID == "" {
 		return nil, Healthy, nil
 	}
@@ -292,7 +294,40 @@ func ytmusicRenderHit(renderer map[string]any) ytmusicSearchHit {
 			hit.title = ytmusicFlexColumnText(columns[0])
 		}
 		if len(columns) > 1 {
-			hit.artists = ytmusicFlexColumnText(columns[1])
+			// Older renderer shapes used a single plain artist label. Current
+			// metadata combines artist, album and duration, so linked roles must
+			// determine identity instead of matching the concatenated column.
+			artistRuns := ytmusicFlexColumnRuns(columns[1])
+			if len(artistRuns) == 1 {
+				run, _ := artistRuns[0].(map[string]any)
+				if run["navigationEndpoint"] == nil {
+					plain := ytmusicFlexColumnText(columns[1])
+					if !strings.Contains(plain, " • ") {
+						hit.artists = plain
+					}
+				}
+			}
+			var artists []string
+			for _, column := range columns[1:] {
+				for _, raw := range ytmusicFlexColumnRuns(column) {
+					run, _ := raw.(map[string]any)
+					value, _ := run["text"].(string)
+					endpoint, _ := run["navigationEndpoint"].(map[string]any)
+					browse, _ := endpoint["browseEndpoint"].(map[string]any)
+					id, _ := browse["browseId"].(string)
+					if strings.HasPrefix(id, "UC") {
+						artists = append(artists, value)
+					}
+					if hit.durationMs == 0 && run["navigationEndpoint"] == nil {
+						if duration, err := parseYTMusicDuration(value); err == nil {
+							hit.durationMs = duration
+						}
+					}
+				}
+			}
+			if len(artists) > 0 {
+				hit.artists = strings.Join(artists, " & ")
+			}
 		}
 	}
 	if hit.title == "" {
@@ -334,26 +369,29 @@ func ytmusicFindString(node any, key string, depth int) string {
 	return ""
 }
 
-func ytmusicFlexColumnText(column any) string {
+func ytmusicFlexColumnRuns(column any) []any {
 	columnMap, ok := column.(map[string]any)
 	if !ok {
-		return ""
+		return nil
 	}
 	renderer, ok := columnMap["musicResponsiveListItemFlexColumnRenderer"].(map[string]any)
 	if !ok {
-		return ""
+		return nil
 	}
 	text, ok := renderer["text"].(map[string]any)
 	if !ok {
-		return ""
+		return nil
 	}
+	runs, _ := text["runs"].([]any)
+	return runs
+}
+
+func ytmusicFlexColumnText(column any) string {
 	var parts []string
-	if runs, ok := text["runs"].([]any); ok {
-		for _, run := range runs {
-			if runMap, ok := run.(map[string]any); ok {
-				if value, ok := runMap["text"].(string); ok {
-					parts = append(parts, value)
-				}
+	for _, run := range ytmusicFlexColumnRuns(column) {
+		if runMap, ok := run.(map[string]any); ok {
+			if value, ok := runMap["text"].(string); ok {
+				parts = append(parts, value)
 			}
 		}
 	}
@@ -373,29 +411,23 @@ func ytmusicFirstRunText(node map[string]any) string {
 	return text
 }
 
+var errYTMusicDuration = errors.New("invalid YouTube Music duration")
+
 func parseYTMusicDuration(rendered string) (int64, error) {
 	parts := strings.Split(rendered, ":")
 	if len(parts) != 2 && len(parts) != 3 {
-		return 0, fmt.Errorf("unsupported duration %q", rendered)
+		return 0, errYTMusicDuration
 	}
-	milliseconds := int64(0)
-	for _, part := range parts {
-		seconds, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil {
-			return 0, fmt.Errorf("decode duration %q: %w", rendered, err)
+	const maximumSeconds = uint64(math.MaxInt64 / 1000)
+	var seconds uint64
+	for i, part := range parts {
+		component, err := strconv.ParseUint(strings.TrimSpace(part), 10, 63)
+		if err != nil || component > maximumSeconds || i > 0 && component >= 60 || seconds > (maximumSeconds-component)/60 {
+			return 0, errYTMusicDuration
 		}
-		milliseconds = milliseconds*60 + int64(seconds)
+		seconds = seconds*60 + component
 	}
-	return milliseconds * 1000, nil
-}
-
-// firstStringMatch applies a compiled pattern to a body and returns the first
-// captured group, or "" when nothing matched.
-func firstStringMatch(body []byte, pattern *regexp.Regexp) string {
-	if match := pattern.FindSubmatch(body); match != nil {
-		return string(match[1])
-	}
-	return ""
+	return int64(seconds * 1000), nil
 }
 
 // ytmusicDescriptionLines extracts the plain lyric body from the browse shelf:

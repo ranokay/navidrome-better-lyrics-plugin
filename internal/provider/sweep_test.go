@@ -16,6 +16,40 @@ import (
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
+func TestSweepContinuationStopsAfterRepeatedBudgetExhaustion(t *testing.T) {
+	t.Parallel()
+	var queued [][]byte
+	now := time.Unix(1000, 0)
+	p := New(Deps{Store: newFakeLyricsCache(), Now: func() time.Time { return now }, EnqueueTask: func(_ string, payload []byte) error {
+		queued = append(queued, payload)
+		return nil
+	}})
+	p.sources = []source.Source{{ID: "stalled", Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+		return nil, source.TemporarilySkipped, source.ErrLookupBudgetExhausted
+	}}}
+	payload, err := json.Marshal(sweepTaskPayload{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued = append(queued, payload)
+	passes := 0
+	for len(queued) > 0 && passes < 8 {
+		next := queued[0]
+		queued = queued[1:]
+		if _, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, Payload: next}); err != nil {
+			t.Fatal(err)
+		}
+		passes++
+	}
+	if len(queued) != 0 || passes > 3 {
+		t.Fatalf("sweep made no progress but kept scheduling: passes=%d queued=%d", passes, len(queued))
+	}
+	now = now.Add(2 * time.Second)
+	if !p.maybeEnqueueSweep(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}) {
+		t.Fatal("a bounded exhausted chain must release its slot for a later lookup")
+	}
+}
+
 func sweepSource(id string, calls *int, withCandidate bool, err error) source.Source {
 	return source.Source{
 		ID:             id,
