@@ -18,6 +18,10 @@ var ErrLookupBudgetExhausted = errors.New("lyrics lookup time budget exhausted")
 // source-owned writes honor it.
 const MaxCacheEntryBytes = 1 * 1024 * 1024
 
+// MaxHTTPResponseBytes stays below the host's 10 MiB truncation threshold so
+// oversized responses are rejected before adapter decoding, not silently cut.
+const MaxHTTPResponseBytes = lyric.MaxDocumentBytes
+
 // Store is the plugin KV view a source may use for its own caching.
 type Store interface {
 	Get(key string) ([]byte, bool, error)

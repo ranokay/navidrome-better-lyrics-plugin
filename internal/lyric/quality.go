@@ -17,13 +17,18 @@ var enhancedWordPattern = regexp.MustCompile(`<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>`)
 
 // inspectTTMLTimingQuality grades actual timed lyric text without rewriting TTML.
 // Metadata can distinguish syllables from words only after timed spans qualify.
-func inspectTTMLTimingQuality(input string) (TimingQuality, bool) {
+func inspectTTMLTimingQuality(input string) (TimingQuality, bool, bool) {
+	if len(input) > MaxDocumentBytes {
+		return TimingUnsynced, false, false
+	}
 	decoder := xml.NewDecoder(strings.NewReader(input))
 	quality := TimingUnsynced
 	seenRoot := false
+	sawBody, anyText, bodyText := false, false, false
 	syllableTiming := false
 	type timingNode struct {
 		inLine   bool
+		inBody   bool
 		metadata bool
 		hasText  bool
 		quality  TimingQuality
@@ -36,9 +41,9 @@ func inspectTTMLTimingQuality(input string) (TimingQuality, bool) {
 				if quality == TimingWord && syllableTiming {
 					quality = TimingSyllable
 				}
-				return quality, seenRoot
+				return quality, bodyText || !sawBody && anyText, seenRoot
 			}
-			return TimingUnsynced, false
+			return TimingUnsynced, false, false
 		}
 		switch element := token.(type) {
 		case xml.EndElement:
@@ -48,10 +53,13 @@ func inspectTTMLTimingQuality(input string) (TimingQuality, bool) {
 				quality = node.quality
 			}
 		case xml.StartElement:
+			if len(nodes) >= maxXMLDepth {
+				return TimingUnsynced, false, false
+			}
 			node := timingNode{}
 			if len(nodes) == 0 {
 				if seenRoot || element.Name.Local != "tt" {
-					return TimingUnsynced, false
+					return TimingUnsynced, false, false
 				}
 				seenRoot = true
 				for _, attribute := range element.Attr {
@@ -61,12 +69,15 @@ func inspectTTMLTimingQuality(input string) (TimingQuality, bool) {
 				}
 			} else {
 				parent := nodes[len(nodes)-1]
-				node.inLine, node.metadata = parent.inLine, parent.metadata
+				node.inLine, node.inBody, node.metadata = parent.inLine, parent.inBody, parent.metadata
 			}
-			if element.Name.Local == "head" || element.Name.Local == "metadata" {
+			if strings.EqualFold(element.Name.Local, "head") || strings.EqualFold(element.Name.Local, "metadata") {
 				node.metadata = true
 			}
 			if !node.metadata {
+				if strings.EqualFold(element.Name.Local, "body") {
+					sawBody, node.inBody = true, true
+				}
 				if element.Name.Local == "p" {
 					node.inLine = true
 					if hasUsefulTTMLTiming(element) {
@@ -83,9 +94,13 @@ func inspectTTMLTimingQuality(input string) (TimingQuality, bool) {
 				continue
 			}
 			if len(nodes) == 0 {
-				return TimingUnsynced, false
+				return TimingUnsynced, false, false
 			}
 			if !nodes[len(nodes)-1].metadata {
+				anyText = true
+				if nodes[len(nodes)-1].inBody {
+					bodyText = true
+				}
 				for i := range nodes {
 					nodes[i].hasText = true
 				}

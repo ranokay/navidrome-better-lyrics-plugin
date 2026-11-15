@@ -11,6 +11,9 @@ import (
 // ParseLRCLibLyricsFile parses LRCLib's YAML v1 lyricsfile payload (lines with
 // optional word timings) into timed lines.
 func ParseLRCLibLyricsFile(data []byte) ([]TimedLine, error) {
+	if len(data) > MaxDocumentBytes {
+		return nil, errDocumentTooLarge
+	}
 	var doc struct {
 		Version string             `yaml:"version"`
 		Lines   []lrclibLyricsLine `yaml:"lines"`
@@ -20,6 +23,9 @@ func ParseLRCLibLyricsFile(data []byte) ([]TimedLine, error) {
 	}
 	var lines []TimedLine
 	for _, row := range doc.Lines {
+		if !validTimingWindow(row.StartMs, row.EndMs) {
+			return nil, fmt.Errorf("invalid lyricsfile line timing")
+		}
 		if row.StartMs == 0 && row.EndMs == 0 && strings.TrimSpace(row.Text) == "" {
 			continue
 		}
@@ -27,6 +33,9 @@ func ParseLRCLibLyricsFile(data []byte) ([]TimedLine, error) {
 		for _, word := range row.Words {
 			if word.StartMs == 0 && (word.Text == "" || word.EndMs == 0) {
 				continue
+			}
+			if !validTimingWindow(word.StartMs, word.EndMs) {
+				return nil, fmt.Errorf("invalid lyricsfile word timing")
 			}
 			line.Words = append(line.Words, TimedWord{StartMs: word.StartMs, EndMs: word.EndMs, Text: word.Text})
 		}

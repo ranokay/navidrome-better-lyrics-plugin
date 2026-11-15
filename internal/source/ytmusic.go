@@ -2,7 +2,9 @@ package source
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -371,20 +373,23 @@ func ytmusicFirstRunText(node map[string]any) string {
 	return text
 }
 
+var errYTMusicDuration = errors.New("invalid YouTube Music duration")
+
 func parseYTMusicDuration(rendered string) (int64, error) {
 	parts := strings.Split(rendered, ":")
 	if len(parts) != 2 && len(parts) != 3 {
-		return 0, fmt.Errorf("unsupported duration %q", rendered)
+		return 0, errYTMusicDuration
 	}
-	milliseconds := int64(0)
-	for _, part := range parts {
-		seconds, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil {
-			return 0, fmt.Errorf("decode duration %q: %w", rendered, err)
+	const maximumSeconds = uint64(math.MaxInt64 / 1000)
+	var seconds uint64
+	for i, part := range parts {
+		component, err := strconv.ParseUint(strings.TrimSpace(part), 10, 63)
+		if err != nil || component > maximumSeconds || i > 0 && component >= 60 || seconds > (maximumSeconds-component)/60 {
+			return 0, errYTMusicDuration
 		}
-		milliseconds = milliseconds*60 + int64(seconds)
+		seconds = seconds*60 + component
 	}
-	return milliseconds * 1000, nil
+	return int64(seconds * 1000), nil
 }
 
 // ytmusicDescriptionLines extracts the plain lyric body from the browse shelf:

@@ -1,7 +1,6 @@
 package lyric
 
 import (
-	"encoding/xml"
 	"regexp"
 	"strings"
 )
@@ -11,49 +10,12 @@ var lrcMetadataPattern = regexp.MustCompile(`(?im)^[\t ]*(?:\[(?:ar|al|ti|au|len
 // hasLyricContent reports whether a payload carries servable lyric text:
 // tags and timing stamps alone do not count.
 func hasLyricContent(value, format string) bool {
+	if len(value) > MaxDocumentBytes {
+		return false
+	}
 	if format == "ttml" {
-		// Bodyless lyric fragments remain supported, but head/metadata text
-		// never counts as lyrics, regardless of whether a body is present.
-		decoder := xml.NewDecoder(strings.NewReader(value))
-		anyText, bodyText, sawBody := false, false, false
-		bodyDepth, metadataDepth := 0, 0
-		for {
-			token, err := decoder.Token()
-			if err != nil {
-				break
-			}
-			switch typed := token.(type) {
-			case xml.StartElement:
-				if metadataDepth > 0 || strings.EqualFold(typed.Name.Local, "head") || strings.EqualFold(typed.Name.Local, "metadata") {
-					metadataDepth++
-					continue
-				}
-				if strings.EqualFold(typed.Name.Local, "body") {
-					sawBody = true
-					bodyDepth++
-				}
-			case xml.EndElement:
-				if metadataDepth > 0 {
-					metadataDepth--
-					continue
-				}
-				if strings.EqualFold(typed.Name.Local, "body") {
-					bodyDepth--
-				}
-			case xml.CharData:
-				if metadataDepth > 0 || strings.TrimSpace(string(typed)) == "" {
-					continue
-				}
-				anyText = true
-				if bodyDepth > 0 {
-					bodyText = true
-				}
-			}
-		}
-		if sawBody {
-			return bodyText
-		}
-		return anyText
+		_, content, valid := inspectTTMLTimingQuality(value)
+		return valid && content
 	}
 	if format == "lrc" || format == "elrc" {
 		value = lrcMetadataPattern.ReplaceAllString(value, "")
@@ -68,17 +30,12 @@ func hasLyricContent(value, format string) bool {
 // misses, whereas malformed XML degrades. TTML well-formedness is checked
 // structurally; other formats treat parsed-but-contentless as empty.
 func EmptyDocument(value, format string) bool {
-	if hasLyricContent(value, format) {
+	if len(value) > MaxDocumentBytes {
 		return false
 	}
 	if format == "ttml" {
-		return xml.Unmarshal([]byte(value), new(xmlNode)) == nil
+		_, content, valid := inspectTTMLTimingQuality(value)
+		return valid && !content
 	}
-	return true
-}
-
-// xmlNode is a permissive document root for the well-formedness check.
-type xmlNode struct {
-	XMLName  xml.Name
-	Children []xmlNode `xml:",any"`
+	return !hasLyricContent(value, format)
 }

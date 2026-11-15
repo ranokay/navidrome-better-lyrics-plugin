@@ -3,6 +3,8 @@ package lyric
 import (
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -46,20 +48,38 @@ const (
 // Metadata and translation rows are skipped; lines without word tuples keep their
 // whole text as a wordless line.
 func ParseKFamily(mode WordSyncMode, input string) ([]TimedLine, error) {
+	if len(input) > MaxDocumentBytes {
+		return nil, errDocumentTooLarge
+	}
 	var lines []TimedLine
-	offset := kFamilyGlobalOffset(input)
+	offset, err := kFamilyGlobalOffset(input)
+	if err != nil {
+		return nil, err
+	}
 	for raw := range strings.SplitSeq(input, "\n") {
-		lineStart, lineDur, body, ok := parseBracketLine(strings.TrimRight(raw, "\r"))
+		lineStart, lineDur, body, ok, err := parseBracketLine(strings.TrimRight(raw, "\r"))
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
-		words, lineText := collectWords(body, mode, lineStart)
+		lineEnd, err := addMillis(lineStart, lineDur)
+		if err != nil {
+			return nil, err
+		}
+		words, lineText, err := collectWords(body, mode, lineStart)
+		if err != nil {
+			return nil, err
+		}
 		if len(words) == 0 && lineText == "" {
 			continue
 		}
-		lines = append(lines, TimedLine{StartMs: lineStart, EndMs: lineStart + lineDur, Text: lineText, Words: words})
+		lines = append(lines, TimedLine{StartMs: lineStart, EndMs: lineEnd, Text: lineText, Words: words})
 	}
-	shiftTimedLines(lines, offset)
+	if err := shiftTimedLines(lines, offset); err != nil {
+		return nil, err
+	}
 	if len(lines) == 0 {
 		return nil, errEmptyWordSyncInput
 	}
@@ -69,7 +89,7 @@ func ParseKFamily(mode WordSyncMode, input string) ([]TimedLine, error) {
 // kFamilyGlobalOffset scans metadata rows for the last `[offset:±ms]` tag: KRC,
 // QRC, and YRC payloads use it to resynchronise every timing window, and the
 // bracket parser would otherwise discard it silently.
-func kFamilyGlobalOffset(input string) int64 {
+func kFamilyGlobalOffset(input string) (int64, error) {
 	var offset int64
 	for raw := range strings.SplitSeq(input, "\n") {
 		row := strings.TrimSpace(strings.TrimRight(raw, "\r"))
@@ -77,71 +97,118 @@ func kFamilyGlobalOffset(input string) int64 {
 			continue
 		}
 		value := strings.TrimSpace(row[len("[offset:") : len(row)-1])
-		negative := strings.HasPrefix(value, "-")
-		value = strings.TrimLeft(value, "+-")
-		ms, err := parseMillis(value)
+		ms, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			continue
-		}
-		if negative {
-			ms = -ms
+			return 0, errors.New("invalid lyric timing offset")
 		}
 		offset = ms
 	}
-	return offset
+	return offset, nil
 }
 
 // shiftTimedLines applies a global offset to every line and word window,
 // clamping negative stamps to zero the way enhanced-LRC stamps require.
-func shiftTimedLines(lines []TimedLine, offset int64) {
+func shiftTimedLines(lines []TimedLine, offset int64) error {
 	if offset == 0 {
-		return
+		return nil
+	}
+	shift := func(ms int64) (int64, error) {
+		if offset > 0 && ms > math.MaxInt64-offset {
+			return 0, errTimestampRange
+		}
+		// Input timestamps are nonnegative, so adding a negative signed offset
+		// cannot underflow. Preserve the existing zero-clamping behavior.
+		return max(int64(0), ms+offset), nil
 	}
 	for i := range lines {
-		lines[i].StartMs = max(int64(0), lines[i].StartMs+offset)
-		lines[i].EndMs = max(lines[i].StartMs, lines[i].EndMs+offset)
+		var err error
+		lines[i].StartMs, err = shift(lines[i].StartMs)
+		if err != nil {
+			return err
+		}
+		lines[i].EndMs, err = shift(lines[i].EndMs)
+		if err != nil {
+			return err
+		}
 		for j := range lines[i].Words {
-			lines[i].Words[j].StartMs = max(int64(0), lines[i].Words[j].StartMs+offset)
-			lines[i].Words[j].EndMs = max(lines[i].Words[j].StartMs, lines[i].Words[j].EndMs+offset)
+			lines[i].Words[j].StartMs, err = shift(lines[i].Words[j].StartMs)
+			if err != nil {
+				return err
+			}
+			lines[i].Words[j].EndMs, err = shift(lines[i].Words[j].EndMs)
+			if err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 // parseBracketLine splits `[start,dur]` headers from row bodies. Rows without two
 // numeric header fields (metadata `[ti:]`, translations, blanks) are not lyric rows.
-func parseBracketLine(row string) (startMs, duration int64, body string, ok bool) {
+func parseBracketLine(row string) (startMs, duration int64, body string, ok bool, err error) {
 	if !strings.HasPrefix(row, "[") {
-		return 0, 0, "", false
+		return 0, 0, "", false, nil
 	}
 	sep := strings.IndexByte(row, ']')
 	if sep < 0 {
-		return 0, 0, "", false
+		return 0, 0, "", false, nil
 	}
 	header := row[1:sep]
 	fields := strings.Split(header, ",")
-	if len(fields) != 2 {
-		return 0, 0, "", false
+	if len(fields) != 2 || !numericTimestampField(fields[0]) || !numericTimestampField(fields[1]) {
+		return 0, 0, "", false, nil
 	}
 	start, errStart := parseMillis(fields[0])
 	durationMs, errDuration := parseMillis(fields[1])
 	if errStart != nil || errDuration != nil {
-		return 0, 0, "", false
+		return 0, 0, "", false, errors.New("invalid line timing")
 	}
-	return start, durationMs, row[sep+1:], true
+	return start, durationMs, row[sep+1:], true, nil
 }
 
 func parseMillis(value string) (int64, error) {
-	if value == "" {
-		return 0, errors.New("empty timestamp field")
+	if !timestampDigits(value) {
+		return 0, errors.New("timestamp is not an unsigned integer")
 	}
-	var ms int64
-	for _, digit := range value {
-		if digit < '0' || digit > '9' {
-			return 0, fmt.Errorf("timestamp %q is not numeric", value)
-		}
-		ms = ms*10 + int64(digit-'0')
+	ms, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, errTimestampRange
 	}
 	return ms, nil
+}
+
+func timestampDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func numericTimestampField(value string) bool {
+	if len(value) > 0 && (value[0] == '+' || value[0] == '-') {
+		value = value[1:]
+	}
+	return timestampDigits(value)
+}
+
+var errTimestampRange = errors.New("lyric timestamp exceeds supported range")
+
+func addMillis(start, duration int64) (int64, error) {
+	if start < 0 || duration < 0 || start > math.MaxInt64-duration {
+		return 0, errTimestampRange
+	}
+	return start + duration, nil
+}
+
+func validTimingWindow(start, end int64) bool {
+	// A missing end remains supported for formats that only carry a start.
+	return start >= 0 && end >= 0 && (end == 0 || end >= start)
 }
 
 // wordTuple is one scanned `off,dur` pair.
@@ -163,7 +230,7 @@ func tupleDelimiters(mode WordSyncMode) (open, closeCh byte, relative, textAfter
 }
 
 // collectWords scans one line body into timed words using the mode's dialect.
-func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWord, string) {
+func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWord, string, error) {
 	open, closeCh, relative, textAfter := tupleDelimiters(mode)
 
 	var (
@@ -190,8 +257,13 @@ func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWor
 		spanEnd := i + relEnd + 1
 		fields := strings.Split(body[i+1:i+relEnd], ",")
 		if len(fields) >= 2 {
-			offset, errOffset := parseMillis(strings.TrimSpace(fields[0]))
-			duration, errDuration := parseMillis(strings.TrimSpace(fields[1]))
+			startField, durationField := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1])
+			offset, errOffset := parseMillis(startField)
+			duration, errDuration := parseMillis(durationField)
+			if numericTimestampField(startField) && numericTimestampField(durationField) &&
+				(errOffset != nil || errDuration != nil) {
+				return nil, "", errors.New("invalid word timing tuple")
+			}
 			// A zero duration is a legal tuple: NetEase's YRC marks
 			// punctuation that way, and treating it as plain text leaks the
 			// raw tuple into the rendered lyric.
@@ -209,7 +281,7 @@ func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWor
 
 	if len(tuples) == 0 {
 		text := strings.TrimSpace(body)
-		return nil, text
+		return nil, text, nil
 	}
 
 	words := make([]TimedWord, 0, len(tuples))
@@ -224,12 +296,19 @@ func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWor
 	}
 	for k, tuple := range tuples {
 		start := tuple.offset
+		var err error
 		if relative {
-			start = lineStartMs + tuple.offset
+			start, err = addMillis(lineStartMs, tuple.offset)
+			if err != nil {
+				return nil, "", err
+			}
 		} else if start < lineStartMs {
 			start = lineStartMs
 		}
-		end := start + tuple.duration
+		end, err := addMillis(start, tuple.duration)
+		if err != nil {
+			return nil, "", err
+		}
 
 		if textAfter {
 			addWord(start, end, chunks[k+1])
@@ -242,9 +321,9 @@ func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWor
 		addWord(start, end, text)
 	}
 	if len(words) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
-	return words, ""
+	return words, "", nil
 }
 
 // EnhancedLRC renders parsed lines as enhanced LRC compatible with

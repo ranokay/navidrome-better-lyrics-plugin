@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"time"
@@ -19,6 +20,9 @@ const lunaBeatBase = "https://2755337087.github.io/ttml-hub"
 const (
 	lunaBeatIndexKey = "lunabeat:index:v1"
 	lunaBeatIndexTTL = int64(24 * time.Hour / time.Second)
+	// Older compressed entries may represent indexes larger than one HTTP
+	// response. This separate cap bounds expansion while retaining headroom.
+	lunaBeatExpandedIndexBytes = 16 * 1024 * 1024
 )
 
 // fetchLunaBeat resolves Apple-style TTML from the LunaBeat
@@ -224,14 +228,20 @@ func gzipString(value []byte) []byte {
 }
 
 func gunzipString(raw []byte) ([]byte, error) {
+	if len(raw) > MaxCacheEntryBytes {
+		return nil, errors.New("compressed LunaBeat index exceeds cache entry cap")
+	}
 	reader, err := gzip.NewReader(bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = reader.Close() }()
-	var buffer bytes.Buffer
-	if _, err := buffer.ReadFrom(reader); err != nil {
+	value, err := io.ReadAll(io.LimitReader(reader, lunaBeatExpandedIndexBytes+1))
+	if err != nil {
 		return nil, fmt.Errorf("gunzip luna-beat index: %w", err)
 	}
-	return buffer.Bytes(), nil
+	if len(value) > lunaBeatExpandedIndexBytes {
+		return nil, errors.New("expanded LunaBeat index exceeds size limit")
+	}
+	return value, nil
 }
