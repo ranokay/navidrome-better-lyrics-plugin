@@ -53,7 +53,7 @@ func ParseKFamily(mode WordSyncMode, input string) ([]TimedLine, error) {
 		if !ok {
 			continue
 		}
-		words, lineText := collectWords(body, mode, lineStart, lineStart+lineDur)
+		words, lineText := collectWords(body, mode, lineStart)
 		if len(words) == 0 && lineText == "" {
 			continue
 		}
@@ -163,7 +163,7 @@ func tupleDelimiters(mode WordSyncMode) (open, closeCh byte, relative, textAfter
 }
 
 // collectWords scans one line body into timed words using the mode's dialect.
-func collectWords(body string, mode WordSyncMode, lineStartMs, lineEndMs int64) ([]TimedWord, string) {
+func collectWords(body string, mode WordSyncMode, lineStartMs int64) ([]TimedWord, string) {
 	open, closeCh, relative, textAfter := tupleDelimiters(mode)
 
 	var (

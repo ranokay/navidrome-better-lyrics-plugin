@@ -28,7 +28,7 @@ const (
 	credentialSaltKey             = "credential-salt:v1"
 	lyricsWinnerCacheKeyPrefix    = "lyrics:v4:winner:"
 	lyricsSourceCacheKeyPrefix    = "lyrics:v4:source:"
-	lyricsCacheGeneration         = 1
+	lyricsCacheGeneration         = 2
 )
 
 type lyricsCacheUsageStore interface {

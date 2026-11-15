@@ -2,20 +2,21 @@ package lyric
 
 import (
 	"encoding/xml"
+	"regexp"
 	"strings"
 )
+
+var lrcMetadataPattern = regexp.MustCompile(`(?im)^[\t ]*(?:\[(?:ar|al|ti|au|length|by|offset|re|ve|tool):[^\]\r\n]*\][\t ]*)+\r?$`)
 
 // hasLyricContent reports whether a payload carries servable lyric text:
 // tags and timing stamps alone do not count.
 func hasLyricContent(value, format string) bool {
 	if format == "ttml" {
-		// Only text inside lyric-bearing nodes counts: metadata/head text in
-		// an otherwise empty body must not pass. Documents
-		// without a <body> fall back to any character data so bare lyric
-		// roots keep working.
+		// Bodyless lyric fragments remain supported, but head/metadata text
+		// never counts as lyrics, regardless of whether a body is present.
 		decoder := xml.NewDecoder(strings.NewReader(value))
 		anyText, bodyText, sawBody := false, false, false
-		inBody := false
+		bodyDepth, metadataDepth := 0, 0
 		for {
 			token, err := decoder.Token()
 			if err != nil {
@@ -23,19 +24,28 @@ func hasLyricContent(value, format string) bool {
 			}
 			switch typed := token.(type) {
 			case xml.StartElement:
+				if metadataDepth > 0 || strings.EqualFold(typed.Name.Local, "head") || strings.EqualFold(typed.Name.Local, "metadata") {
+					metadataDepth++
+					continue
+				}
 				if strings.EqualFold(typed.Name.Local, "body") {
-					sawBody, inBody = true, true
+					sawBody = true
+					bodyDepth++
 				}
 			case xml.EndElement:
+				if metadataDepth > 0 {
+					metadataDepth--
+					continue
+				}
 				if strings.EqualFold(typed.Name.Local, "body") {
-					inBody = false
+					bodyDepth--
 				}
 			case xml.CharData:
-				if strings.TrimSpace(string(typed)) == "" {
+				if metadataDepth > 0 || strings.TrimSpace(string(typed)) == "" {
 					continue
 				}
 				anyText = true
-				if inBody {
+				if bodyDepth > 0 {
 					bodyText = true
 				}
 			}
@@ -45,9 +55,12 @@ func hasLyricContent(value, format string) bool {
 		}
 		return anyText
 	}
-	text := lrcTimestampPattern.ReplaceAllString(value, " ")
-	text = enhancedWordPattern.ReplaceAllString(text, " ")
-	return strings.TrimSpace(text) != ""
+	if format == "lrc" || format == "elrc" {
+		value = lrcMetadataPattern.ReplaceAllString(value, "")
+		value = lrcTimestampPattern.ReplaceAllString(value, " ")
+		value = enhancedWordPattern.ReplaceAllString(value, " ")
+	}
+	return strings.TrimSpace(value) != ""
 }
 
 // EmptyDocument reports a payload with no lyric content that is still

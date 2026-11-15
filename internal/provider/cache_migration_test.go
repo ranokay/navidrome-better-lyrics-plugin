@@ -11,6 +11,44 @@ import (
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
+func TestCachedMetadataOnlyPayloadDoesNotBlockFallback(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ format, text string }{
+		{"lrc", "[ar:Artist]\n[ti:Song]\n[00:01.00]"},
+		{"ttml", "<tt><head><metadata>Song</metadata></head></tt>"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			now := time.Unix(100_000, 0)
+			cache := newFakeLyricsCache()
+			order := []source.Source{stubFetchedCandidate("one", "one", "plain", "real lyrics")}
+			p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, order, nil)
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			raw, err := json.Marshal(cachedLyricsEnvelope{
+				Generation: 1, Quality: lyric.TimingLine,
+				Response: lyrics.GetLyricsResponse{
+					Lyrics: []lyrics.LyricsText{{Text: tc.text}},
+					Source: &lyrics.LyricsSource{Provider: "one", Format: tc.format},
+				},
+				ExpiresAt: now.Add(time.Hour).Unix(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, _ := lyricsCacheKeyForSource(track, "one")
+			if err := cache.SetWithTTL(key, raw, 3600); err != nil {
+				t.Fatal(err)
+			}
+			result, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text, _ := winnerText(t, result); text != "real lyrics" {
+				t.Fatalf("cached metadata blocked fallback: %q", text)
+			}
+		})
+	}
+}
+
 func TestLegacySourceMissDoesNotExtendOldHourlyCoverage(t *testing.T) {
 	now := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 	var calls []string

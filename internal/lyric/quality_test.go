@@ -42,8 +42,8 @@ func TestTTMLTimingQuality(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if got := ttmlTimingQuality(test.ttml); got != test.want {
-				t.Fatalf("ttmlTimingQuality() = %v, want %v", got, test.want)
+			if got := NewCandidate(lyrics.LyricsText{Text: test.ttml}, "stub", "ttml").Quality; got != test.want {
+				t.Fatalf("candidate quality = %v, want %v", got, test.want)
 			}
 		})
 	}

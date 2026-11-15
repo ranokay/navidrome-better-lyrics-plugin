@@ -1,6 +1,7 @@
 package source
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,39 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
+
+func TestYTMusicWatchAcceptsEquivalentJSON(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"contents":{"browseId":"MPLYt_abc"}}`,
+		`{ "contents": { "browseId": "MPLYt_abc" } }`,
+		`{"contents":{"browseId":"MPLYt_\u0061bc"},"before":{"browseId":"unrelated"}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				switch {
+				case strings.Contains(request.URL, "v1/search"):
+					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"}]}}}],"lengthText":{"runs":[{"text":"3:58"}]},"playlistItemData":{"videoId":"video"}}}`)}, nil
+				case strings.Contains(request.URL, "v1/next"):
+					return &host.HTTPResponse{StatusCode: 200, Body: []byte(body)}, nil
+				default:
+					var browse struct {
+						BrowseID string `json:"browseId"`
+					}
+					if err := json.Unmarshal(request.Body, &browse); err != nil || browse.BrowseID != "MPLYt_abc" {
+						t.Fatalf("browse = %#v, error = %v", browse, err)
+					}
+					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"musicDescriptionShelfRenderer":{"description":{"runs":[{"text":"real lyric"}]}}}`)}, nil
+				}
+			})
+			candidates, health, err := fetchYTMusic(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 238}, time.Now().Add(testLookupBudget))
+			if err != nil || health != Healthy || len(candidates) != 1 {
+				t.Fatalf("result = %#v/%v/%v", candidates, health, err)
+			}
+		})
+	}
+}
 
 func TestYTMusicChain_ResolvesLyricsTab(t *testing.T) {
 	t.Parallel()

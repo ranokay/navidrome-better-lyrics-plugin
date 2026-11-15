@@ -1,6 +1,7 @@
 package source
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,46 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 )
+
+func TestLyricallyDistinguishesMalformedTTMLFromEmpty(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, ttml, plain, elrc string
+		wantHealth              Health
+		wantText                string
+	}{
+		{"malformed", "<tt><broken", "", "", Degraded, ""},
+		{"empty", "<tt></tt>", "", "", Healthy, ""},
+		{"metadata only", "<tt><head><metadata>Song</metadata></head></tt>", "", "", Healthy, ""},
+		{"plain fallback", "<tt><broken", "real lyric", "", Healthy, "real lyric"},
+		{"ELRC fallback", "<tt><broken", "", "[00:01.00]<00:01.00>real lyric", Healthy, "[00:01.00]<00:01.00>real lyric"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			body, err := json.Marshal(map[string]string{"ttmlContent": test.ttml, "plain": test.plain, "elrc": test.elrc})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				if strings.Contains(request.URL, "itunes.apple.com") {
+					return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"results":[{"trackId":9,"trackName":"Song","artistName":"Artist","trackTimeMillis":200000}]}`)}, nil
+				}
+				return &host.HTTPResponse{StatusCode: 200, Body: body}, nil
+			})
+			candidates, health, err := fetchLyrically(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
+			if health != test.wantHealth || (err != nil) != (test.wantHealth == Degraded) {
+				t.Fatalf("health/error = %v/%v", health, err)
+			}
+			if test.wantText == "" {
+				if len(candidates) != 0 {
+					t.Fatalf("candidates = %#v", candidates)
+				}
+			} else if len(candidates) != 1 || candidates[0].Response.Lyrics[0].Text != test.wantText {
+				t.Fatalf("candidates = %#v", candidates)
+			}
+		})
+	}
+}
 
 func TestLyricallyCandidates_ITunesSearchThenMirror(t *testing.T) {
 	t.Parallel()

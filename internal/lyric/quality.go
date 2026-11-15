@@ -15,16 +15,8 @@ var lrcTimestampPattern = regexp.MustCompile(`(?m)^\s*(?:\[[0-9]{1,3}:[0-9]{2}(?
 // Karaoke effects and converted word-synced sources).
 var enhancedWordPattern = regexp.MustCompile(`<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>`)
 
-// ttmlTimingQuality grades actual timed lyric text without rewriting the TTML.
+// inspectTTMLTimingQuality grades actual timed lyric text without rewriting TTML.
 // Metadata can distinguish syllables from words only after timed spans qualify.
-func ttmlTimingQuality(input string) TimingQuality {
-	quality, valid := inspectTTMLTimingQuality(input)
-	if !valid {
-		return TimingUnsynced
-	}
-	return quality
-}
-
 func inspectTTMLTimingQuality(input string) (TimingQuality, bool) {
 	decoder := xml.NewDecoder(strings.NewReader(input))
 	quality := TimingUnsynced

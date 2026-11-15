@@ -3,7 +3,6 @@ package source
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,12 +24,6 @@ const (
 	ytmusicProviderName   = "YouTube Music"
 	ytmusicClientName     = "WEB_REMIX"
 	ytmusicClientVersion  = "1.20261001.01.00"
-)
-
-var (
-	// The watch-next response carries the song's playlist id; browsing it
-	// yields the lyrics description shelf.
-	ytmusicBrowseIDPattern = regexp.MustCompile(`"browseId":"(MPLYt_[A-Za-z0-9_-]+)"`)
 )
 
 // fetchYTMusic resolves the plain, edited lyric text of the
@@ -96,7 +89,12 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 		// a lyrics browse id is a cacheable miss.
 		return nil, Degraded, fmt.Errorf("decode YouTube Music watch response: %w", err)
 	}
-	playlistID := firstStringMatch(response.Body, ytmusicBrowseIDPattern)
+	playlistID := ""
+	ytmusicWalk(watchTree, func(node map[string]any) {
+		if id, ok := node["browseId"].(string); ok && playlistID == "" && strings.HasPrefix(id, "MPLYt_") && len(id) > len("MPLYt_") {
+			playlistID = id
+		}
+	})
 	if playlistID == "" {
 		return nil, Healthy, nil
 	}
@@ -387,15 +385,6 @@ func parseYTMusicDuration(rendered string) (int64, error) {
 		milliseconds = milliseconds*60 + int64(seconds)
 	}
 	return milliseconds * 1000, nil
-}
-
-// firstStringMatch applies a compiled pattern to a body and returns the first
-// captured group, or "" when nothing matched.
-func firstStringMatch(body []byte, pattern *regexp.Regexp) string {
-	if match := pattern.FindSubmatch(body); match != nil {
-		return string(match[1])
-	}
-	return ""
 }
 
 // ytmusicDescriptionLines extracts the plain lyric body from the browse shelf:

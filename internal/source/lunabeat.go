@@ -40,7 +40,7 @@ func fetchLunaBeat(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 		return nil, Degraded, err
 	}
 
-	wantedTitle := normalizeLunaBeatTitle(title, "")
+	wantedTitle := normalizeLunaBeatTitle(title)
 	var entry lunaBeatSong
 	found := false
 	bestAlbum := false
@@ -165,7 +165,7 @@ type lunaBeatSong struct {
 // multi-artist tracks split on common separators so every member can
 // alias-match a hub row.
 func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, trackArtist string) bool {
-	if normalizeLunaBeatTitle(candidate.Title, "") != wantedTitle {
+	if normalizeLunaBeatTitle(candidate.Title) != wantedTitle {
 		return false
 	}
 	if len(candidate.Artists) == 0 {
@@ -211,10 +211,9 @@ func lunaBeatArtistNames(trackArtist string) []string {
 	return names
 }
 
-// normalizeLunaBeatTitle folds NFKC-ish differences down: lowercase, strip all
-// whitespace and punctuation. Good enough to match the hub's index rows.
-func normalizeLunaBeatTitle(title, artist string) string {
-	return strings.ToLower(lyric.OnlyLettersAndDigits(title)) + "|" + strings.ToLower(lyric.OnlyLettersAndDigits(artist))
+// normalizeLunaBeatTitle lowercases and removes whitespace and punctuation.
+func normalizeLunaBeatTitle(title string) string {
+	return strings.ToLower(lyric.OnlyLettersAndDigits(title))
 }
 
 func gzipString(value []byte) []byte {
