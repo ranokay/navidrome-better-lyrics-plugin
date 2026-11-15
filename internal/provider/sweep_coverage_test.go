@@ -702,8 +702,8 @@ func TestSweepMarkerBoundedByRemainingLifetime(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a source cache key")
 	}
-	expiringSoon := `{"generation":1,"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":` +
-		fmt.Sprintf("%d", time.Now().Unix()+60) + `}`
+	expiringSoon := fmt.Sprintf(`{"generation":%d,"quality":1,"response":{"lyrics":[{"text":"[00:01.00]line"}]},"expiresAt":%d}`,
+		lyricsCacheGeneration, time.Now().Unix()+60)
 	if err := cache.SetWithTTL(key, []byte(expiringSoon), 60); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
