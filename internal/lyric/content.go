@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-var lrcMetadataPattern = regexp.MustCompile(`(?im)^[\t ]*(?:\[(?:ar|al|ti|au|length|by|offset|re|ve|tool):[^\]\r\n]*\][\t ]*)+\r?$`)
+var lrcMetadataPattern = regexp.MustCompile(`(?i)\[(?:ar|al|ti|au|length|by|offset|re|ve|tool):[^\]\r\n]*\]`)
 
 // hasLyricContent reports whether a payload carries servable lyric text:
 // tags and timing stamps alone do not count.

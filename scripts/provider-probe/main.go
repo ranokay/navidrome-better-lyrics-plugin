@@ -126,7 +126,7 @@ func main() {
 				if err != nil {
 					return nil, err
 				}
-				wire := reply{Host: req.URL.Hostname(), Path: req.URL.Path, Status: int32(response.StatusCode), Bytes: len(body)}
+				wire := reply{Host: response.Request.URL.Hostname(), Path: response.Request.URL.Path, Status: int32(response.StatusCode), Bytes: len(body)}
 				var shape map[string]json.RawMessage
 				if json.Unmarshal(body, &shape) == nil {
 					// Emit only recognized contract field names, never arbitrary

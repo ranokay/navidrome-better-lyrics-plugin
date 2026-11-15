@@ -33,6 +33,10 @@ run = "go vet ./..."
 description = "Verify downloaded module contents"
 run = "go mod verify"
 
+[tasks.qualification-runner-check]
+description = "Check qualification runner input validation and cleanup"
+run = "python3 -B -m unittest discover -s scripts/host-qualification -p '*_test.py'"
+
 [tasks.build]
 description = "Build the Navidrome WebAssembly plugin"
 # TinyGo 0.40.1 panics in the PDK's JSON decoder before the provider is called.
@@ -64,5 +68,6 @@ mise run workflow-check
 mise run vet
 mise run mod-check
 mise run test
+mise run qualification-runner-check
 mise run package-check
 '''

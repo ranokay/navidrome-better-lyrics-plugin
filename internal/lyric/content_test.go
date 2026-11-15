@@ -6,6 +6,27 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
 
+func TestTimestampedMetadataCannotBecomeLyrics(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{
+		"[00:01.00][ar:Artist]",
+		"[ar:Artist][00:01.00]",
+		"[00:01.00]<00:01.00>[ti:Song]",
+	} {
+		if candidate := NewCandidate(lyrics.LyricsText{Text: text}, "fixture", "elrc"); candidate.Present() {
+			t.Errorf("metadata-only candidate=%q", text)
+		}
+		if candidate := NewCandidate(lyrics.LyricsText{Text: text}, "fixture", "plain"); !candidate.Present() {
+			t.Errorf("literal plain text was discarded: %q", text)
+		}
+		withLyrics := text + "\n[00:02.00]real lyrics"
+		candidate := NewCandidate(lyrics.LyricsText{Text: withLyrics}, "fixture", "lrc")
+		if !candidate.Present() || candidate.Response.Lyrics[0].Text != withLyrics {
+			t.Error("valid lyrics must remain byte-for-byte intact")
+		}
+	}
+}
+
 func TestEmptyTTMLDocumentIsNotACandidate(t *testing.T) {
 	t.Parallel()
 
