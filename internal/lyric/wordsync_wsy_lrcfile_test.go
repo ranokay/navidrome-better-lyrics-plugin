@@ -133,6 +133,17 @@ func TestParseLRCLibLyricsFile(t *testing.T) {
 	}
 }
 
+func TestLRCLibLyricsFileRequiresOneYAMLDocument(t *testing.T) {
+	t.Parallel()
+	const valid = "version: '1.0'\nlines:\n- start_ms: 1000\n  end_ms: 2000\n  text: lyric\n"
+	if _, err := ParseLRCLibLyricsFile([]byte(valid + "---\nlines: []\n")); err == nil {
+		t.Fatal("a second YAML document must not be silently ignored")
+	}
+	if _, err := ParseLRCLibLyricsFile([]byte(valid + "extra_provider_field: tolerated\n")); err != nil {
+		t.Fatalf("future provider fields must remain compatible: %v", err)
+	}
+}
+
 func TestParseLRCLibLyricsFile_FixtureSmoke(t *testing.T) {
 	t.Parallel()
 

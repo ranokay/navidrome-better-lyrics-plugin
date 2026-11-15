@@ -48,7 +48,7 @@ const (
 func ParseKFamily(mode WordSyncMode, input string) ([]TimedLine, error) {
 	var lines []TimedLine
 	offset := kFamilyGlobalOffset(input)
-	for _, raw := range strings.Split(input, "\n") {
+	for raw := range strings.SplitSeq(input, "\n") {
 		lineStart, lineDur, body, ok := parseBracketLine(strings.TrimRight(raw, "\r"))
 		if !ok {
 			continue
@@ -71,7 +71,7 @@ func ParseKFamily(mode WordSyncMode, input string) ([]TimedLine, error) {
 // bracket parser would otherwise discard it silently.
 func kFamilyGlobalOffset(input string) int64 {
 	var offset int64
-	for _, raw := range strings.Split(input, "\n") {
+	for raw := range strings.SplitSeq(input, "\n") {
 		row := strings.TrimSpace(strings.TrimRight(raw, "\r"))
 		if !strings.HasPrefix(row, "[offset:") || !strings.HasSuffix(row, "]") {
 			continue

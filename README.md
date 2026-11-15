@@ -236,7 +236,15 @@ mise run test
 mise run check
 ```
 
-`mise run check` verifies formatting, runs the race-enabled Go tests, builds the WebAssembly module with the standard Go WASI toolchain, packages `dist/nd-better-lyrics.ndp`, and checks the archive.
+`mise run check` verifies formatting, workflows, Go vet results and module integrity,
+runs the race-enabled Go tests, builds the WebAssembly module with the standard Go
+WASI toolchain, packages `dist/nd-better-lyrics.ndp`, and checks the archive.
+The tests validate the manifest and default configuration against the versioned
+host schema in `plugin/testdata`, without network access.
+
+LRCLib lyricsfile parsing uses YAML v4 and requires exactly one YAML document.
+Unknown provider fields remain supported. Go toolchain and dependency updates
+must preserve the standard WASI build and the optional provenance contract.
 
 ### Project layout
 

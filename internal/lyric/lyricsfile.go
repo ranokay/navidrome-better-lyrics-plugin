@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // ParseLRCLibLyricsFile parses LRCLib's YAML v1 lyricsfile payload (lines with
@@ -15,7 +15,7 @@ func ParseLRCLibLyricsFile(data []byte) ([]TimedLine, error) {
 		Version string             `yaml:"version"`
 		Lines   []lrclibLyricsLine `yaml:"lines"`
 	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := yaml.Load(data, &doc); err != nil {
 		return nil, fmt.Errorf("decode lyricsfile: %w", err)
 	}
 	var lines []TimedLine

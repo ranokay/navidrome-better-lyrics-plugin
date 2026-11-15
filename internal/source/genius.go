@@ -174,7 +174,7 @@ func geniusLyricsText(page []byte, title string) string {
 	if title != "" {
 		header := title + " Lyrics"
 		kept := []string{}
-		for _, line := range strings.Split(body, "\n") {
+		for line := range strings.SplitSeq(body, "\n") {
 			if strings.TrimSpace(line) == header {
 				continue
 			}
@@ -239,7 +239,7 @@ func geniusFragmentLines(fragment string) []string {
 	text = geniusTagPattern.ReplaceAllString(text, "")
 	text = html.UnescapeString(text)
 	lines := []string{}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)
 		line = strings.ReplaceAll(line, "\\u003c", "<")
 		line = strings.ReplaceAll(line, "\\u003e", ">")

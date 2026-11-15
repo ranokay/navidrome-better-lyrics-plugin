@@ -380,14 +380,8 @@ func (p *Provider) requestTimeoutMilliseconds(deadline time.Time) (int32, error)
 	if remaining <= 0 {
 		return 0, source.ErrLookupBudgetExhausted
 	}
-	perRequest := time.Duration(httpTimeoutMilliseconds) * time.Millisecond
-	if remaining < perRequest {
-		perRequest = remaining
-	}
-	milliseconds := (perRequest + time.Millisecond - 1) / time.Millisecond
-	if milliseconds < 1 {
-		milliseconds = 1
-	}
+	perRequest := min(remaining, time.Duration(httpTimeoutMilliseconds)*time.Millisecond)
+	milliseconds := max((perRequest+time.Millisecond-1)/time.Millisecond, 1)
 	return int32(milliseconds), nil
 }
 

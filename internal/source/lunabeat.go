@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -177,10 +178,8 @@ func lunaBeatRowMatches(candidate lunaBeatSong, wantedTitle, trackArtist string)
 		if rowArtist == "" {
 			continue
 		}
-		for _, name := range wanted {
-			if name == rowArtist {
-				return true
-			}
+		if slices.Contains(wanted, rowArtist) {
+			return true
 		}
 	}
 	return false

@@ -263,7 +263,7 @@ func TestGetLyrics_ConfigWithEverySourceDisabledSkipsScheduling(t *testing.T) {
 	// must return without filling the task queue with unschedulable sweeps.
 	selections := make([]sourceSelection, 0, len(source.Catalog))
 	for _, src := range source.Catalog {
-		selections = append(selections, sourceSelection{ID: src.ID, Enabled: ptrBool(false)})
+		selections = append(selections, sourceSelection{ID: src.ID, Enabled: new(false)})
 	}
 	raw, err := json.Marshal(selections)
 	if err != nil {
@@ -312,7 +312,6 @@ func TestSweep_DoneMarkerTTLBoundedByShortestCoveredCandidate(t *testing.T) {
 		{name: "misses bound the re-check window to five minutes", text: "[00:01.00]timed", format: "lrc", want: negativeLyricsCacheTTLSeconds},
 		{name: "fully timed coverage still spans a day", text: "[00:02.00]timed", format: "lrc2", want: syncedLyricsCacheTTLSeconds},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cache := newFakeLyricsCache()
 			tailFormat := tc.format

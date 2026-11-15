@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -372,12 +373,7 @@ func (p *Provider) sourceInCooldown(src source.Source) bool {
 }
 
 func sharesBetterLyricsHost(src source.Source) bool {
-	for _, hostName := range src.Hosts {
-		if hostName == "lyrics-api.boidu.dev" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(src.Hosts, "lyrics-api.boidu.dev")
 }
 
 // maybeEnqueueSweep triggers the background sweep for a track unless one already
