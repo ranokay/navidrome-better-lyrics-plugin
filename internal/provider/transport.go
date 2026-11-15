@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
@@ -15,12 +16,21 @@ func (p *Provider) Do(sourceName, method, requestURL string, body []byte, header
 	if err != nil {
 		return nil, err
 	}
+	noFollowRedirects := false
+	for name, value := range headers {
+		if strings.EqualFold(name, "X-API-Key") && value != "" {
+			// The host allowlist spans several providers. An authenticated
+			// endpoint must not forward its key to another allowed host.
+			noFollowRedirects = true
+		}
+	}
 	response, err := p.send(host.HTTPRequest{
-		Method:    method,
-		URL:       requestURL,
-		Body:      body,
-		Headers:   headers,
-		TimeoutMs: timeout,
+		Method:            method,
+		URL:               requestURL,
+		Body:              body,
+		Headers:           headers,
+		TimeoutMs:         timeout,
+		NoFollowRedirects: noFollowRedirects,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("request %s: %w", sourceName, safeTransportError(err))

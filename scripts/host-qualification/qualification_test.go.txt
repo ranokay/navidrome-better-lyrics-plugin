@@ -1,0 +1,523 @@
+package plugins
+
+import (
+	"archive/zip"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/navidrome/navidrome/conf"
+	"github.com/navidrome/navidrome/model"
+)
+
+const qualificationPluginID = "nd-better-lyrics"
+
+type qualificationTransport struct {
+	mu                    sync.Mutex
+	mode                  string
+	requests              map[string]int
+	keyedRequests         int
+	misdirectedCredential bool
+}
+
+func (r *qualificationTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	mode := r.mode
+	r.requests[request.URL.Host]++
+	if request.Header.Get("X-API-Key") != "" {
+		r.keyedRequests++
+		if request.URL.Host != "lyrics-api.boidu.dev" {
+			r.misdirectedCredential = true
+		}
+	}
+	r.mu.Unlock()
+	if mode == "stalled" {
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	}
+	status, body := http.StatusNotFound, ""
+	headers := make(http.Header)
+	if request.URL.Host == "lyrics-api.boidu.dev" {
+		switch mode {
+		case "rich":
+			status, body = http.StatusOK, `{"ttml":"<tt xmlns:i=\"urn:itunes\" i:timing=\"Syllable\"><body><p begin=\"1\" end=\"2\"><span begin=\"1\" end=\"2\">original</span></p></body></tt>"}`
+		case "line":
+			status, body = http.StatusOK, `{"ttml":"<tt><body><p begin=\"1\" end=\"2\">replacement</p></body></tt>"}`
+		case "credential":
+			status = http.StatusUnauthorized
+			if request.Header.Get("X-API-Key") != "" {
+				status, body = http.StatusOK, `{"ttml":"<tt><body><p begin=\"1\" end=\"2\">authorized</p></body></tt>"}`
+			}
+		case "limited":
+			status, body = http.StatusTooManyRequests, `{"error":"rate limit exceeded"}`
+			headers.Set("Retry-After", "60")
+			headers.Set("X-RateLimit-Type", "exceeded")
+		case "redirect":
+			status = http.StatusFound
+			headers.Set("Location", "https://unison.boidu.dev/getLyrics")
+		}
+	}
+	return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+}
+
+func (r *qualificationTransport) setMode(mode string) { r.mu.Lock(); r.mode = mode; r.mu.Unlock() }
+func (r *qualificationTransport) count(host string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.requests[host]
+}
+func (r *qualificationTransport) keyed() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.keyedRequests
+}
+
+func (r *qualificationTransport) leakedCredential() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.misdirectedCredential
+}
+
+type qualificationHarness struct {
+	t           *testing.T
+	manager     *Manager
+	packagePath string
+	catalog     []string
+	transport   *qualificationTransport
+	loaded      *plugin
+	kv          *kvstoreServiceImpl
+	tasks       *taskQueueServiceImpl
+}
+
+func newQualificationHarness(t *testing.T, mode string, enabled ...string) *qualificationHarness {
+	t.Helper()
+	packagePath := os.Getenv("BETTER_LYRICS_PACKAGE")
+	if packagePath == "" {
+		t.Fatal("BETTER_LYRICS_PACKAGE must name the built .ndp")
+	}
+	archive, err := zip.OpenReader(packagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	var manifest struct {
+		Config struct {
+			Schema struct {
+				Properties struct {
+					Sources struct {
+						Default []struct {
+							ID string `json:"id"`
+						} `json:"default"`
+					} `json:"sources"`
+				} `json:"properties"`
+			} `json:"schema"`
+		} `json:"config"`
+	}
+	for _, entry := range archive.File {
+		if entry.Name != "manifest.json" {
+			continue
+		}
+		reader, err := entry.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = json.NewDecoder(reader).Decode(&manifest)
+		reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(manifest.Config.Schema.Properties.Sources.Default) == 0 {
+		t.Fatal("manifest has no source defaults")
+	}
+	dir := t.TempDir()
+	t.Cleanup(conf.SnapshotConfig())
+	conf.Update(func(c *conf.Options) {
+		c.DataFolder = conf.NewDir(filepath.Join(dir, "data"))
+		c.CacheFolder = conf.NewDir(filepath.Join(dir, "cache"))
+		c.Plugins.Folder = conf.NewDir(filepath.Join(dir, "packages"))
+		c.Plugins.Enabled = true
+		c.Plugins.AutoReload = false
+		c.Plugins.LogLevel = "error"
+	})
+	m := &Manager{plugins: make(map[string]*plugin), metrics: noopMetricsRecorder{}, subsonicRouter: http.NotFoundHandler()}
+	compiledCache := os.Getenv("BETTER_LYRICS_CACHE")
+	if compiledCache == "" {
+		compiledCache = filepath.Join(dir, "compiled")
+	}
+	if err := m.initRuntime(t.Context(), compiledCache); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := m.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	h := &qualificationHarness{t: t, manager: m, packagePath: packagePath, transport: &qualificationTransport{mode: mode, requests: make(map[string]int)}}
+	for _, row := range manifest.Config.Schema.Properties.Sources.Default {
+		h.catalog = append(h.catalog, row.ID)
+	}
+	h.reload("", enabled...)
+	return h
+}
+
+func (h *qualificationHarness) reload(credential string, enabled ...string) {
+	h.t.Helper()
+	if h.loaded != nil {
+		h.idle()
+		if err := h.manager.unloadPlugin(qualificationPluginID); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	rows := make([]map[string]any, 0, len(h.catalog))
+	for _, id := range h.catalog {
+		on := false
+		for _, wanted := range enabled {
+			if id == wanted {
+				on = true
+			}
+		}
+		rows = append(rows, map[string]any{"id": id, "enabled": on})
+	}
+	config, err := json.Marshal(map[string]any{"sources": rows, "betterLyricsApiKey": credential})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := h.manager.loadPluginWithConfig(&model.Plugin{ID: qualificationPluginID, Path: h.packagePath, Enabled: true, AllUsers: true, Config: string(config)}); err != nil {
+		h.t.Fatal(err)
+	}
+	h.loaded = h.manager.plugins[qualificationPluginID]
+	h.kv, h.tasks = nil, nil
+	for _, closer := range h.loaded.closers {
+		switch service := closer.(type) {
+		case *httpServiceImpl:
+			service.client.Transport = h.transport
+		case *kvstoreServiceImpl:
+			h.kv = service
+		case *taskQueueServiceImpl:
+			h.tasks = service
+		}
+	}
+	if h.kv == nil || h.tasks == nil {
+		h.t.Fatal("real KV and task services must be active")
+	}
+}
+
+func (h *qualificationHarness) lookup(title string) (map[string]any, error) {
+	return callPluginFunction[map[string]any, map[string]any](h.t.Context(), h.loaded, "nd_lyrics_get_lyrics", map[string]any{
+		"track": qualificationTrack(title),
+	})
+}
+
+func qualificationTrack(title string) map[string]any {
+	return map[string]any{"title": title, "artist": "Qualification Artist", "artists": []map[string]string{{"name": "Qualification Artist"}}, "album": "Qualification Album", "duration": 200}
+}
+
+func qualificationText(result map[string]any) string {
+	rows, _ := result["lyrics"].([]any)
+	if len(rows) == 0 {
+		return ""
+	}
+	row, _ := rows[0].(map[string]any)
+	text, _ := row["text"].(string)
+	return text
+}
+
+func (h *qualificationHarness) idle() {
+	h.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var pending int
+		if err := h.tasks.db.QueryRowContext(h.t.Context(), `SELECT COUNT(*) FROM tasks WHERE status IN ('pending','running')`).Scan(&pending); err != nil {
+			h.t.Fatal(err)
+		}
+		if pending == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatalf("task queue still has %d pending/running tasks", pending)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (h *qualificationHarness) keys(prefix string) []string {
+	h.t.Helper()
+	keys, err := h.kv.List(h.t.Context(), prefix)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return keys
+}
+
+func (h *qualificationHarness) expire(prefix string) {
+	h.t.Helper()
+	for _, key := range h.keys(prefix) {
+		raw, exists, err := h.kv.Get(h.t.Context(), key)
+		if err != nil || !exists {
+			h.t.Fatalf("read %s: %v", key, err)
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			h.t.Fatal(err)
+		}
+		envelope["expiresAt"] = time.Now().Add(-time.Minute).Unix()
+		envelope["sourceExpiresAt"] = time.Now().Add(-time.Minute).Unix()
+		value, err := json.Marshal(envelope)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		if err := h.kv.SetWithTTL(h.t.Context(), key, value, 3600); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+}
+
+func TestBetterLyricsQualification(t *testing.T) {
+	t.Run("first paint and cross-instance cache", func(t *testing.T) {
+		h := newQualificationHarness(t, "rich", "better-lyrics", "unison")
+		start := time.Now()
+		first, err := h.lookup("First paint")
+		if err != nil || !strings.Contains(qualificationText(first), "original") {
+			t.Fatalf("first lookup: %v %v", first, err)
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("first paint took %s", elapsed)
+		} else {
+			t.Logf("first response %s", elapsed)
+		}
+		h.idle()
+		if h.transport.count("unison.boidu.dev") == 0 {
+			t.Fatal("real task worker did not sweep the tail source")
+		}
+		before := h.transport.count("lyrics-api.boidu.dev")
+		second, err := h.lookup("First paint")
+		if err != nil || qualificationText(first) != qualificationText(second) {
+			t.Fatalf("cached lookup: %v %v", second, err)
+		}
+		if h.transport.count("lyrics-api.boidu.dev") != before {
+			t.Fatal("fresh WASM instance ignored persisted positive cache")
+		}
+		var failed int
+		if err := h.tasks.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM tasks WHERE status='failed'`).Scan(&failed); err != nil || failed != 0 {
+			t.Fatalf("failed tasks=%d: %v", failed, err)
+		}
+	})
+	t.Run("expired cache accepts lower-quality refresh", func(t *testing.T) {
+		h := newQualificationHarness(t, "rich", "better-lyrics")
+		if result, err := h.lookup("Expiry"); err != nil || !strings.Contains(qualificationText(result), "original") {
+			t.Fatalf("seed lookup: %v %v", result, err)
+		}
+		h.expire("lyrics:v4:")
+		h.transport.setMode("line")
+		result, err := h.lookup("Expiry")
+		if err != nil || !strings.Contains(qualificationText(result), "replacement") {
+			t.Fatalf("expired data blocked refresh: %v %v", result, err)
+		}
+	})
+	t.Run("filtered continuation completes full source coverage", func(t *testing.T) {
+		h := newQualificationHarness(t, "rich", "better-lyrics", "unison")
+		if _, err := h.lookup("Continuation"); err != nil {
+			t.Fatal(err)
+		}
+		h.idle()
+		for _, prefix := range []string{"lyrics:v4:source:unison:", "sweep-done:"} {
+			if _, err := h.kv.DeleteByPrefix(t.Context(), prefix); err != nil {
+				t.Fatal(err)
+			}
+		}
+		beforeWinner, beforeTail := h.transport.count("lyrics-api.boidu.dev"), h.transport.count("unison.boidu.dev")
+		payload, err := json.Marshal(map[string]any{"track": qualificationTrack("Continuation"), "sources": []string{"unison"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := h.tasks.Enqueue(t.Context(), "lyrics-sweep", payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.idle()
+		info, err := h.tasks.Get(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Status != taskStatusCompleted || !strings.Contains(info.Message, "failed=0") || !strings.Contains(info.Message, "deferred=0") {
+			t.Fatalf("continuation did not complete: %#v", info)
+		}
+		if h.transport.count("lyrics-api.boidu.dev") != beforeWinner || h.transport.count("unison.boidu.dev") <= beforeTail {
+			t.Fatal("continuation did not preserve its cached sibling while fetching the tail")
+		}
+		if len(h.keys("sweep-done:")) != 1 {
+			t.Fatal("continuation did not mark full-order coverage")
+		}
+	})
+	t.Run("clean misses persist across instances", func(t *testing.T) {
+		h := newQualificationHarness(t, "miss", "better-lyrics", "unison")
+		if result, err := h.lookup("Missing"); err != nil || qualificationText(result) != "" {
+			t.Fatalf("miss: %v %v", result, err)
+		}
+		before := h.transport.count("lyrics-api.boidu.dev") + h.transport.count("unison.boidu.dev")
+		if result, err := h.lookup("Missing"); err != nil || qualificationText(result) != "" {
+			t.Fatalf("cached miss: %v %v", result, err)
+		}
+		if after := h.transport.count("lyrics-api.boidu.dev") + h.transport.count("unison.boidu.dev"); after != before {
+			t.Fatal("fresh WASM instance repeated covered misses")
+		}
+	})
+	t.Run("config opt-out and credential refresh", func(t *testing.T) {
+		h := newQualificationHarness(t, "credential", "better-lyrics")
+		if result, err := h.lookup("Credential"); err != nil || qualificationText(result) != "" {
+			t.Fatalf("anonymous lookup: %v %v", result, err)
+		}
+		h.reload(fmt.Sprintf("qualification-%d", time.Now().UnixNano()), "better-lyrics", "unison")
+		if result, err := h.lookup("Credential"); err != nil || !strings.Contains(qualificationText(result), "authorized") {
+			t.Fatalf("credential did not reauthorize cached miss: %v %v", result, err)
+		}
+		if h.transport.keyed() == 0 {
+			t.Fatal("configured credential did not reach its intended provider")
+		}
+		h.idle()
+		if h.transport.count("unison.boidu.dev") == 0 || h.transport.leakedCredential() {
+			t.Fatal("credential isolation was not preserved during the tail sweep")
+		}
+		h.reload("")
+		before := h.transport.count("lyrics-api.boidu.dev")
+		if result, err := h.lookup("Credential"); err != nil || qualificationText(result) != "" {
+			t.Fatalf("all-disabled lookup: %v %v", result, err)
+		}
+		if h.transport.count("lyrics-api.boidu.dev") != before {
+			t.Fatal("all-disabled configuration contacted a provider")
+		}
+	})
+	t.Run("credential requests do not follow cross-provider redirects", func(t *testing.T) {
+		h := newQualificationHarness(t, "redirect", "better-lyrics")
+		h.reload(fmt.Sprintf("qualification-%d", time.Now().UnixNano()), "better-lyrics")
+		if _, err := h.lookup("Redirect"); err == nil {
+			t.Fatal("authenticated redirect must surface as an upstream failure")
+		}
+		h.idle()
+		if h.transport.keyed() == 0 || h.transport.leakedCredential() || h.transport.count("unison.boidu.dev") != 0 {
+			t.Fatal("authenticated request followed a cross-provider redirect")
+		}
+	})
+	t.Run("reload purges removed-provider data once", func(t *testing.T) {
+		h := newQualificationHarness(t, "miss", "better-lyrics")
+		keys := []string{"musixmatch:token:v1", "lyrics:v4:source:musixmatch:old", "lyrics:v4:source:lyricsplus:old", "lyrics:v4:winner:old", "sweep-done:old"}
+		if err := h.kv.Delete(t.Context(), "cache-purge:musixmatch:v1"); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range append(keys, "qualification:retained") {
+			if err := h.kv.Set(t.Context(), key, []byte("fixture")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		h.reload("", "better-lyrics")
+		for _, key := range keys {
+			if _, exists, err := h.kv.Get(t.Context(), key); err != nil || exists {
+				t.Fatalf("removed data survived reload: %s: %v", key, err)
+			}
+		}
+		if _, exists, err := h.kv.Get(t.Context(), "qualification:retained"); err != nil || !exists {
+			t.Fatal("reload removed unrelated state")
+		}
+		if _, exists, err := h.kv.Get(t.Context(), "cache-purge:musixmatch:v1"); err != nil || !exists {
+			t.Fatal("purge completion was not persisted")
+		}
+		const freshWinner = "lyrics:v4:winner:after-upgrade"
+		if err := h.kv.Set(t.Context(), freshWinner, []byte("fixture")); err != nil {
+			t.Fatal(err)
+		}
+		h.reload("", "better-lyrics")
+		if _, exists, err := h.kv.Get(t.Context(), freshWinner); err != nil || !exists {
+			t.Fatal("a completed upgrade purge ran again on the next reload")
+		}
+	})
+	t.Run("real quota preserves control headroom", func(t *testing.T) {
+		h := newQualificationHarness(t, "rich", "better-lyrics")
+		if _, err := h.lookup("Quota seed"); err != nil {
+			t.Fatal(err)
+		}
+		if h.kv.maxSize != 32_000_000 {
+			t.Fatalf("host parsed quota=%d, want32MB decimal", h.kv.maxSize)
+		}
+		used, err := h.kv.GetStorageUsed(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		const reserved = 1024 * 1024
+		target := h.kv.maxSize - reserved
+		if err := h.kv.SetWithTTL(t.Context(), "qualification:capacity", make([]byte, int(target-used)), 60); err != nil {
+			t.Fatal(err)
+		}
+		h.transport.setMode("miss")
+		before := len(h.keys("lyrics:v4:source:"))
+		if _, err := h.lookup("Quota miss"); err != nil {
+			t.Fatal(err)
+		}
+		if after := len(h.keys("lyrics:v4:source:")); after != before {
+			t.Fatal("negative coverage consumed reserved host quota")
+		}
+		h.transport.setMode("limited")
+		_, _ = h.lookup("Quota cooldown")
+		h.idle()
+		if _, exists, err := h.kv.Get(t.Context(), "rate-limit:better-lyrics:global:v3"); err != nil || !exists {
+			t.Fatal("cooldown did not fit in reserved capacity")
+		}
+		if err := h.kv.Set(t.Context(), "qualification:over-quota", make([]byte, reserved+1)); err == nil {
+			t.Fatal("host quota was not enforced")
+		}
+		t.Logf("host quota=%d reserve=%d; lyric writes stopped and cooldown persisted", h.kv.maxSize, reserved)
+	})
+	t.Run("concurrent calls retain valid shared state", func(t *testing.T) {
+		h := newQualificationHarness(t, "rich", "better-lyrics", "unison")
+		var wg sync.WaitGroup
+		errors := make(chan error, 2)
+		for range 2 {
+			wg.Go(func() {
+				result, err := h.lookup("Concurrent")
+				if err == nil && !strings.Contains(qualificationText(result), "original") {
+					err = fmt.Errorf("concurrent lookup lost lyrics")
+				}
+				errors <- err
+			})
+		}
+		wg.Wait()
+		close(errors)
+		for err := range errors {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		h.idle()
+		if raw, exists, err := h.kv.Get(t.Context(), "credential-salt:v1"); err != nil || !exists || len(raw) < 16 {
+			t.Fatal("shared credential salt was not persisted")
+		}
+		before := h.transport.count("lyrics-api.boidu.dev")
+		result, err := h.lookup("Concurrent")
+		if err != nil || !strings.Contains(qualificationText(result), "original") {
+			t.Fatal(err)
+		}
+		t.Logf("concurrent first-use follow-up requested source %d additional times; KV claims are best effort", h.transport.count("lyrics-api.boidu.dev")-before)
+	})
+	t.Run("stalled foreground obeys bounded timeout", func(t *testing.T) {
+		h := newQualificationHarness(t, "stalled", "better-lyrics", "unison", "binimum")
+		start := time.Now()
+		_, err := h.lookup("Timeout")
+		elapsed := time.Since(start)
+		if err == nil {
+			t.Fatal("stalled providers must surface a lookup error")
+		}
+		if elapsed < time.Second || elapsed > 3*time.Second {
+			t.Fatalf("foreground allowance elapsed=%s; want bounded near2s", elapsed)
+		}
+		t.Logf("all-stalled foreground %s", elapsed)
+		// Cancel task work before cleanup; this scenario measures foreground only.
+		h.manager.cancel()
+	})
+}

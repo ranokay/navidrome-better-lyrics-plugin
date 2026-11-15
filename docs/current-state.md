@@ -5,7 +5,7 @@ record when an audit issue, dependency, supported host, or upstream prerequisite
 changes. The README describes installation and provider behavior; this document
 records ownership, compatibility holds, and the evidence still needed.
 
-The audit fixes below are local, unpublished branch work. The latest published
+The audit fixes below are development-branch work awaiting delivery. The latest published
 plugin remains v0.4.1. Local commits, passing tests, upstream merge, and a published
 plugin release are separate states.
 
@@ -21,13 +21,13 @@ verification and delivery.
 | [#20: usable payloads and text preservation](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/20) | Implemented locally, `6e78322`, `db95463` | Metadata-only lyrics are rejected, LRCLib text is preserved, malformed Lyrically data remains retryable, and equivalent YTM JSON behaves identically. |
 | [#21: release and build simplification](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/21) | Implemented locally, `54e77cb` | Future manifest versions pass the version invariant, release tags match, and manual runs expose a package artifact. |
 | [#22: dependency and schema updates](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/22) | Implemented locally, `773459e` | Native/race, vet, module, workflow, schema, and WASI package checks pass while provenance is preserved. |
-| [#23: current documentation](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/23) | This documentation change | Archived plans are non-executable; current contracts, owners, and upstream exit conditions are explicit. |
-| [#24: payload and timestamp bounds](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/24) | Next implementation slice, after #23 | Reviewed host/application bounds prevent unbounded expansion and wrapped timestamps; captured fixtures and regressions pass. |
-| [#25: runtime and provider qualification](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/25) | Follows #24 | Disposable-host commands and outcomes cover installation, KV quota/freshness, tasks/continuations, reload, config, credentials, and latency; refreshed wire evidence is dated and minimized. |
+| [#23: current documentation](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/23) | Implemented, `1ffd11d` | Archived plans are non-executable; current contracts, owners, and upstream exit conditions are explicit. |
+| [#24: payload and timestamp bounds](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/24) | Implemented, `46634e1` | Reviewed host/application bounds prevent unbounded expansion and wrapped timestamps; captured fixtures and regressions pass. |
+| [#25: runtime and provider qualification](https://github.com/ranokay/navidrome-better-lyrics-plugin/issues/25) | Reusable qualification and runtime corrections implemented; results are candidate-specific | Disposable-host commands and outcomes cover installation, KV quota/freshness, tasks/continuations, reload, config, credentials, and latency; refreshed wire evidence is dated and minimized. |
 
-The full local gate passed after #22. Final integrated checks must cover the
-remaining edits. #25 owns fresh runtime qualification; a WASI build alone does
-not establish real host behavior or current provider availability. A compatible
+Run the full local gate and [WASI qualification protocol](research/qualification-2026-11-15.md)
+for each candidate. A WASI build alone does not establish real host behavior or
+current provider availability. A compatible
 UI build is needed only for its additional UI/provenance checks, not for
 released-host installation and task tests.
 
@@ -42,12 +42,19 @@ released-host installation and task tests.
 - Foreground lookup queries at most three enabled sources, with a two-second
   total budget and 750 ms per source, and stops at the first usable synchronized
   result. A sequential background sweep populates per-source caches.
+  Unchanged deferred tails stop after two consecutive no-progress continuations
+  and release their pending slot; a later lookup can retry. Cache-generation
+  changes invalidate both completed and pending sweep coverage.
 - The plugin already returns cached, source-tagged variants, winner first.
   Timing quality ranks syllable, word, line, then plain; configured order breaks
   ties. This work does not require a new plugin fetch-by-source endpoint.
 - TTL expiry bounds fetched freshness. Changing credentials retains readable
   positive lyrics while allowing refresh. Keep upgrade purges for removed
   Musixmatch data and affected LyricsPlus/winner caches.
+- The manifest's `32MB` quota means 32,000,000 bytes in Navidrome. Lyric writes
+  reserve 1 MiB within that grant for control records. HTTP/documents are capped
+  at 8 MiB, XML depth at 128, and expanded legacy LunaBeat indexes at 16 MiB.
+  Invalid timestamp arithmetic degrades safely instead of wrapping cues.
 - Preserve original TTML and convert supported proprietary word timing to
   enhanced LRC. PetitLyrics LSY/line-binary decoding is intentionally unsupported;
   word and plain tiers remain supported. It is not a parked implementation task.
@@ -154,3 +161,5 @@ today's provider endpoints, browser paint, playback, or #6465 cache behavior.
 Fresh evidence and any concrete unavailable-environment next action belong to
 #25. Test fixtures are development inputs, excluded from `.ndp` packages, and
 their capture/synthetic provenance remains alongside the fixture files.
+The [2026-11-15 qualification protocol and wire observations](research/qualification-2026-11-15.md)
+describe the current harness and the repaired YTM song-search contract.

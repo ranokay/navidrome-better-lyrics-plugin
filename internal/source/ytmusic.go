@@ -42,6 +42,8 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	searchBody, err := json.Marshal(map[string]any{
 		"context": innertubeContext(),
 		"query":   title + " " + artist,
+		// The songs filter includes recording duration in metadata runs.
+		"params": "EgWKAQIIAWoMEA4QChADEAQQCRAF",
 	})
 	if err != nil {
 		return nil, Degraded, err
@@ -292,7 +294,40 @@ func ytmusicRenderHit(renderer map[string]any) ytmusicSearchHit {
 			hit.title = ytmusicFlexColumnText(columns[0])
 		}
 		if len(columns) > 1 {
-			hit.artists = ytmusicFlexColumnText(columns[1])
+			// Older renderer shapes used a single plain artist label. Current
+			// metadata combines artist, album and duration, so linked roles must
+			// determine identity instead of matching the concatenated column.
+			artistRuns := ytmusicFlexColumnRuns(columns[1])
+			if len(artistRuns) == 1 {
+				run, _ := artistRuns[0].(map[string]any)
+				if run["navigationEndpoint"] == nil {
+					plain := ytmusicFlexColumnText(columns[1])
+					if !strings.Contains(plain, " • ") {
+						hit.artists = plain
+					}
+				}
+			}
+			var artists []string
+			for _, column := range columns[1:] {
+				for _, raw := range ytmusicFlexColumnRuns(column) {
+					run, _ := raw.(map[string]any)
+					value, _ := run["text"].(string)
+					endpoint, _ := run["navigationEndpoint"].(map[string]any)
+					browse, _ := endpoint["browseEndpoint"].(map[string]any)
+					id, _ := browse["browseId"].(string)
+					if strings.HasPrefix(id, "UC") {
+						artists = append(artists, value)
+					}
+					if hit.durationMs == 0 && run["navigationEndpoint"] == nil {
+						if duration, err := parseYTMusicDuration(value); err == nil {
+							hit.durationMs = duration
+						}
+					}
+				}
+			}
+			if len(artists) > 0 {
+				hit.artists = strings.Join(artists, " & ")
+			}
 		}
 	}
 	if hit.title == "" {
@@ -334,26 +369,29 @@ func ytmusicFindString(node any, key string, depth int) string {
 	return ""
 }
 
-func ytmusicFlexColumnText(column any) string {
+func ytmusicFlexColumnRuns(column any) []any {
 	columnMap, ok := column.(map[string]any)
 	if !ok {
-		return ""
+		return nil
 	}
 	renderer, ok := columnMap["musicResponsiveListItemFlexColumnRenderer"].(map[string]any)
 	if !ok {
-		return ""
+		return nil
 	}
 	text, ok := renderer["text"].(map[string]any)
 	if !ok {
-		return ""
+		return nil
 	}
+	runs, _ := text["runs"].([]any)
+	return runs
+}
+
+func ytmusicFlexColumnText(column any) string {
 	var parts []string
-	if runs, ok := text["runs"].([]any); ok {
-		for _, run := range runs {
-			if runMap, ok := run.(map[string]any); ok {
-				if value, ok := runMap["text"].(string); ok {
-					parts = append(parts, value)
-				}
+	for _, run := range ytmusicFlexColumnRuns(column) {
+		if runMap, ok := run.(map[string]any); ok {
+			if value, ok := runMap["text"].(string); ok {
+				parts = append(parts, value)
 			}
 		}
 	}

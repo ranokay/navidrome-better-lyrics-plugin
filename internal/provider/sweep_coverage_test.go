@@ -845,7 +845,7 @@ func TestSweepContinuationKeepsPendingMarker(t *testing.T) {
 			}},
 		sweepSource("tail", new(int), false, nil),
 	}, func(lyrics.TrackInfo) error { return nil })
-	provider.enqueueSweepSources = func(lyrics.TrackInfo, []string) error {
+	provider.enqueueSweepSources = func(lyrics.TrackInfo, []string, int) error {
 		continuations++
 		return nil
 	}
@@ -939,7 +939,7 @@ func TestSweep_EnqueuesContinuationForDeferredSources(t *testing.T) {
 	// package var mutation).
 	provider := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
 	provider.sweepBudget = -time.Second
-	provider.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string) error {
+	provider.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string, _ int) error {
 		deferredPassed = ids
 		return nil
 	}

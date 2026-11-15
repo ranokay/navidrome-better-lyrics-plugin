@@ -255,6 +255,7 @@ internal/source/     upstream adapters, one file per catalog source; fixtures in
 internal/lyric/      lyric domain: candidates, timing grades, identity matching, word-sync parsers
 dist/                local build output (plugin.wasm, nd-better-lyrics.ndp); not committed
 docs/                current-state contract and archived research/design history
+scripts/             bounded public probes and disposable WASI host qualification
 ```
 
 The Go PDK replacement retains the optional provenance contract from #6033.

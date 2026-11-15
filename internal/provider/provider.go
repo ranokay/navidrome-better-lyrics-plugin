@@ -63,7 +63,7 @@ type Provider struct {
 	sources []source.Source
 	// enqueueSweepSources re-enqueues a continuation carrying only the sources a
 	// sweep had to defer when its budget ran out.
-	enqueueSweepSources func(lyrics.TrackInfo, []string) error
+	enqueueSweepSources func(lyrics.TrackInfo, []string, int) error
 	// sweepBudget overrides defaultSweepBudget (0 = default); tests shrink it to
 	// force deferrals deterministically.
 	sweepBudget time.Duration
@@ -103,21 +103,21 @@ func New(deps Deps) *Provider {
 		p.logf = func(string) {}
 	}
 	p.enqueueSweep = func(lyrics.TrackInfo) error { return nil }
-	p.enqueueSweepSources = func(lyrics.TrackInfo, []string) error { return nil }
+	p.enqueueSweepSources = func(lyrics.TrackInfo, []string, int) error { return nil }
 	if deps.EnqueueTask != nil {
 		enqueue := deps.EnqueueTask
 		p.enqueueSweep = func(track lyrics.TrackInfo) error {
-			return enqueueSweepTask(enqueue, track, nil)
+			return enqueueSweepTask(enqueue, track, nil, 0)
 		}
-		p.enqueueSweepSources = func(track lyrics.TrackInfo, sources []string) error {
-			return enqueueSweepTask(enqueue, track, sources)
+		p.enqueueSweepSources = func(track lyrics.TrackInfo, sources []string, stalledPasses int) error {
+			return enqueueSweepTask(enqueue, track, sources, stalledPasses)
 		}
 	}
 	return p
 }
 
-func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track lyrics.TrackInfo, sources []string) error {
-	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources})
+func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track lyrics.TrackInfo, sources []string, stalledPasses int) error {
+	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources, StalledPasses: stalledPasses})
 	if err != nil {
 		return err
 	}

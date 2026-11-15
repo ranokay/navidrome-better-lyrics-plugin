@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,47 @@ import (
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
+
+func TestPreviousGenerationMarkersCannotSuppressLegacyRefresh(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"completed", "pending"} {
+		t.Run(kind, func(t *testing.T) {
+			now := time.Unix(100_000, 0)
+			cache := newFakeLyricsCache()
+			queued := 0
+			order := []source.Source{stubFetchedCandidate("one", "one", "lrc", "[00:01.00]fresh")}
+			p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, order, func(lyrics.TrackInfo) error { queued++; return nil })
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			legacy := lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]legacy"}, "one", "lrc")
+			raw, err := json.Marshal(cachedLyricsEnvelope{Generation: 1, Quality: legacy.Quality, Response: legacy.Response, ExpiresAt: now.Add(24 * time.Hour).Unix()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, _ := lyricsCacheKeyForSource(track, "one")
+			if err := cache.SetWithTTL(key, raw, 86400); err != nil {
+				t.Fatal(err)
+			}
+			trackKey, _ := lyricsTrackKey(track)
+			digest := sha256.Sum256([]byte(strings.Join(source.IDs(order), "|")))
+			credentials := p.lyricsCredentialsFingerprint()
+			// Literal pre-generation marker formats model a real persisted upgrade.
+			oldKey := fmt.Sprintf("sweep-done:%x:%s:cred:%s", digest, trackKey, credentials)
+			if kind == "pending" {
+				oldKey = fmt.Sprintf("sweep:%s:%x:%s", credentials, digest[:8], trackKey)
+			}
+			if err := p.storeSweepMarker(oldKey, 86400); err != nil {
+				t.Fatal(err)
+			}
+			result, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text, _ := winnerText(t, result); text != "[00:01.00]legacy" || queued != 1 {
+				t.Fatalf("legacy content=%q queued=%d, want readable content with fresh coverage scheduled", text, queued)
+			}
+		})
+	}
+}
 
 func TestCachedMetadataOnlyPayloadDoesNotBlockFallback(t *testing.T) {
 	t.Parallel()

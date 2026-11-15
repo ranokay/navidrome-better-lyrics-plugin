@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	CacheMaxSize                   = "32MB"
-	lyricsCacheMaxBytes      int64 = 32 * 1024 * 1024
+	CacheMaxSize = "32MB"
+	// Navidrome parses the manifest's MB unit as decimal, not MiB.
+	lyricsCacheMaxBytes      int64 = 32_000_000
 	lyricsCacheReservedBytes int64 = 1 * 1024 * 1024
 	MaxCacheEntryBytes             = 1 * 1024 * 1024
 	// Syllable winners and synchronized per-source results share a day-long TTL.

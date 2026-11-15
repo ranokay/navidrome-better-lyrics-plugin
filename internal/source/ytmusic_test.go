@@ -2,6 +2,7 @@ package source
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,47 @@ import (
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
+
+func TestYTMusicFilteredMetadataPreservesIdentityGate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, artist string
+		duration     float32
+		want         int
+	}{
+		{"current song layout", "Ed Sheeran", 234, 1},
+		{"album is not the artist", "Shape of You", 234, 0},
+		{"duration mismatch", "Ed Sheeran", 240, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, err := os.ReadFile("testdata/ytmusic/search-filtered.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				body := `{"contents":{"musicDescriptionShelfRenderer":{"description":{"runs":[{"text":"synthetic lyrics"}]}}}}`
+				switch {
+				case strings.Contains(request.URL, "/search"):
+					var search map[string]any
+					if err := json.Unmarshal(request.Body, &search); err != nil {
+						t.Fatal(err)
+					}
+					if search["params"] != "EgWKAQIIAWoMEA4QChADEAQQCRAF" {
+						t.Error("search must use the verified songs filter")
+					}
+					body = string(fixture)
+				case strings.Contains(request.URL, "/next"):
+					body = `{"contents":{"browseId":"MPLYt_fixture"}}`
+				}
+				return &host.HTTPResponse{StatusCode: 200, Body: []byte(body)}, nil
+			})
+			candidates, health, err := fetchYTMusic(rt, lyrics.TrackInfo{Title: "Shape of You", Artist: tc.artist, Duration: tc.duration}, time.Now().Add(testLookupBudget))
+			if err != nil || health != Healthy || len(candidates) != tc.want {
+				t.Fatalf("result=%d health=%v error=%v, want %d healthy candidates", len(candidates), health, err, tc.want)
+			}
+		})
+	}
+}
 
 func TestYTMusicWatchAcceptsEquivalentJSON(t *testing.T) {
 	t.Parallel()

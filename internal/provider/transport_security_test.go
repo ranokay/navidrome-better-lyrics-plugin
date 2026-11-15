@@ -5,10 +5,36 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 )
+
+func TestCredentialRequestsDoNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		headers    map[string]string
+		noRedirect bool
+	}{
+		{"anonymous", nil, false},
+		{"configured key", map[string]string{"X-API-Key": "fixture"}, true},
+		{"case insensitive key", map[string]string{"x-api-key": "fixture"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := New(Deps{Send: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				if request.NoFollowRedirects != tc.noRedirect {
+					t.Fatalf("NoFollowRedirects=%v, want %v for credential isolation", request.NoFollowRedirects, tc.noRedirect)
+				}
+				return &host.HTTPResponse{StatusCode: 200}, nil
+			}})
+			if _, err := p.Do("fixture", "GET", "https://lyrics-api.boidu.dev", nil, tc.headers, time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestTransportErrorsDoNotExposeCredentials(t *testing.T) {
 	for _, serialized := range []bool{false, true} {
