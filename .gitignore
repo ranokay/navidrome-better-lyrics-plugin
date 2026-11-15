@@ -28,3 +28,7 @@ $RECYCLE.BIN/
 # Local environment and secrets
 .env
 .env.*
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
