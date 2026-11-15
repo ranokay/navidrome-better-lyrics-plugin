@@ -23,8 +23,9 @@ def git_output(checkout: Path, *args: str) -> str:
     )
 
 
-def host_state(checkout: Path) -> tuple[str, str]:
-    return (git_output(checkout, "status", "--porcelain=v1"),
+def host_state(checkout: Path) -> tuple[str, str, str]:
+    return (git_output(checkout, "rev-parse", "HEAD").strip(),
+            git_output(checkout, "status", "--porcelain=v1"),
             git_output(checkout, "diff", "--no-ext-diff", "--no-textconv"))
 
 
@@ -63,7 +64,7 @@ def main() -> int:
     if shutil.which("go") is None:
         parser.error("Go must be available; run this command through mise exec")
     before = host_state(checkout)
-    print(f"Host head: {git_output(checkout, 'rev-parse', 'HEAD').strip()}", flush=True)
+    print(f"Host head: {before[0]}", flush=True)
     with tempfile.TemporaryDirectory(prefix="better-lyrics-host-") as temporary:
         package_bytes = package.read_bytes()
         snapshot = Path(temporary) / "nd-better-lyrics.ndp"
@@ -87,7 +88,7 @@ def main() -> int:
     if after != before:
         print("Host checkout changed during qualification; inspect it before continuing.")
         return 2
-    print("Host checkout status and tracked diff unchanged.")
+    print("Host checkout HEAD, status and tracked diff unchanged.")
     return result.returncode
 
 

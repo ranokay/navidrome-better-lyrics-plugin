@@ -371,10 +371,16 @@ func TestBetterLyricsQualification(t *testing.T) {
 		}
 	})
 	t.Run("config opt-out and credential refresh", func(t *testing.T) {
-		h := newQualificationHarness(t, "credential", "better-lyrics")
+		h := newQualificationHarness(t, "credential", "better-lyrics", "unison")
 		if result, err := h.lookup("Credential"); err != nil || qualificationText(result) != "" {
 			t.Fatalf("anonymous lookup: %v %v", result, err)
 		}
+		h.idle()
+		winnerKeys := h.keys("lyrics:v4:winner:")
+		if len(winnerKeys) != 1 {
+			t.Fatal("anonymous lookup must seed one negative winner")
+		}
+		beforeTail := h.transport.count("unison.boidu.dev")
 		h.reload(fmt.Sprintf("qualification-%d", time.Now().UnixNano()), "better-lyrics", "unison")
 		if result, err := h.lookup("Credential"); err != nil || !strings.Contains(qualificationText(result), "authorized") {
 			t.Fatalf("credential did not reauthorize cached miss: %v %v", result, err)
@@ -382,8 +388,15 @@ func TestBetterLyricsQualification(t *testing.T) {
 		if h.transport.keyed() == 0 {
 			t.Fatal("configured credential did not reach its intended provider")
 		}
+		if keys := h.keys("lyrics:v4:winner:"); len(keys) != 1 || keys[0] != winnerKeys[0] {
+			t.Fatal("credential refresh must replace the same winner key")
+		}
+		// A new track has no cached Unison miss, so its tail must use HTTP.
+		if result, err := h.lookup("Credential tail"); err != nil || !strings.Contains(qualificationText(result), "authorized") {
+			t.Fatalf("credential tail lookup: %v %v", result, err)
+		}
 		h.idle()
-		if h.transport.count("unison.boidu.dev") == 0 || h.transport.leakedCredential() {
+		if h.transport.count("unison.boidu.dev") <= beforeTail || h.transport.leakedCredential() {
 			t.Fatal("credential isolation was not preserved during the tail sweep")
 		}
 		h.reload("")

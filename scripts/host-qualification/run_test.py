@@ -84,13 +84,32 @@ class RunnerTests(unittest.TestCase):
 
         # A trusted checkout outside the plugin workspace is an intended use.
         with patch.object(runner, "git_output", return_value=str(self.checkout)):
-            with patch.object(runner, "host_state", return_value=("dirty", "diff")) as state:
+            with patch.object(runner, "host_state", return_value=("head", "dirty", "diff")) as state:
                 with patch.object(runner.shutil, "which", return_value="/trusted/go"):
                     with patch.object(runner.subprocess, "run", side_effect=failed_test):
                         self.assertEqual(self.invoke(), 1)
                 self.assertEqual(state.call_count, 2)
         self.assertTrue(snapshots)
         self.assertFalse(snapshots[0].parent.exists())
+
+    def test_clean_host_commit_change_invalidates_qualification(self):
+        revision = ["before"]
+
+        def git_output(checkout, *args):
+            if args == ("rev-parse", "--show-toplevel"):
+                return str(checkout)
+            if args == ("rev-parse", "HEAD"):
+                return revision[0]
+            return ""  # Both commits have clean status and diff.
+
+        def successful_test(command, **kwargs):
+            revision[0] = "after"
+            return runner.subprocess.CompletedProcess(command, 0)
+
+        with patch.object(runner, "git_output", side_effect=git_output):
+            with patch.object(runner.shutil, "which", return_value="/trusted/go"):
+                with patch.object(runner.subprocess, "run", side_effect=successful_test):
+                    self.assertEqual(self.invoke(), 2)
 
 
 if __name__ == "__main__":

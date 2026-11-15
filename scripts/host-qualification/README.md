@@ -28,7 +28,7 @@ DNS changes, or production configuration reads. The original manifest allowlist,
 loader, WASI runtime, RPC functions, KV service, and task workers remain active.
 
 The runner prints the package hash and host head and checks that the host's Git
-status and tracked diff remain unchanged. It does not establish UI support,
+HEAD, status and tracked diff remain unchanged. It does not establish UI support,
 live-provider availability, or API-router cache behavior. The overlay calls the
 real plugin capability directly to isolate plugin/host behavior.
 
