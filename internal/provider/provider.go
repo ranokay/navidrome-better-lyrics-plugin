@@ -134,7 +134,7 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 
 	sources := p.activeSources()
 	if len(sources) == 0 {
-		// Deliberate all-disabled opt-out (documented `sources: []` config):
+		// Deliberate all-disabled opt-out (every configured source toggled off):
 		// serve nothing without touching the winner cache or task queue — an
 		// empty source order creates no key and would wedge every lookup
 		// through the unschedulable sweep path.
@@ -154,8 +154,8 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 				// was written: re-rank before serving.
 				// Ties adopt the per-source preferred candidate,
 				// which respects configured order.
-				if best := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
-					p.cacheWinner(track, sources, best, false)
+				if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
+					p.cacheWinnerUntil(track, sources, best, false, expiry)
 					candidate = best
 				}
 				p.maybeEnqueueSweep(track)
@@ -164,8 +164,8 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
-		if best := p.readBestFromSourceCache(track, sources); best.Present() {
-			p.cacheWinner(track, sources, best, false)
+		if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
+			p.cacheWinnerUntil(track, sources, best, false, expiry)
 			p.maybeEnqueueSweep(track)
 			return respond(best), nil
 		}
@@ -177,8 +177,8 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		}
 		return respond(candidate), nil
 	}
-	if best := p.readBestFromSourceCache(track, sources); best.Present() {
-		p.cacheWinner(track, sources, best, false)
+	if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
+		p.cacheWinnerUntil(track, sources, best, false, expiry)
 		p.maybeEnqueueSweep(track)
 		return respond(best), nil
 	}
