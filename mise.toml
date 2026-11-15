@@ -1,6 +1,5 @@
 [tools]
 go = "1.27.2"
-"aqua:WebAssembly/binaryen" = "133"
 
 [tasks.fmt]
 description = "Format Go source"

@@ -258,11 +258,15 @@ docs/                feasibility research, design specs, and implementation plan
 Every downloadable artifact is named `nd-better-lyrics.ndp`; the version lives inside its `plugin/manifest.json`. To cut a release, set `version` in `plugin/manifest.json` and push a matching tag:
 
 ```bash
-git tag v0.4.1
-git push origin v0.4.1
+version="v$(jq -r .version plugin/manifest.json)"
+git tag "$version"
+git push origin "$version"
 ```
 
 The release workflow verifies that the tag equals `v` plus the manifest version, reruns `mise run check`, and publishes a GitHub release containing `nd-better-lyrics.ndp` with automatically generated notes.
+
+A manual run of the Release workflow uploads the package as a workflow artifact.
+Running it on a branch builds a development package without publishing a release.
 
 ## License
 

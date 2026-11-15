@@ -2,29 +2,27 @@ package main
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/provider"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
-func TestPluginVersion(t *testing.T) {
+func TestPluginUserAgentMatchesManifestVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := pluginVersion(); got != "0.4.1" {
-		t.Fatalf("pluginVersion() = %q, want 0.4.1", got)
+	var manifest struct {
+		Version string `json:"version"`
 	}
-}
-
-func TestPluginUserAgentIdentifiesThePlugin(t *testing.T) {
-	t.Parallel()
-
-	// Providers that throttle unidentified clients (LRCLib) rely on this
-	// string naming the plugin, its version, and the repository.
-	userAgent := pluginUserAgent()
-	if !strings.Contains(userAgent, "NavidromeBetterLyricsPlugin/"+pluginVersion()) || !strings.Contains(userAgent, pluginRepository) {
-		t.Fatalf("pluginUserAgent() = %q, want the name, version, and repository", userAgent)
+	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version == "" {
+		t.Fatal("manifest version is required")
+	}
+	want := "NavidromeBetterLyricsPlugin/" + manifest.Version + " (+https://github.com/ranokay/navidrome-better-lyrics-plugin)"
+	if got := pluginUserAgent(); got != want {
+		t.Fatalf("pluginUserAgent() = %q, want %q", got, want)
 	}
 }
 
@@ -44,7 +42,7 @@ func TestManifestAllowlistsEverySourceHost(t *testing.T) {
 			} `json:"taskqueue"`
 		} `json:"permissions"`
 		Config struct {
-			Schema map[string]interface{} `json:"schema"`
+			Schema map[string]any `json:"schema"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
@@ -102,7 +100,7 @@ func TestManifestConfigDefaultsMatchCatalog(t *testing.T) {
 
 	var manifest struct {
 		Config struct {
-			Schema map[string]interface{} `json:"schema"`
+			Schema map[string]any `json:"schema"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
