@@ -90,8 +90,18 @@ The plugin walks the enabled sources in configured order:
 
 Selection and caching rules:
 
+- Navidrome builds containing [#6465](https://github.com/navidrome/navidrome/pull/6465)
+  also cache the plugin response per plugin and track for five minutes, including
+  empty results and errors. Concurrent requests for the same track share one
+  lookup with a one-minute timeout. While that host cache entry remains valid,
+  Navidrome serves it without calling the plugin again. Background discoveries,
+  source-setting or credential changes, and recovery from a temporary provider
+  failure may therefore take up to five minutes to appear on a later request.
+  Polling during that period returns the cached response. The plugin's own
+  per-source caches and cooldowns still apply when Navidrome calls it.
 - The winner cache keys score against a fingerprint of the enabled and ordered
-  source list, so reordering sources in Settings takes effect on the next lookup.
+  source list, so reordering sources in Settings takes effect the next time
+  Navidrome calls the plugin.
   Winner TTLs follow timing quality: 24 h for syllable TTML, 1 h for word/line,
   5 min for plain text and complete misses. Per-source results cache for 24 h
   (synchronized) or 1 h (plain). Per-source clean misses expire after five
