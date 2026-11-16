@@ -82,7 +82,8 @@ func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyric.Candid
 			}
 			return lyric.Candidate{}, nil
 		}
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "PetitLyrics", "elrc")
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "PetitLyrics", "elrc").
+			WithOriginal("wsy", lyric.OriginalSupplied, raw)
 		if candidate.Present() {
 			return candidate, nil
 		}
@@ -93,7 +94,8 @@ func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyric.Candid
 		if strings.HasPrefix(content, "MHDR") {
 			return lyric.Candidate{}, nil
 		}
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "PetitLyrics", "lrc")
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "PetitLyrics", "lrc").
+			WithOriginal("lrc", lyric.OriginalSupplied, []byte(content))
 		if candidate.Present() && candidate.Quality > lyric.TimingUnsynced {
 			return candidate, nil
 		}
@@ -103,7 +105,8 @@ func petitLyricsCandidate(tier string, payload petitlyricsPayload) (lyric.Candid
 		if text == "" {
 			return lyric.Candidate{}, nil
 		}
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "PetitLyrics", "plain")
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "PetitLyrics", "plain").
+			WithOriginal("plain", lyric.OriginalSupplied, []byte(content))
 		if candidate.Present() {
 			return candidate, nil
 		}

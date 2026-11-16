@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,12 +46,12 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 			return nil, Degraded, gateErr
 		}
 		if matched {
-			candidate, candErr := lrclibCandidate(rt, response)
+			candidates, candErr := lrclibCandidates(rt, response)
 			if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
 				return nil, Degraded, candErr
 			}
-			if candErr == nil && candidate.Present() {
-				return []lyric.Candidate{candidate}, health, nil
+			if candErr == nil && len(candidates) > 0 {
+				return candidates, health, nil
 			}
 		}
 	}
@@ -75,7 +76,7 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		return nil, Degraded, fmt.Errorf("decode LRCLib search response: %w", err)
 	}
 	target := int64(math.Round(float64(track.Duration)))
-	var best lyric.Candidate
+	var best []lyric.Candidate
 	bestDelta := int64(math.MaxInt64)
 	var candidateErrors []error
 	for _, result := range results {
@@ -92,7 +93,7 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 				continue
 			}
 		}
-		if best.Present() && delta >= bestDelta {
+		if len(best) > 0 && delta >= bestDelta {
 			continue
 		}
 		rowJSON, err := json.Marshal(result)
@@ -100,19 +101,19 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 			candidateErrors = append(candidateErrors, fmt.Errorf("re-encode LRCLib match: %w", err))
 			continue
 		}
-		candidate, err := lrclibCandidate(rt, rowJSON)
+		candidates, err := lrclibCandidates(rt, rowJSON)
 		if err != nil {
 			if !errors.Is(err, errNoLRCLibPayload) {
 				candidateErrors = append(candidateErrors, err)
 			}
 			continue
 		}
-		if candidate.Present() {
-			best, bestDelta = candidate, delta
+		if len(candidates) > 0 {
+			best, bestDelta = candidates, delta
 		}
 	}
-	if best.Present() {
-		return []lyric.Candidate{best}, Healthy, nil
+	if len(best) > 0 {
+		return best, Healthy, nil
 	}
 	if err := errors.Join(candidateErrors...); err != nil {
 		return nil, Degraded, err
@@ -143,10 +144,13 @@ func fetchLRCLibEndpoint(rt Runtime, source, requestURL string, deadline time.Ti
 	}
 }
 
-// lrclibCandidate turns an LRCLib record (JSON) into the best ranked candidate:
-// lyricsfile words, then synced LRC, then plain text.
-func lrclibCandidate(rt Runtime, record []byte) (lyric.Candidate, error) {
+// lrclibCandidates turns an LRCLib record into every representation the wire
+// supplies: lyricsfile words (ELRC), synced LRC, then plain text. Each candidate
+// keeps its exact source document; reconstructed ELRC never stands in for the
+// lyricsfile.
+func lrclibCandidates(rt Runtime, record []byte) ([]lyric.Candidate, error) {
 	var payload struct {
+		ID           int64  `json:"id"`
 		Instrumental bool   `json:"instrumental"`
 		HasWordSync  bool   `json:"hasWordSync"`
 		PlainLyrics  string `json:"plainLyrics"`
@@ -154,40 +158,55 @@ func lrclibCandidate(rt Runtime, record []byte) (lyric.Candidate, error) {
 		LyricsFile   string `json:"lyricsfile"`
 	}
 	if err := json.Unmarshal(record, &payload); err != nil {
-		return lyric.Candidate{}, fmt.Errorf("decode LRCLib record: %w", err)
+		return nil, fmt.Errorf("decode LRCLib record: %w", err)
 	}
 	if payload.Instrumental {
-		return lyric.Candidate{}, errNoLRCLibPayload
+		return nil, errNoLRCLibPayload
+	}
+	recording := ""
+	if payload.ID > 0 {
+		recording = strconv.FormatInt(payload.ID, 10)
 	}
 
+	candidates := make([]lyric.Candidate, 0, 3)
 	var lyricsFileErr error
 	if payload.HasWordSync && strings.TrimSpace(payload.LyricsFile) != "" {
 		lines, err := lyric.ParseLRCLibLyricsFile([]byte(payload.LyricsFile))
 		if err == nil && len(lines) > 0 {
 			text := lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}
-			if candidate := lyric.NewCandidate(text, "LRCLib", "elrc"); candidate.Present() {
-				return candidate, nil
+			if candidate := lyric.NewCandidate(text, "LRCLib", "elrc").
+				WithOriginal("lyricsfile", lyric.OriginalSupplied, []byte(payload.LyricsFile)).
+				WithRecording(recording); candidate.Present() {
+				candidates = append(candidates, candidate)
 			}
+		} else {
+			// A malformed lyricsfile stays retryable when no fallback exists.
+			lyricsFileErr = err
 		}
-		// A malformed lyricsfile stays retryable when no fallback exists.
-		lyricsFileErr = err
 	}
 	if strings.TrimSpace(payload.SyncedLyrics) != "" {
 		text := lyrics.LyricsText{Text: payload.SyncedLyrics}
-		if candidate := lyric.NewCandidate(text, "LRCLib", "lrc"); candidate.Present() {
-			return candidate, nil
+		if candidate := lyric.NewCandidate(text, "LRCLib", "lrc").
+			WithOriginal("lrc", lyric.OriginalSupplied, []byte(payload.SyncedLyrics)).
+			WithRecording(recording); candidate.Present() {
+			candidates = append(candidates, candidate)
 		}
 	}
 	if strings.TrimSpace(payload.PlainLyrics) != "" {
 		text := lyrics.LyricsText{Text: payload.PlainLyrics}
-		if candidate := lyric.NewCandidate(text, "LRCLib", "plain"); candidate.Present() {
-			return candidate, nil
+		if candidate := lyric.NewCandidate(text, "LRCLib", "plain").
+			WithOriginal("plain", lyric.OriginalSupplied, []byte(payload.PlainLyrics)).
+			WithRecording(recording); candidate.Present() {
+			candidates = append(candidates, candidate)
 		}
 	}
-	if lyricsFileErr != nil {
-		return lyric.Candidate{}, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
+	if len(candidates) > 0 {
+		return candidates, nil
 	}
-	return lyric.Candidate{}, errNoLRCLibPayload
+	if lyricsFileErr != nil {
+		return nil, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
+	}
+	return nil, errNoLRCLibPayload
 }
 
 // lrclibGetURL builds the exact-match lookup; the album is optional but improves
@@ -211,6 +230,7 @@ func lrclibGetURL(track lyrics.TrackInfo) (string, bool) {
 
 // lrclibRecord keeps the fields used for scoring and re-serialization.
 type lrclibRecord struct {
+	ID           int64   `json:"id"`
 	TrackName    string  `json:"trackName"`
 	ArtistName   string  `json:"artistName"`
 	Duration     float64 `json:"duration"`

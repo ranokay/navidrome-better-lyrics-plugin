@@ -65,11 +65,27 @@ func (h Health) Merge(other Health) Health {
 // its candidates.
 type Fetcher func(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.Candidate, Health, error)
 
+// OriginalSupport declares whether an adapter can preserve a genuine
+// source-native document. It is an explicit inventory entry, not an inference:
+// every catalog row states its support and, when limited, why.
+type OriginalSupport string
+
+const (
+	// OriginalsNative exposes the provider's own document before conversion.
+	OriginalsNative OriginalSupport = "native"
+	// OriginalsConditional exposes a document only for some representations.
+	OriginalsConditional OriginalSupport = "conditional"
+	// OriginalsUnavailable exposes only an API envelope or a reconstruction.
+	OriginalsUnavailable OriginalSupport = "unavailable"
+)
+
 // Source describes one upstream lyrics backend participating in the chain.
 type Source struct {
 	ID             string
 	Display        string
 	Hosts          []string
 	DefaultEnabled bool
+	Originals      OriginalSupport
+	OriginalsNote  string
 	Fetch          Fetcher
 }

@@ -1,0 +1,274 @@
+package provider
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
+)
+
+const testInstanceSalt = "0123456789abcdef0123456789abcdef"
+
+func seededCache(t *testing.T) *fakeLyricsCache {
+	t.Helper()
+	cache := newFakeLyricsCache()
+	if err := cache.SetWithTTL(instanceSaltKey, []byte(testInstanceSalt), 3600); err != nil {
+		t.Fatalf("seed identity salt: %v", err)
+	}
+	return cache
+}
+
+func originalCandidate(format, text, nativeFormat string, native []byte, recording string) lyric.Candidate {
+	return lyric.NewCandidate(lyrics.LyricsText{Text: text}, "Same Provider", format).
+		WithOriginal(nativeFormat, lyric.OriginalSupplied, native).
+		WithRecording(recording)
+}
+
+func listingByFormat(t *testing.T, p *Provider, track lyrics.TrackInfo, format string) VariantSummary {
+	t.Helper()
+	for _, summary := range p.GetLyricsVariants(track) {
+		if summary.Format == format {
+			return summary
+		}
+	}
+	t.Fatalf("listing has no %q variant", format)
+	return VariantSummary{}
+}
+
+func TestProvider_EveryAdapterCandidateIsAddressable(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}
+	fetches := 0
+	src := source.Source{
+		ID: "same", Display: "Same", Hosts: []string{"same.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			fetches++
+			return []lyric.Candidate{
+				originalCandidate("lrc", "[00:01.00]line A", "lrc", []byte("[00:01.00]line A"), "rec-A"),
+				originalCandidate("plain", "line B", "plain", []byte("line B"), "rec-B"),
+			}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatalf("GetLyrics() error = %v", err)
+	}
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatalf("GetLyricsV2() error = %v", err)
+	}
+	if len(v2.Entries) != 2 {
+		t.Fatalf("v2 entries = %#v, want both same-provider representations", v2.Entries)
+	}
+	if v2.Entries[0].Identity == nil || v2.Entries[1].Identity == nil {
+		t.Fatalf("v2 entries lack identities: %#v", v2.Entries)
+	}
+	if v2.Entries[0].Identity.Equal(*v2.Entries[1].Identity) {
+		t.Fatal("same-provider variants must have distinct identities")
+	}
+	if v2.Entries[0].Identity.Recording != "rec-A" || v2.Entries[1].Identity.Recording != "rec-B" {
+		t.Fatalf("recordings = %q/%q, want the provider ids", v2.Entries[0].Identity.Recording, v2.Entries[1].Identity.Recording)
+	}
+
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 2 {
+		t.Fatalf("listing = %#v, want two addressable variants", listing)
+	}
+	for index, summary := range listing {
+		if summary.PlaybackIndex != index {
+			t.Fatalf("playbackIndex = %d at %d, want the playback entry index", summary.PlaybackIndex, index)
+		}
+		if !summary.Identity.Equal(*v2.Entries[index].Identity) {
+			t.Fatalf("listing identity %d does not match playback identity", index)
+		}
+	}
+
+	lrc := listing[0].Identity
+	if listing[0].Format != "lrc" {
+		lrc = listing[1].Identity
+	}
+	document, reason := p.GetLyricsOriginal(track, lrc)
+	if reason != "" || string(document.Bytes) != "[00:01.00]line A" || document.Format != "lrc" {
+		t.Fatalf("lrc original = %#v/%q, want the exact lrc document", document, reason)
+	}
+	plain := listingByFormat(t, p, track, "plain").Identity
+	document, reason = p.GetLyricsOriginal(track, plain)
+	if reason != "" || string(document.Bytes) != "line B" || document.Format != "plain" {
+		t.Fatalf("plain original = %#v/%q, want the exact plain document", document, reason)
+	}
+
+	// The bundle keeps both candidates even though the legacy per-source entry
+	// and the v1 response carry only the winner.
+	key, _ := lyricsVariantCacheKey(track, "same")
+	raw, exists, _ := cache.Get(key)
+	if !exists {
+		t.Fatal("variant bundle was not written")
+	}
+	var bundle cachedSourceBundle
+	if err := json.Unmarshal(raw, &bundle); err != nil || len(bundle.Candidates) != 2 {
+		t.Fatalf("bundle = %#v/%v, want both candidates", bundle, err)
+	}
+	if ttl := cache.ttlsForKey[key]; ttl != lyricsCacheHourTTLSeconds {
+		t.Fatalf("bundle TTL = %d, want the shortest candidate TTL (%d)", ttl, lyricsCacheHourTTLSeconds)
+	}
+
+	// Eviction refetches the same selection and preserves exact bytes.
+	for key := range cache.values {
+		if strings.HasPrefix(key, lyricsOriginalCacheKeyPrefix) {
+			delete(cache.values, key)
+		}
+	}
+	before := fetches
+	document, reason = p.GetLyricsOriginal(track, lrc)
+	if reason != "" || string(document.Bytes) != "[00:01.00]line A" {
+		t.Fatalf("refetched original = %#v/%q, want the same selection", document, reason)
+	}
+	if fetches != before+1 {
+		t.Fatalf("fetches = %d, want one bounded refetch", fetches)
+	}
+}
+
+func TestProvider_RecordingIdentityRejectsChangedContentWithoutProviderID(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	document := []byte("[00:01.00]first document")
+	fetches := 0
+	src := source.Source{
+		ID: "no-id", Display: "No ID", Hosts: []string{"noid.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			fetches++
+			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: string(document)}, "Same Provider", "lrc").
+				WithOriginal("lrc", lyric.OriginalSupplied, document)}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 1 {
+		t.Fatalf("listing = %#v", listing)
+	}
+	identity := listing[0].Identity
+	if !strings.HasPrefix(identity.Recording, "sha256:") {
+		t.Fatalf("recording = %q, want a content digest", identity.Recording)
+	}
+	if identity.Instance != p.sourceInstanceID("no-id") {
+		t.Fatal("identity must be bound to the current source instance")
+	}
+
+	for key := range cache.values {
+		if strings.HasPrefix(key, lyricsOriginalCacheKeyPrefix) {
+			delete(cache.values, key)
+		}
+	}
+	document = []byte("[00:01.00]different document")
+	got, reason := p.GetLyricsOriginal(track, identity)
+	if reason == "" || len(got.Bytes) != 0 {
+		t.Fatalf("changed content = %#v/%q, want unavailable with no replacement", got, reason)
+	}
+	if fetches < 2 {
+		t.Fatalf("fetches = %d, want a bounded refetch attempt", fetches)
+	}
+}
+
+func TestProvider_SourceInstanceUses128BitCredentialSeparatedFingerprint(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	key := "secret-a"
+	config := func(name string) (string, bool) {
+		if name == "betterLyricsApiKey" {
+			return key, true
+		}
+		return "", false
+	}
+	p := newTestProviderWithDeps(nil, cache, time.Now, config, nil)
+	first := p.sourceInstanceID("better-lyrics")
+	prefix, suffix, ok := strings.Cut(first, ":")
+	if !ok || prefix != "better-lyrics" || len(suffix) != 32 {
+		t.Fatalf("instance = %q, want a 128-bit (32 hex) suffix", first)
+	}
+	if strings.Contains(first, key) {
+		t.Fatal("the credential must never appear in an instance id")
+	}
+	if again := p.sourceInstanceID("better-lyrics"); again != first {
+		t.Fatalf("instance changed without a config change: %q != %q", again, first)
+	}
+	key = "secret-b"
+	if second := p.sourceInstanceID("better-lyrics"); second == first {
+		t.Fatal("a credential change must produce a new instance")
+	}
+	// A different installation salt must also separate instances.
+	cache2 := newFakeLyricsCache()
+	_ = cache2.SetWithTTL(instanceSaltKey, []byte("fedcba9876543210fedcba9876543210"), 3600)
+	p2 := newTestProviderWithDeps(nil, cache2, time.Now, config, nil)
+	if p2.sourceInstanceID("better-lyrics") == p.sourceInstanceID("better-lyrics") {
+		t.Fatal("different installation salts must not share instance ids")
+	}
+}
+
+func TestProvider_RetrievalIsBoundToTrackPluginAndCurrentInstance(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	key := "secret-a"
+	config := func(name string) (string, bool) {
+		if name == "betterLyricsApiKey" {
+			return key, true
+		}
+		return "", false
+	}
+	src := source.Source{
+		ID: "better-lyrics", Display: "Same", Hosts: []string{"bl.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return []lyric.Candidate{originalCandidate("lrc", "[00:01.00]line", "lrc", []byte("[00:01.00]line"), "rec-1")}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithDeps(nil, cache, time.Now, config, nil)
+	p.sources = []source.Source{src}
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 1 {
+		t.Fatalf("listing = %#v", listing)
+	}
+	identity := listing[0].Identity
+
+	key = "secret-b"
+	if document, reason := p.GetLyricsOriginal(track, identity); reason == "" || len(document.Bytes) != 0 {
+		t.Fatalf("stale instance = %#v/%q, want unavailable", document, reason)
+	}
+	if summaries := p.GetLyricsVariants(track); len(summaries) != 0 {
+		t.Fatalf("listing = %#v, want no addressable stale variants", summaries)
+	}
+
+	otherTrack := lyrics.TrackInfo{Title: "Other", Artist: "Artist", Duration: 200}
+	if document, reason := p.GetLyricsOriginal(otherTrack, identity); reason == "" || len(document.Bytes) != 0 {
+		t.Fatalf("other track = %#v/%q, want unavailable", document, reason)
+	}
+
+	p.sources = []source.Source{{ID: "other", Display: "Other", Fetch: src.Fetch}}
+	if document, reason := p.GetLyricsOriginal(track, identity); reason != "source is disabled" || len(document.Bytes) != 0 {
+		t.Fatalf("disabled source = %#v/%q, want explicit unavailable", document, reason)
+	}
+
+	encoded, _ := json.Marshal(identity)
+	if strings.Contains(string(encoded), "secret-a") || strings.Contains(string(encoded), "secret-b") {
+		t.Fatal("identity JSON must never expose credentials")
+	}
+}

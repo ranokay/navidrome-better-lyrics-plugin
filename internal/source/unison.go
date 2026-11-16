@@ -55,7 +55,8 @@ func fetchUnison(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 			continue
 		}
 
-		candidate := lyric.NewCandidate(unisonLyrics, "Unison", unisonFormat)
+		candidate := lyric.NewCandidate(unisonLyrics, "Unison", unisonFormat).
+			WithOriginal(unisonFormat, lyric.OriginalSupplied, []byte(unisonLyrics.Text))
 		if !candidate.Present() {
 			lookupErrors = append(lookupErrors, fmt.Errorf("unison API returned malformed %s lyrics", strings.ToUpper(unisonFormat)))
 			health = health.Merge(Degraded)

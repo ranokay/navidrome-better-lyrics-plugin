@@ -17,6 +17,10 @@ const pluginRepository = "https://github.com/ranokay/navidrome-better-lyrics-plu
 //go:embed manifest.json
 var manifestJSON []byte
 
+// providerInstance is shared by the required playback export and the optional
+// variant/original exports that are hand-written against the host contract.
+var providerInstance *provider.Provider
+
 func init() {
 	p := provider.New(provider.Deps{
 		Send:  host.HTTPSend,
@@ -31,6 +35,7 @@ func init() {
 		Logf:        logDebug,
 		UserAgent:   pluginUserAgent(),
 	})
+	providerInstance = p
 	lyrics.Register(p)
 	lifecycle.Register(p)
 	taskworker.Register(p)

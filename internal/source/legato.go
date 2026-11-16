@@ -31,7 +31,8 @@ func fetchLegato(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 	if strings.TrimSpace(text.Text) == "" {
 		return nil, Healthy, nil
 	}
-	return []lyric.Candidate{lyric.NewCandidate(text, "Better Lyrics Legato", "lrc")}, Healthy, nil
+	return []lyric.Candidate{lyric.NewCandidate(text, "Better Lyrics Legato", "lrc").
+		WithOriginal("lrc", lyric.OriginalSupplied, []byte(text.Text))}, Healthy, nil
 }
 
 func fetchLegatoPayload(rt Runtime, requestURL string, headers map[string]string, deadline time.Time) (lyrics.LyricsText, error) {

@@ -282,14 +282,15 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 		}
 		storedAny := false
 		hadCandidates := false
-		for _, candidate := range candidates {
-			if !candidate.Present() {
+		for index := range candidates {
+			if !candidates[index].Present() {
 				continue
 			}
 			hadCandidates = true
-			if p.cacheSourceCandidate(track, src.ID, candidate) {
-				storedAny = true
-			}
+			p.prepareCandidate(track, src.ID, &candidates[index])
+		}
+		if hadCandidates {
+			storedAny = p.cacheSourceCandidates(track, src.ID, candidates)
 		}
 		switch {
 		case storedAny:

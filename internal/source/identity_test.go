@@ -291,7 +291,7 @@ func TestDurationGatesSkipWithoutDuration(t *testing.T) {
 		}
 		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"trackName":"Song","artistName":"Artist","duration":240,"plainLyrics":"words","syncedLyrics":"[00:01.00]words"}]`)}, nil
 	})
-	if candidates, _, err := fetchLRCLib(lrclibProvider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(testLookupBudget)); err != nil || len(candidates) != 1 {
+	if candidates, _, err := fetchLRCLib(lrclibProvider, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(testLookupBudget)); err != nil || len(candidates) == 0 || candidates[0].Quality < lyric.TimingLine {
 		t.Fatalf("lrclib durationless = %#v/%v, want the identity match", candidates, err)
 	}
 

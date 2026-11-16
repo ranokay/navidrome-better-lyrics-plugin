@@ -63,6 +63,40 @@ released-host installation and task tests.
   Server-side sidecar writes and retain-forever controls are outside the product
   contract, not unfinished plugin work. Keep static Unison attribution.
 
+## Original documents and variant identities
+
+The optional variant exports are additive; `nd_lyrics_get_lyrics` and its response
+shape are unchanged, so older hosts and clients keep working. A compatible host
+probes `nd_lyrics_get_lyrics_v2`, `nd_lyrics_get_variants` and
+`nd_lyrics_get_original` and falls back to the required playback export when they
+are absent. The companion host branch (unreleased, stacked on the provenance
+branch) adds the capability and authenticated retrieval; released v0.64.2 hosts
+and the separate #6465 response-cache work do not provide these endpoints.
+
+- A variant identity is versioned and names source instance, provider recording,
+  language, role and playback format. The instance is a keyed HMAC fingerprint
+  with at least 128 bits of output; credentials never appear in an identity.
+  Providers without a record id use a content digest of the native document, so a
+  changed document cannot silently match an earlier selection.
+- Every candidate an adapter returns is kept in a bounded per-source bundle, not
+  only the winner or one per-source entry. Playback v2 and the listing expose all
+  of them with identities; truncation drops selections, which then report
+  unavailable rather than being remapped.
+- Native documents are captured before trimming, conversion, credit stripping or
+  offsetting. Provenance, not the format name, decides whether bytes are an
+  original: source-supplied ELRC/LRC is genuine, a reconstruction is not, and a
+  provider conversion is reported separately. QQ QRC preserves the `QrcInfos` XML
+  container; the outer boidu JSON envelope and the extracted `LyricContent` rows
+  are not originals. LyricsPlus, YouTube Music and Genius expose only ordered JSON
+  rows or extracted page text, so their originals are explicitly unavailable.
+- Originals live in the plugin KV as separate entries keyed by the exact identity,
+  under the existing 1 MiB entry and reserved-control-capacity guards. Their TTL
+  equals the candidate's; an expired or evicted artifact triggers one bounded
+  refetch of the same source and must match the identity exactly. Disabled
+  sources, changed credentials/config and changed documents report unavailable.
+- Fixture provenance and SHA-256 for the TTML, QRC and KRC native documents live in
+  `internal/source/testdata/fixtures.md`; tests pin those hashes.
+
 ## Upstream dependencies
 
 The latest released Navidrome is [v0.64.2](https://github.com/navidrome/navidrome/releases/tag/v0.64.2).

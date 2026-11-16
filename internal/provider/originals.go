@@ -1,0 +1,106 @@
+package provider
+
+import (
+	"strings"
+	"time"
+
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
+)
+
+// originalRefetchBudget bounds the on-demand refetch used when an artifact has
+// expired or been evicted. Retrieval never walks other sources.
+const originalRefetchBudget = 3 * time.Second
+
+// GetLyricsOriginal returns the exact native document for one selection. The
+// selection is bound to this track, this plugin's enabled source, and the
+// current source instance; an evicted artifact triggers one bounded refetch of
+// the same source and must match the identity exactly. A missing or changed
+// selection is reported unavailable, never replaced by another candidate.
+func (p *Provider) GetLyricsOriginal(track lyrics.TrackInfo, identity lyric.VariantIdentity) (lyric.Original, string) {
+	if len(strings.TrimSpace(track.Title)) == 0 || lyric.TrackArtist(track) == "" {
+		return lyric.Original{}, "track metadata is incomplete"
+	}
+	if !identity.Valid() {
+		return lyric.Original{}, "invalid selection"
+	}
+	sourceID, ok := identity.InstanceSourceID()
+	if !ok {
+		return lyric.Original{}, "invalid selection"
+	}
+	enabled := false
+	for _, src := range p.activeSources() {
+		if src.ID == sourceID {
+			enabled = true
+			break
+		}
+	}
+	if !enabled {
+		return lyric.Original{}, "source is disabled"
+	}
+	if p.sourceInstanceID(sourceID) != identity.Instance {
+		return lyric.Original{}, "source configuration changed"
+	}
+
+	listed := false
+	for _, candidate := range p.readCachedSourceCandidates(track, sourceID) {
+		if candidate.Identity != nil && candidate.Identity.Equal(identity) {
+			listed = true
+			break
+		}
+	}
+	if listed {
+		if document, ok := p.readOriginalArtifact(track, identity); ok {
+			return document, ""
+		}
+	}
+
+	var src source.Source
+	found := false
+	for _, active := range p.activeSources() {
+		if active.ID == sourceID {
+			src, found = active, true
+			break
+		}
+	}
+	if !found || src.Fetch == nil {
+		return lyric.Original{}, "source does not support retrieval"
+	}
+	if p.sourceInCooldown(src) || p.sourceFailureBackoff(src.ID) > 0 {
+		return lyric.Original{}, "source is cooling down"
+	}
+	deadline := p.now().Add(originalRefetchBudget)
+	candidates, _, err := src.Fetch(p, track, deadline)
+	if err != nil {
+		return lyric.Original{}, "selection unavailable"
+	}
+	for index := range candidates {
+		p.prepareCandidate(track, sourceID, &candidates[index])
+	}
+	p.cacheSourceCandidates(track, sourceID, candidates)
+	// A bounded bundle may have dropped this selection: only a selection that
+	// remains listed is addressable, and a dropped one reports unavailable
+	// rather than causing endless refetches.
+	listed = false
+	for _, candidate := range p.readCachedSourceCandidates(track, sourceID) {
+		if candidate.Identity != nil && candidate.Identity.Equal(identity) {
+			listed = true
+			break
+		}
+	}
+	if !listed {
+		return lyric.Original{}, "selection is no longer offered"
+	}
+	for index := range candidates {
+		candidate := candidates[index]
+		if candidate.Identity == nil || !candidate.Identity.Equal(identity) {
+			continue
+		}
+		if document, ok := p.readOriginalArtifact(track, identity); ok {
+			return document, ""
+		}
+		return lyric.Original{}, candidate.OriginalDetails().Reason
+	}
+	return lyric.Original{}, "selection is no longer offered"
+}

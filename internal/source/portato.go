@@ -88,7 +88,8 @@ func fetchPortato(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 			health = health.Merge(Degraded)
 			continue
 		}
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Better Lyrics Portato", "elrc")
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Better Lyrics Portato", "elrc").
+			WithOriginal("qrc", lyric.OriginalSupplied, []byte(text))
 		if !candidate.Present() {
 			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics QQ API returned no usable timed lines"))
 			health = health.Merge(Degraded)

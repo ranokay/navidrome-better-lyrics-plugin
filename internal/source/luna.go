@@ -71,9 +71,15 @@ func fetchLuna(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 		return nil, Degraded, fmt.Errorf("decode Luna track response: %w", err)
 	}
 
-	content := strings.TrimSpace(detail.Lyric.Content)
+	rawContent := detail.Lyric.Content
+	content := strings.TrimSpace(rawContent)
 	if content == "" {
 		return nil, Healthy, nil
+	}
+	withDocument := func(candidate lyric.Candidate, format string) lyric.Candidate {
+		return candidate.
+			WithOriginal(format, lyric.OriginalSupplied, []byte(rawContent)).
+			WithRecording(trackID)
 	}
 	switch strings.ToLower(strings.TrimSpace(detail.Lyric.Type)) {
 	case "krc":
@@ -84,14 +90,14 @@ func fetchLuna(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 			return nil, Degraded, fmt.Errorf("parse Luna KRC payload: %w", parseErr)
 		}
 		if len(lines) > 0 {
-			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Soda (Luna)", "elrc")
+			candidate := withDocument(lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Soda (Luna)", "elrc"), "krc")
 			if candidate.Present() {
 				return []lyric.Candidate{candidate}, Healthy, nil
 			}
 		}
 		return nil, Healthy, nil
 	case "lrc":
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "lrc")
+		candidate := withDocument(lyric.NewCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "lrc"), "lrc")
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}
@@ -99,7 +105,7 @@ func fetchLuna(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 	default:
 		// Unknown payload type: return whatever is usable rather than discard
 		// otherwise valid lyrics (unknown dialects must not be dropped).
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain")
+		candidate := withDocument(lyric.NewCandidate(lyrics.LyricsText{Text: content}, "Soda (Luna)", "plain"), "plain")
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}

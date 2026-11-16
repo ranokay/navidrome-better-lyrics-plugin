@@ -2,6 +2,7 @@ package source
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -93,14 +94,17 @@ func TestLRCLibCandidates_PrefersWordSyncedLyricsFile(t *testing.T) {
 	if health != Healthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 {
-		t.Fatalf("candidates = %#v, want one", candidates)
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %#v, want synced and plain representations", candidates)
 	}
 	candidate := candidates[0]
-	if candidate.Quality != lyric.TimingWord && candidate.Quality != lyric.TimingLine {
-		t.Fatalf("quality = %v, want synchronized", candidate.Quality)
+	if candidate.Quality != lyric.TimingLine {
+		t.Fatalf("quality = %v, want the synchronized line first", candidate.Quality)
 	}
-	assertLyricsSource(t, candidate.Response.Source, "LRCLib", candidate.Response.Source.Format)
+	assertLyricsSource(t, candidate.Response.Source, "LRCLib", "lrc")
+	if candidates[1].Quality != lyric.TimingUnsynced {
+		t.Fatalf("quality = %v, want plain second", candidates[1].Quality)
+	}
 }
 
 func TestLRCLibCandidates_FallsBackToSearchOnExactMiss(t *testing.T) {
@@ -128,8 +132,8 @@ func TestLRCLibCandidates_FallsBackToSearchOnExactMiss(t *testing.T) {
 	if health != Healthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 {
-		t.Fatalf("candidates = %#v, want one", candidates)
+	if len(candidates) == 0 || candidates[0].Quality < lyric.TimingLine {
+		t.Fatalf("candidates = %#v, want a synchronized search result", candidates)
 	}
 	if requests != 2 {
 		t.Fatalf("request count = %d, want get then search", requests)
@@ -341,8 +345,8 @@ func TestLRCLibCandidates_ExactInstrumentalFallsBackToSearch(t *testing.T) {
 	if health != Healthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 1 || candidates[0].Quality != lyric.TimingLine {
-		t.Fatalf("candidates = %#v, want the search fallback line candidate", candidates)
+	if len(candidates) != 2 || candidates[0].Quality != lyric.TimingLine {
+		t.Fatalf("candidates = %#v, want the search fallback line then plain", candidates)
 	}
 	assertLyricsSource(t, candidates[0].Response.Source, "LRCLib", "lrc")
 	if requests != 2 {
@@ -365,5 +369,43 @@ func TestLRCLibCandidates_InstrumentalSearchMatchIsCleanMiss(t *testing.T) {
 	}, time.Now().Add(testLookupBudget))
 	if err != nil || len(candidates) != 0 || health != Healthy {
 		t.Fatalf("result = %#v/%v/%v; want clean miss when the only search match is instrumental", candidates, health, err)
+	}
+}
+
+func TestLRCLibCandidates_KeepsEveryRepresentation(t *testing.T) {
+	t.Parallel()
+
+	lyricsFile := "version: '1.0'\nmetadata:\n  title: Song\nlines:\n- start_ms: 1000\n  end_ms: 2500\n  text: first line\n  words:\n  - text: first\n    start_ms: 1000\n    end_ms: 1500\n  - text: line\n    start_ms: 1500\n    end_ms: 2500\n"
+	record := fmt.Sprintf(`{"id":7,"trackName":"Song","artistName":"Artist","duration":200,"instrumental":false,"hasWordSync":true,"lyricsfile":%q,"syncedLyrics":"[00:01.00]first line","plainLyrics":"first line"}`, lyricsFile)
+	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(record)}, nil
+	})
+
+	candidates, _, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil {
+		t.Fatalf("fetchLRCLib() error = %v", err)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("candidates = %d, want elrc, lrc, plain", len(candidates))
+	}
+	if candidates[0].Quality != lyric.TimingWord || candidates[1].Quality != lyric.TimingLine || candidates[2].Quality != lyric.TimingUnsynced {
+		t.Fatalf("qualities = %v/%v/%v, want word/line/unsynced", candidates[0].Quality, candidates[1].Quality, candidates[2].Quality)
+	}
+	if candidates[0].Original == nil || candidates[0].Original.Format != "lyricsfile" || string(candidates[0].Original.Bytes) != lyricsFile {
+		t.Fatalf("elrc original = %#v, want the exact lyricsfile document", candidates[0].Original)
+	}
+	if candidates[1].Original == nil || string(candidates[1].Original.Bytes) != "[00:01.00]first line" {
+		t.Fatalf("lrc original = %#v, want the exact synced field", candidates[1].Original)
+	}
+	if candidates[2].Original == nil || string(candidates[2].Original.Bytes) != "first line" {
+		t.Fatalf("plain original = %#v, want the exact plain field", candidates[2].Original)
+	}
+	if candidates[0].Response.Lyrics[0].Text == lyricsFile {
+		t.Fatal("ELRC playback must be the reconstruction, not the native lyricsfile")
+	}
+	for _, candidate := range candidates {
+		if candidate.Recording != "7" {
+			t.Fatalf("recording = %q, want the wire record id", candidate.Recording)
+		}
 	}
 }

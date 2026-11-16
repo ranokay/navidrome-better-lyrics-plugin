@@ -89,7 +89,9 @@ func fetchLunaBeat(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 	if text == "" {
 		return nil, Healthy, nil
 	}
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "LunaBeat", "ttml")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "LunaBeat", "ttml").
+		WithOriginal("ttml", lyric.OriginalSupplied, response.Body).
+		WithRecording(entry.ID)
 	if !candidate.Present() {
 		if lyric.EmptyDocument(text, "ttml") {
 			return nil, Healthy, nil
