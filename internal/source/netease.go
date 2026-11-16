@@ -86,6 +86,13 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	}
 
 	recording := strconv.FormatInt(song.ID, 10)
+	info := lyric.RecordingInfo{Title: song.Name, Duration: float64(song.Duration) / 1000}
+	for _, artist := range song.Artists {
+		if strings.TrimSpace(artist.Name) != "" {
+			info.Artist = artist.Name
+			break
+		}
+	}
 	var candidates []lyric.Candidate
 	var yrcParseErr error
 	rawYRC := lyricEnvelope.YRC.Lyric
@@ -94,7 +101,7 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 		if parseErr == nil && len(lines) > 0 {
 			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "NetEase", "elrc").
 				WithOriginal("yrc", lyric.OriginalSupplied, []byte(rawYRC)).
-				WithRecording(recording)
+				WithRecording(recording).WithRecordingInfo(info)
 			if candidate.Present() {
 				candidates = append(candidates, candidate)
 			}
@@ -105,7 +112,7 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	if lrc := strings.TrimSpace(rawLRC); lrc != "" {
 		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc").
 			WithOriginal("lrc", lyric.OriginalSupplied, []byte(rawLRC)).
-			WithRecording(recording)
+			WithRecording(recording).WithRecordingInfo(info)
 		if candidate.Present() {
 			candidates = append(candidates, candidate)
 		}

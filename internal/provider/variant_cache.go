@@ -7,6 +7,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
 // cachedSourceVariant is one addressable representation stored in a source
@@ -16,12 +17,14 @@ type cachedSourceVariant struct {
 	Response  lyrics.GetLyricsResponse `json:"response"`
 	Variant   *lyric.VariantIdentity   `json:"variant,omitempty"`
 	Original  *lyric.OriginalInfo      `json:"original,omitempty"`
+	Match     lyric.RecordingMatch     `json:"match,omitempty"`
 	ExpiresAt int64                    `json:"expiresAt,omitempty"`
 }
 
 type cachedSourceBundle struct {
 	Generation  int                   `json:"generation,omitempty"`
 	Candidates  []cachedSourceVariant `json:"candidates,omitempty"`
+	Evidence    []lyric.Evidence      `json:"evidence,omitempty"`
 	Credentials string                `json:"credentials,omitempty"`
 	ExpiresAt   int64                 `json:"expiresAt,omitempty"`
 }
@@ -127,31 +130,33 @@ func (p *Provider) readOriginalArtifact(track lyrics.TrackInfo, identity lyric.V
 // bundle for playback v2 and the variant listing. It reports whether the legacy
 // entry landed, preserving the sweep's coverage contract.
 func (p *Provider) cacheSourceCandidates(track lyrics.TrackInfo, sourceID string, candidates []lyric.Candidate) bool {
-	present := make([]lyric.Candidate, 0, len(candidates))
+	kept := make([]lyric.Candidate, 0, len(candidates))
 	var best lyric.Candidate
 	for index := range candidates {
 		candidate := candidates[index]
 		if !candidate.Present() {
+			kept = append(kept, candidate)
 			continue
 		}
 		if candidate.Identity == nil {
 			p.prepareCandidate(track, sourceID, &candidate)
 		}
-		candidates[index] = candidate
-		present = append(present, candidate)
-		best = lyric.Prefer(best, candidate)
+		kept = append(kept, candidate)
+		if candidate.Playable() {
+			best = lyric.Prefer(best, candidate)
+		}
 	}
-	if len(present) == 0 {
-		return false
-	}
-	key, ok := lyricsCacheKeyForSource(track, sourceID)
-	if !ok {
+	if len(kept) == 0 {
 		return false
 	}
 	credentials := p.sourceCredentialsFingerprint(sourceID)
-	stored := p.storeCandidateValue(key, best, sourceCacheTTLSeconds(best.Quality), credentials)
-
-	p.storeSourceBundle(track, sourceID, present, credentials)
+	stored := false
+	if best.Present() {
+		if key, ok := lyricsCacheKeyForSource(track, sourceID); ok {
+			stored = p.storeCandidateValue(key, best, sourceCacheTTLSeconds(best.Quality), credentials)
+		}
+	}
+	p.storeSourceBundle(track, sourceID, kept, credentials)
 	return stored
 }
 
@@ -163,7 +168,12 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 	now := p.now().Unix()
 	maxTTL := int64(0)
 	entries := make([]cachedSourceVariant, 0, len(candidates))
+	evidence := make([]lyric.Evidence, 0)
 	for _, candidate := range candidates {
+		evidence = append(evidence, candidate.Evidence...)
+		if !candidate.Present() {
+			continue
+		}
 		candidateTTL := sourceCacheTTLSeconds(candidate.Quality)
 		if candidateTTL > maxTTL {
 			maxTTL = candidateTTL
@@ -174,8 +184,12 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 			Response:  candidate.Response,
 			Variant:   candidate.Identity,
 			Original:  &original,
+			Match:     candidate.Match,
 			ExpiresAt: now + candidateTTL,
 		})
+	}
+	if len(evidence) > 0 && maxTTL < lyricsCacheHourTTLSeconds {
+		maxTTL = lyricsCacheHourTTLSeconds
 	}
 	if maxTTL <= 0 {
 		return
@@ -184,6 +198,7 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 		return json.Marshal(cachedSourceBundle{
 			Generation:  lyricsCacheGeneration,
 			Candidates:  candidates,
+			Evidence:    dedupeEvidence(evidence),
 			Credentials: credentials,
 			ExpiresAt:   now + maxTTL,
 		})
@@ -239,6 +254,10 @@ func (p *Provider) readCachedSourceCandidates(track lyrics.TrackInfo, sourceID s
 						Response: entry.Response,
 						Quality:  entry.Quality,
 						Identity: entry.Variant,
+						Match:    entry.Match,
+					}
+					if candidate.Match.Status == "" {
+						candidate.Match = lyric.RecordingMatch{Status: lyric.MatchUnassessed}
 					}
 					if entry.Original != nil {
 						candidate.OriginalSummary = *entry.Original
@@ -272,4 +291,53 @@ func (p *Provider) readCachedSourceCandidates(track lyrics.TrackInfo, sourceID s
 		p.assignIdentity(sourceID, &candidate)
 	}
 	return []lyric.Candidate{candidate}
+}
+
+// readCachedSourceEvidence returns typed assertions stored with a source's
+// candidate bundle. It never fabricates evidence from misses or errors.
+func (p *Provider) readCachedSourceEvidence(track lyrics.TrackInfo, sourceID string) []lyric.Evidence {
+	key, ok := lyricsVariantCacheKey(track, sourceID)
+	if !ok {
+		return nil
+	}
+	value, exists, err := p.cache.Get(key)
+	if err != nil || !exists {
+		return nil
+	}
+	var bundle cachedSourceBundle
+	if err := json.Unmarshal(value, &bundle); err != nil ||
+		bundle.Generation != lyricsCacheGeneration ||
+		bundle.Credentials != p.sourceCredentialsFingerprint(sourceID) ||
+		(bundle.ExpiresAt > 0 && bundle.ExpiresAt <= p.now().Unix()) {
+		return nil
+	}
+	return bundle.Evidence
+}
+
+// sourceEvidence merges winner-envelope and per-source assertions without
+// double-counting, so cached reads keep the same conflict visibility as a fresh
+// lookup.
+func (p *Provider) sourceEvidence(track lyrics.TrackInfo, sources []source.Source, winner []lyric.Evidence) []lyric.Evidence {
+	evidence := append([]lyric.Evidence{}, winner...)
+	for _, src := range sources {
+		evidence = append(evidence, p.readCachedSourceEvidence(track, src.ID)...)
+	}
+	return dedupeEvidence(evidence)
+}
+
+func dedupeEvidence(evidence []lyric.Evidence) []lyric.Evidence {
+	out := make([]lyric.Evidence, 0, len(evidence))
+	for _, entry := range evidence {
+		exists := false
+		for _, kept := range out {
+			if lyric.SameEvidence(kept, entry) {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			out = append(out, entry)
+		}
+	}
+	return out
 }

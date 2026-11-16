@@ -130,7 +130,7 @@ func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track ly
 // retaining plain text as the final fallback. This is the required capability
 // and its response shape stays compatible with older hosts and clients.
 func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
-	candidate, sources, err := p.resolveLyrics(input)
+	candidate, sources, _, err := p.resolveLyrics(input)
 	return p.responsesWithVariants(input.Track, sources, candidate), err
 }
 
@@ -138,19 +138,21 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 // versioned identity on every entry and every cached representation from each
 // source. It resolves once and does not add a second fetch.
 func (p *Provider) GetLyricsV2(input lyrics.GetLyricsRequest) (V2Response, error) {
-	candidate, sources, err := p.resolveLyrics(input)
+	candidate, sources, evidence, err := p.resolveLyrics(input)
 	if err != nil {
 		return V2Response{}, err
 	}
-	return p.buildV2Response(input.Track, sources, candidate), nil
+	response := p.buildV2Response(input.Track, sources, candidate)
+	response.Evidence = dedupeEvidence(append(evidence, response.Evidence...))
+	return response, nil
 }
 
 // resolveLyrics selects the servable candidate and keeps the source order for
 // callers that build variant responses.
-func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, []source.Source, error) {
+func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, []source.Source, []lyric.Evidence, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
-		return lyric.Candidate{}, nil, nil
+		return lyric.Candidate{}, nil, nil, nil
 	}
 
 	sources := p.activeSources()
@@ -159,30 +161,33 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate
 		// serve nothing without touching the winner cache or task queue — an
 		// empty source order creates no key and would wedge every lookup
 		// through the unschedulable sweep path.
-		return lyric.Candidate{}, sources, nil
+		return lyric.Candidate{}, sources, nil, nil
 	}
 
-	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
+	if candidate, evidence, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
+		if candidate.Present() && !candidate.Playable() {
+			// Defensive: no assessed ambiguous/mismatch result may be served
+			// from a cache written by an older or faulty path.
+			candidate = lyric.Candidate{}
+		}
 		if candidate.Present() {
 			if !sweepComplete {
 				// The sweep may have cached a better result after this winner
 				// was written: re-rank before serving.
-				// Ties adopt the per-source preferred candidate,
-				// which respects configured order.
 				if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
-					p.cacheWinnerUntil(track, sources, best, false, expiry)
+					p.cacheWinnerUntil(track, sources, best, false, expiry, evidence)
 					candidate = best
 				}
 				p.maybeEnqueueSweep(track)
 			}
-			return candidate, sources, nil
+			return candidate, sources, p.sourceEvidence(track, sources, evidence), nil
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
 		if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
-			p.cacheWinnerUntil(track, sources, best, false, expiry)
+			p.cacheWinnerUntil(track, sources, best, false, expiry, evidence)
 			p.maybeEnqueueSweep(track)
-			return best, sources, nil
+			return best, sources, p.sourceEvidence(track, sources, evidence), nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -190,24 +195,24 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate
 		if !sweepComplete {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate, sources, nil
+		return candidate, sources, p.sourceEvidence(track, sources, evidence), nil
 	}
 	if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
-		p.cacheWinnerUntil(track, sources, best, false, expiry)
+		p.cacheWinnerUntil(track, sources, best, false, expiry, nil)
 		p.maybeEnqueueSweep(track)
-		return best, sources, nil
+		return best, sources, p.sourceEvidence(track, sources, nil), nil
 	}
 
-	candidate, health, coveredAll, err := p.fetchLyrics(input)
+	candidate, health, coveredAll, evidence, err := p.fetchLyrics(input)
 	if candidate.Present() {
-		p.cacheWinner(track, sources, candidate, coveredAll)
+		p.cacheWinnerUntil(track, sources, candidate, coveredAll, p.now().Add(time.Duration(sourceCacheTTLSeconds(candidate.Quality))*time.Second).Unix(), evidence)
 		if !coveredAll {
 			p.maybeEnqueueSweep(track)
 		}
-		return candidate, sources, nil
+		return candidate, sources, p.sourceEvidence(track, sources, evidence), nil
 	}
 	if err == nil && health < source.Degraded {
-		p.cacheNegativeWinner(track, sources, coveredAll)
+		p.cacheNegativeWinner(track, sources, coveredAll, evidence)
 		if !coveredAll {
 			// A fully covered negative pass needs no sweep: every implemented
 			// source already answered inside stage one.
@@ -222,7 +227,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate
 	if err == nil && health >= source.Degraded {
 		err = errors.New("lyrics sources temporarily unavailable")
 	}
-	return candidate, sources, p.safeDiagnosticError(err)
+	return candidate, sources, p.sourceEvidence(track, sources, evidence), p.safeDiagnosticError(err)
 }
 
 // activeSources resolves the source order for this lookup: the injected test
@@ -239,10 +244,10 @@ func (p *Provider) activeSources() []source.Source {
 // synchronized result. Each successful source result is cached per source so later
 // lookups and source reordering re-rank without refetching. Remaining sources
 // are covered by the background sweep.
-func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, source.Health, bool, error) {
+func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, source.Health, bool, []lyric.Evidence, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
-		return lyric.Candidate{}, source.Healthy, false, nil
+		return lyric.Candidate{}, source.Healthy, false, nil, nil
 	}
 
 	sources := p.activeSources()
@@ -258,6 +263,7 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 		// walk. Later sources on a cold host are skipped for the rest of this
 		// lookup, matching README's documented Better Lyrics shared cooldown.
 		coldHosts = map[string]bool{}
+		evidence  []lyric.Evidence
 	)
 	implementedTotal := 0
 	for _, src := range sources {
@@ -319,17 +325,26 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 			p.resetSourceFailure(src.ID)
 		}
 		foundCandidate := false
+		assessed := make([]lyric.Candidate, 0, len(candidates))
 		for index := range candidates {
 			candidate := &candidates[index]
+			p.assessCandidate(track, candidate)
+			evidence = append(evidence, candidate.Evidence...)
+			if candidate.Present() && candidate.Match.Status == lyric.MatchMismatch {
+				continue
+			}
+			assessed = append(assessed, *candidate)
 			if !candidate.Present() {
 				continue
 			}
 			foundCandidate = true
 			p.prepareCandidate(track, src.ID, candidate)
-			best = lyric.Prefer(best, *candidate)
+			if candidate.Playable() {
+				best = lyric.Prefer(best, *candidate)
+			}
 		}
-		if foundCandidate {
-			p.cacheSourceCandidates(track, src.ID, candidates)
+		if len(assessed) > 0 {
+			p.cacheSourceCandidates(track, src.ID, assessed)
 		}
 		coveredThisSource := true
 		if !foundCandidate {
@@ -353,19 +368,38 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 			walkedTotal++
 		}
 		if best.Present() && best.Quality >= lyric.TimingLine {
-			return best, health, walkedTotal >= implementedTotal, nil
+			return best, health, walkedTotal >= implementedTotal, evidence, nil
 		}
 	}
 
 	if best.Present() {
-		return best, health, walkedTotal >= implementedTotal, nil
+		return best, health, walkedTotal >= implementedTotal, evidence, nil
 	}
 	if len(lookupErrors) > 0 {
-		return lyric.Candidate{}, health, false, errors.Join(lookupErrors...)
+		return lyric.Candidate{}, health, false, evidence, errors.Join(lookupErrors...)
 	}
 	// A clean all-miss walk with full coverage is real: the negative winner
 	// must record that no sweep needs re-walking the same misses.
-	return lyric.Candidate{}, health, walkedTotal >= implementedTotal, nil
+	return lyric.Candidate{}, health, walkedTotal >= implementedTotal, evidence, nil
+}
+
+// assessCandidate applies the recording-identity rule after the source has
+// returned metadata. Sources that expose no recording metadata remain
+// unassessed and legacy-playable; assessed incomplete data is ambiguous.
+func (p *Provider) assessCandidate(track lyrics.TrackInfo, candidate *lyric.Candidate) {
+	if candidate == nil {
+		return
+	}
+	if candidate.RecordingInfo.Empty() {
+		if candidate.Match.Status == "" {
+			candidate.Match = lyric.RecordingMatch{Status: lyric.MatchUnassessed}
+		}
+	} else {
+		candidate.Match = lyric.AssessRecording(lyric.RequestRecordingInfo(track), candidate.RecordingInfo)
+	}
+	for index := range candidate.Evidence {
+		candidate.Evidence[index].Match = candidate.Match
+	}
 }
 
 func minTime(first, second time.Time) time.Time {

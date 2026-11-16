@@ -69,6 +69,7 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 	target := int64(math.Round(float64(track.Duration) * 1000.0))
 	titleTokens := lyric.NormalizedTokens(track.Title)
 	var trackID int64
+	var selectedInfo lyric.RecordingInfo
 	bestDelta := int64(math.MaxInt64)
 	found := false
 	for _, result := range search.Results {
@@ -91,10 +92,12 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 				continue
 			}
 			trackID, bestDelta, found = result.TrackID, delta, true
+			selectedInfo = lyric.RecordingInfo{Title: result.TrackName, Artist: result.ArtistName, Duration: float64(result.TrackTimeMillis) / 1000}
 			continue
 		}
 		if !found {
 			trackID, bestDelta, found = result.TrackID, 0, true
+			selectedInfo = lyric.RecordingInfo{Title: result.TrackName, Artist: result.ArtistName, Duration: float64(result.TrackTimeMillis) / 1000}
 		}
 	}
 	if !found {
@@ -131,7 +134,7 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 	// mirror conversions and are never labelled originals themselves.
 	nativeTTML := mirror.TTMLContent
 	withDocument := func(candidate lyric.Candidate) lyric.Candidate {
-		candidate = candidate.WithRecording(strconv.FormatInt(trackID, 10))
+		candidate = candidate.WithRecording(strconv.FormatInt(trackID, 10)).WithRecordingInfo(selectedInfo)
 		if strings.TrimSpace(nativeTTML) != "" {
 			return candidate.WithOriginal("ttml", lyric.OriginalSupplied, []byte(nativeTTML))
 		}

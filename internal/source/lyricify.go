@@ -92,7 +92,12 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 		return nil, Degraded, fmt.Errorf("decode Lyricify lyrics response: %w", err)
 	}
 	if payloadEnvelope.IsInstrumental {
-		return nil, Healthy, nil
+		return []lyric.Candidate{{
+			Evidence: []lyric.Evidence{{
+				Kind: lyric.EvidenceInstrumental, Provider: "Lyricify", Recording: isrc,
+			}},
+			Match: lyric.RecordingMatch{Status: lyric.MatchUnassessed},
+		}}, Healthy, nil
 	}
 	text := strings.TrimSpace(payloadEnvelope.Text)
 	if text == "" {

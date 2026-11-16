@@ -102,6 +102,41 @@ and the separate #6465 response-cache work do not provide these endpoints.
   exercises the real router, auth, WASI plugin, KV and exact native bytes; it is
   not released-host support.
 
+## Recording identity and instrumental evidence
+
+The optional playback-v2 and variant-listing exports carry an independent
+recording match and typed instrumental evidence. The required
+`nd_lyrics_get_lyrics` response shape is unchanged.
+
+- Recording validity, timing richness and content state are separate axes.
+  Validated requires exact base-title and artist identity plus an independent
+  corroborator (duration inside the existing two-second band, an exact album, or
+  agreeing explicit version markers). Assessed incomplete/contradictory data is
+  ambiguous, never silently unassessed. Only sources that expose no recording
+  metadata remain unassessed and legacy-playable.
+- Duration outside the corpus-observed drift band is ambiguous, never a proven
+  mismatch. Mismatch requires an independent contradiction such as a different
+  artist or conflicting explicit version markers. Correct recordings can differ
+  by up to 4.0 s across releases; wrong live/radio-edit recordings were observed
+  within 2 s, so duration alone cannot validate or reject them.
+- Ambiguous entries are listed as individually addressable suggestions but are
+  never served as playback winner, automatic selection or automatic-save
+  eligible. Automatic saving is a future host slice; `autoSaveEligible` is true
+  only for validated identity.
+- Instrumental evidence is a typed, attributed response-level observation. Empty,
+  malformed and error responses never establish it. It never vetoes valid lyrics;
+  the UI shows lyrics and an attributed conflict note. Evidence about an
+  ambiguous/mismatching recording is not presented as a claim about this track.
+- The v5 lyric cache namespace invalidates only the previous plugin-owned
+  disposable lyric cache (`lyrics:v4:`) once. Identity salts, credentials,
+  configuration and durable records are untouched.
+
+The companion host branch for this slice is stacked on the unreleased
+`lyrics-source-provenance` branch (base `8ccdc78`) and is not released-host or
+#6465 support. Corpus evidence and provenance:
+`docs/research/matching-corpus-2026-11-16.md` and
+`internal/lyric/testdata/matching/README.md`.
+
 ## Upstream dependencies
 
 The latest released Navidrome is [v0.64.2](https://github.com/navidrome/navidrome/releases/tag/v0.64.2).
