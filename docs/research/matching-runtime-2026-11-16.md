@@ -2,7 +2,7 @@
 
 This is a local runtime observation, not released-host support. It uses the
 changed WASI plugin package at SHA-256
-`9c99dea2a2e197b44415bf9f0256b4c71c234caaf1f168958ae345e98d01a43e`,
+`99564a6430bc3a4f1e7e9baf6c2308bc7e81ee81d23998a2f5f22217487f6cc1`,
 the host checkout based on `8ccdc785a2d20ce2775c1a0896ac9b902e132c8a`, and a
 disposable database/library under `/private/.../opencode/navidrome-runtime`.
 
