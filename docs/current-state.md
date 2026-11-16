@@ -96,6 +96,10 @@ and the separate #6465 response-cache work do not provide these endpoints.
   sources, changed credentials/config and changed documents report unavailable.
 - Fixture provenance and SHA-256 for the TTML, QRC and KRC native documents live in
   `internal/source/testdata/fixtures.md`; tests pin those hashes.
+- `scripts/host-qualification/README.md` records the released-host baseline and the
+  `--originals` runtime mode. The latter requires the companion host branch and
+  exercises the real router, auth, WASI plugin, KV and exact native bytes; it is
+  not released-host support.
 
 ## Upstream dependencies
 

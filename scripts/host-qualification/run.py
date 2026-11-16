@@ -11,6 +11,11 @@ import shutil
 import subprocess  # nosec B404
 import tempfile
 
+BASELINE_OVERLAY = "qualification_test.go.txt"
+ORIGINALS_TEST = "qualification_originals_test.go.txt"
+ORIGINALS_SUPPORT = "qualification_originals_support.go.txt"
+ORIGINALS_TEST_NAME = "TestLyricsOriginalsQualification"
+
 
 def git_output(checkout: Path, *args: str) -> str:
     # Ignore inherited repository/config overrides and prevent fsmonitor execution.
@@ -39,11 +44,26 @@ def existing_path(parser: argparse.ArgumentParser, path: Path, directory: bool) 
     return resolved
 
 
+def overlay_files(script_dir: Path, originals: bool) -> dict[str, Path]:
+    if not originals:
+        return {"plugins/zz_betterlyrics_qualification_test.go": script_dir / BASELINE_OVERLAY}
+    return {
+        "plugins/zz_betterlyrics_qualification_support.go": script_dir / ORIGINALS_SUPPORT,
+        "plugins/zz_betterlyrics_qualification_originals_test.go": script_dir / ORIGINALS_TEST,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host_checkout", type=Path, help="trusted local Navidrome Git checkout")
     parser.add_argument("package", type=Path, help="trusted local plugin .ndp file")
+    parser.add_argument("--originals", action="store_true",
+                        help="run the optional variant/original runtime qualification")
+    parser.add_argument("--expect", choices=("originals", "legacy"), default="originals",
+                        help="expected capability state for the originals run (default: originals)")
     args = parser.parse_args()
+    if not args.originals and args.expect != "originals":
+        parser.error("--expect requires --originals")
     checkout = existing_path(parser, args.host_checkout, directory=True)
     package = existing_path(parser, args.package, directory=False)
     module_file = checkout / "go.mod"
@@ -57,10 +77,14 @@ def main() -> int:
         parser.error("The host checkout must be a Git worktree")
     if worktree_root != str(checkout):
         parser.error("The host checkout must be the root of its Git worktree")
-    fixture = Path(__file__).with_name("qualification_test.go.txt").resolve(strict=True)
-    virtual_test = checkout / "plugins" / "zz_betterlyrics_qualification_test.go"
-    if virtual_test.exists():
-        parser.error(f"Preserving existing host file: {virtual_test}")
+
+    script_dir = Path(__file__).resolve().parent
+    overlays = overlay_files(script_dir, args.originals)
+    for destination, source in overlays.items():
+        if not source.is_file():
+            parser.error(f"Missing qualification overlay: {source}")
+        if (checkout / destination).exists():
+            parser.error(f"Preserving existing host file: {checkout / destination}")
     if shutil.which("go") is None:
         parser.error("Go must be available; run this command through mise exec")
     before = host_state(checkout)
@@ -71,16 +95,30 @@ def main() -> int:
         snapshot.write_bytes(package_bytes)
         print(f"Package SHA-256: {hashlib.sha256(package_bytes).hexdigest()}", flush=True)
         overlay = Path(temporary) / "overlay.json"
-        overlay.write_text(json.dumps({"Replace": {str(virtual_test): str(fixture)}}))
+        overlay.write_text(json.dumps({"Replace": {
+            str(checkout / destination): str(source) for destination, source in overlays.items()
+        }}))
         env = os.environ | {
             "BETTER_LYRICS_PACKAGE": str(snapshot),
             "BETTER_LYRICS_CACHE": str(Path(temporary) / "compiled"),
             "GOWORK": "off",
         }
+        if args.originals:
+            repo_root = script_dir.parent.parent
+            env |= {
+                "BETTER_LYRICS_EXPECT": args.expect,
+                "BETTER_LYRICS_TTML_FIXTURE": str(repo_root / "internal/source/testdata/binimum/lyrics.ttml"),
+                "BETTER_LYRICS_QRC_FIXTURE": str(repo_root / "internal/source/testdata/portato/lyrics.qrc"),
+            }
+            tags = "netgo,sqlite_fts5,qualification"
+            test_name = ORIGINALS_TEST_NAME
+        else:
+            tags = "netgo,sqlite_fts5"
+            test_name = "TestBetterLyricsQualification"
         # go test executes the explicitly selected trusted checkout and plugin.
         result = subprocess.run(  # nosec B603
             ["go", "test", "-mod=readonly", "-overlay", str(overlay),
-             "-tags=netgo,sqlite_fts5", "./plugins", "-run", "^TestBetterLyricsQualification$",
+             "-tags=" + tags, "./plugins", "-run", "^" + test_name + "$",
              "-count=1", "-timeout=180s", "-v"],
             cwd=checkout, env=env, check=False, shell=False,
         )

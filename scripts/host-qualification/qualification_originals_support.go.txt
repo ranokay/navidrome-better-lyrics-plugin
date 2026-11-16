@@ -1,0 +1,174 @@
+//go:build qualification
+
+// Qualification support for the optional lyrics-variants capability. It is
+// overlaid into the host's plugins package by scripts/host-qualification; it is
+// never part of a production build.
+package plugins
+
+import (
+	"archive/zip"
+	"encoding/json"
+	"net/http"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/navidrome/navidrome/conf"
+	"github.com/navidrome/navidrome/model"
+)
+
+// QualificationPlugin is a real loaded plugin package with its own KV store and
+// task workers, plus test-only expiry helpers.
+type QualificationPlugin struct {
+	Manager  *Manager
+	PluginID string
+	kv       *kvstoreServiceImpl
+	tasks    *taskQueueServiceImpl
+}
+
+// LoadQualificationPlugin loads a production .ndp into a real Manager with
+// disposable host services and a deterministic HTTP transport. Only the named
+// sources are enabled; the manifest supplies the full source catalog.
+func LoadQualificationPlugin(t testing.TB, packagePath string, sourceIDs []string, transport http.RoundTripper) *QualificationPlugin {
+	t.Helper()
+	catalog := manifestSourceIDs(t, packagePath)
+	dir := t.TempDir()
+	t.Cleanup(conf.SnapshotConfig())
+	conf.Server.DataFolder = conf.NewDir(filepath.Join(dir, "data"))
+	conf.Server.CacheFolder = conf.NewDir(filepath.Join(dir, "cache"))
+	conf.Server.Plugins.Folder = conf.NewDir(filepath.Join(dir, "packages"))
+	conf.Server.Plugins.Enabled = true
+	conf.Server.Plugins.AutoReload = false
+	conf.Server.Plugins.LogLevel = "error"
+	// The qualification host resolves exactly this plugin for lyrics.
+	conf.Server.LyricsPriority = "nd-better-lyrics"
+	manager := &Manager{
+		plugins:        make(map[string]*plugin),
+		metrics:        noopMetricsRecorder{},
+		subsonicRouter: http.NotFoundHandler(),
+	}
+	if err := manager.initRuntime(t.Context(), filepath.Join(dir, "compiled")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := manager.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	enabled := make(map[string]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		enabled[id] = true
+	}
+	rows := make([]map[string]any, 0, len(catalog))
+	for _, id := range catalog {
+		rows = append(rows, map[string]any{"id": id, "enabled": enabled[id]})
+	}
+	config, err := json.Marshal(map[string]any{"sources": rows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pluginID = "nd-better-lyrics"
+	if err := manager.loadPluginWithConfig(&model.Plugin{
+		ID: pluginID, Path: packagePath, Enabled: true, AllUsers: true, Config: string(config),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded := manager.plugins[pluginID]
+	result := &QualificationPlugin{Manager: manager, PluginID: pluginID}
+	for _, closer := range loaded.closers {
+		switch service := closer.(type) {
+		case *httpServiceImpl:
+			service.client.Transport = transport
+		case *kvstoreServiceImpl:
+			result.kv = service
+		case *taskQueueServiceImpl:
+			result.tasks = service
+		}
+	}
+	if result.kv == nil {
+		t.Fatal("real plugin KV service was not initialized")
+	}
+	return result
+}
+
+// Idle waits for real background tasks to settle, bounded.
+func (h *QualificationPlugin) Idle(t testing.TB) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var pending int
+		if err := h.tasks.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM tasks WHERE status IN ('pending','running')`).Scan(&pending); err != nil {
+			t.Fatal(err)
+		}
+		if pending == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task queue still has %d pending/running tasks", pending)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Keys lists test-owned KV keys under a prefix.
+func (h *QualificationPlugin) Keys(t testing.TB, prefix string) []string {
+	t.Helper()
+	keys, err := h.kv.List(t.Context(), prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keys
+}
+
+// Delete removes test-owned KV keys under a prefix.
+func (h *QualificationPlugin) Delete(t testing.TB, prefix string) {
+	t.Helper()
+	if _, err := h.kv.DeleteByPrefix(t.Context(), prefix); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func manifestSourceIDs(t testing.TB, packagePath string) []string {
+	t.Helper()
+	archive, err := zip.OpenReader(packagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	var manifest struct {
+		Config struct {
+			Schema struct {
+				Properties struct {
+					Sources struct {
+						Default []struct {
+							ID string `json:"id"`
+						} `json:"default"`
+					} `json:"sources"`
+				} `json:"properties"`
+			} `json:"schema"`
+		} `json:"config"`
+	}
+	for _, entry := range archive.File {
+		if entry.Name != "manifest.json" {
+			continue
+		}
+		reader, err := entry.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = json.NewDecoder(reader).Decode(&manifest)
+		reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := make([]string, 0, len(manifest.Config.Schema.Properties.Sources.Default))
+	for _, row := range manifest.Config.Schema.Properties.Sources.Default {
+		ids = append(ids, row.ID)
+	}
+	if len(ids) == 0 {
+		t.Fatal("plugin manifest has no source defaults")
+	}
+	return ids
+}
