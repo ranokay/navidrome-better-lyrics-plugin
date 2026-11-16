@@ -290,12 +290,11 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			if candidate.Present() && candidate.Match.Status == lyric.MatchMismatch {
 				continue
 			}
-			assessed = append(assessed, *candidate)
-			if !candidate.Present() {
-				continue
+			if candidate.Present() {
+				hadCandidates = true
+				p.prepareCandidate(track, src.ID, candidate)
 			}
-			hadCandidates = true
-			p.prepareCandidate(track, src.ID, candidate)
+			assessed = append(assessed, *candidate)
 		}
 		if len(assessed) > 0 {
 			storedAny = p.cacheSourceCandidates(track, src.ID, assessed)

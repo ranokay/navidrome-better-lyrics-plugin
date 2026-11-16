@@ -200,10 +200,10 @@ func TestLRCLibCandidates_PlainFallback(t *testing.T) {
 	t.Parallel()
 
 	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","plainLyrics":"just plain lyrics","syncedLyrics":""}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","duration":200,"plainLyrics":"just plain lyrics","syncedLyrics":""}`)}, nil
 	})
 
-	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(testLookupBudget))
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
 	if err != nil {
 		t.Fatalf("fetchLRCLib() error = %v, want nil", err)
 	}
@@ -425,5 +425,44 @@ func TestLRCLibCandidates_KeepsEveryRepresentation(t *testing.T) {
 		if candidate.Recording != "7" {
 			t.Fatalf("recording = %q, want the wire record id", candidate.Recording)
 		}
+	}
+}
+
+func TestLRCLibExactAmbiguousFallsThroughToValidatedSearchResult(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song (Live)","artistName":"Artist","albumName":"Live","duration":201,"syncedLyrics":"[00:01.00]live"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"syncedLyrics":"[00:01.00]studio"}]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %#v/%v/%v", candidates, health, err)
+	}
+	for _, candidate := range candidates {
+		if candidate.Present() && strings.Contains(candidate.Response.Lyrics[0].Text, "studio") {
+			return
+		}
+	}
+	t.Fatalf("candidates = %#v, want the validated studio search result before the ambiguous live exact result", candidates)
+}
+
+func TestLRCLibInstrumentalFlagKeepsUsableLyricsAndEvidence(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"syncedLyrics":"[00:01.00]line"}`)}, nil
+	})
+	candidates, _, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lyricsFound, evidenceFound := false, false
+	for _, candidate := range candidates {
+		lyricsFound = lyricsFound || candidate.Present()
+		evidenceFound = evidenceFound || len(candidate.Evidence) > 0
+	}
+	if !lyricsFound || !evidenceFound {
+		t.Fatalf("candidates = %#v, want both lyrics and the attributed assertion", candidates)
 	}
 }

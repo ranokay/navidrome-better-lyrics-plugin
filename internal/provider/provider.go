@@ -333,12 +333,11 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 			if candidate.Present() && candidate.Match.Status == lyric.MatchMismatch {
 				continue
 			}
-			assessed = append(assessed, *candidate)
-			if !candidate.Present() {
-				continue
+			if candidate.Present() {
+				foundCandidate = true
+				p.prepareCandidate(track, src.ID, candidate)
 			}
-			foundCandidate = true
-			p.prepareCandidate(track, src.ID, candidate)
+			assessed = append(assessed, *candidate)
 			if candidate.Playable() {
 				best = lyric.Prefer(best, *candidate)
 			}

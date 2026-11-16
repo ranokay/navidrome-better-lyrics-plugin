@@ -125,3 +125,19 @@ func TestCorpusThresholdIsBoundedByObservedEvidence(t *testing.T) {
 		t.Fatalf("markerless wrong corpus delta %.1fs is inside the %.1fs validation ceiling; threshold evidence does not support it", wrongMin, recordingDriftSeconds)
 	}
 }
+
+func TestNumberedTitlePartsStayDistinct(t *testing.T) {
+	request := RecordingInfo{Title: "Song (Part 1)", Artist: "Artist", Album: "Album", Duration: 200}
+	returned := RecordingInfo{Title: "Song (Part 2)", Artist: "Artist", Album: "Album", Duration: 200}
+	if got := AssessRecording(request, returned); got.Status == MatchValidated {
+		t.Fatalf("numbered title parts must not validate as the same recording: %#v", got)
+	}
+}
+
+func TestOneSidedNonOppositeMarkerIsAmbiguousNotMismatch(t *testing.T) {
+	request := RecordingInfo{Title: "Song (Live)", Artist: "Artist", Duration: 200}
+	returned := RecordingInfo{Title: "Song (Live) (Acoustic)", Artist: "Artist", Duration: 200}
+	if got := AssessRecording(request, returned); got.Status != MatchAmbiguous {
+		t.Fatalf("status = %q, want ambiguous for an unconfirmed extra qualifier", got.Status)
+	}
+}

@@ -193,14 +193,17 @@ func compareMarkers(request, returned map[string]bool) markerRelation {
 	if len(request) == 0 || len(returned) == 0 {
 		return markersOneSided
 	}
+	// Live and studio are explicit opposites. Any other one-sided qualifier is
+	// still only an unconfirmed version, not proof of a different recording.
+	if request["live"] != returned["live"] || request["studio"] != returned["studio"] {
+		return markersConflict
+	}
+	if len(request) != len(returned) {
+		return markersOneSided
+	}
 	for marker := range request {
 		if !returned[marker] {
-			return markersConflict
-		}
-	}
-	for marker := range returned {
-		if !request[marker] {
-			return markersConflict
+			return markersOneSided
 		}
 	}
 	return markersAgree
@@ -264,11 +267,33 @@ func baseTitleTokens(value string) []string {
 func cutTitleQualifier(value string) string {
 	cut := len(value)
 	for _, marker := range []string{" (", " [", " {", " - ", " – ", " — "} {
-		if index := strings.Index(value, marker); index >= 0 && index < cut {
+		index := strings.Index(value, marker)
+		if index < 0 || index >= cut {
+			continue
+		}
+		suffix := strings.ToLower(value[index:])
+		if containsKnownQualifier(suffix) {
 			cut = index
 		}
 	}
 	return strings.TrimSpace(value[:cut])
+}
+
+// containsKnownQualifier is deliberately narrower than "any bracketed text":
+// numbered parts and other title text stay in the base title so "Song (Part 1)"
+// and "Song (Part 2)" remain distinct.
+func containsKnownQualifier(value string) bool {
+	for _, marker := range append(recordingMarkers, editionMarkers...) {
+		if markerPattern(marker).MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+var editionMarkers = []string{
+	"remaster", "remastered", "deluxe", "expanded", "anniversary", "explicit",
+	"clean", "censored", "uncensored", "bonus", "special edition",
 }
 
 func sameTokens(left, right []string) bool {

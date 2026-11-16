@@ -216,7 +216,7 @@ func (candidate Candidate) Present() bool {
 // source in configured order wins. Ambiguous candidates never displace a
 // playable one; they remain separately listable suggestions.
 func Prefer(current, next Candidate) Candidate {
-	if !next.Present() {
+	if !next.Present() || !next.Playable() {
 		return current
 	}
 	if !current.Present() {
@@ -230,6 +230,18 @@ func Prefer(current, next Candidate) Candidate {
 		return current
 	}
 	if next.Quality > current.Quality {
+		return next
+	}
+	return current
+}
+
+// PreferSuggestion orders ambiguous suggestions for the listing only. It never
+// makes a suggestion playable.
+func PreferSuggestion(current, next Candidate) Candidate {
+	if !next.Present() {
+		return current
+	}
+	if !current.Present() || next.Quality > current.Quality {
 		return next
 	}
 	return current

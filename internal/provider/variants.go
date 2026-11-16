@@ -206,7 +206,7 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 			// smaller bundled representation fit; list that instead.
 			for _, src := range sources {
 				for _, bundled := range p.readCachedSourceCandidates(track, src.ID) {
-					best = lyric.Prefer(best, bundled)
+					best = lyric.PreferSuggestion(best, bundled)
 				}
 			}
 		}
