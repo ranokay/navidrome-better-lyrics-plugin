@@ -200,3 +200,25 @@ func TestJoinedCollaboratorArtistInfoMatchesOneRequestedCredit(t *testing.T) {
 		t.Fatalf("joined collaborator metadata = %#v, want validated", got)
 	}
 }
+
+func TestNamedPerformanceQualifiersStayAmbiguous(t *testing.T) {
+	cases := [][2]string{
+		{"Song (Live at Wembley)", "Song (Live at Knebworth)"},
+		{"Song (Remix by A)", "Song (Remix by B)"},
+	}
+	for _, titles := range cases {
+		request := RecordingInfo{Title: titles[0], Artist: "Artist", Album: "Album", Duration: 200}
+		returned := RecordingInfo{Title: titles[1], Artist: "Artist", Album: "Album", Duration: 200}
+		if got := AssessRecording(request, returned); got.Status != MatchAmbiguous {
+			t.Fatalf("titles %v = %#v, want ambiguous", titles, got)
+		}
+	}
+}
+
+func TestLiveVersusAcousticIsAmbiguousNotMismatch(t *testing.T) {
+	request := RecordingInfo{Title: "Song (Live)", Artist: "Artist", Duration: 200}
+	returned := RecordingInfo{Title: "Song (Live) (Acoustic)", Artist: "Artist", Duration: 200}
+	if got := AssessRecording(request, returned); got.Status != MatchAmbiguous {
+		t.Fatalf("status = %q, want ambiguous", got.Status)
+	}
+}

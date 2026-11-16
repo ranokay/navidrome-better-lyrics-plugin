@@ -147,7 +147,7 @@ func TestLRCLibCandidates_FallsBackToSearchOnExactMiss(t *testing.T) {
 	}
 }
 
-func TestLRCLibCandidates_SearchMissWhenNoNearDuration(t *testing.T) {
+func TestLRCLibCandidates_DistantSearchRowBecomesAmbiguousNotMiss(t *testing.T) {
 	t.Parallel()
 
 	searchFixture, err := os.ReadFile("testdata/lrclib/search.json")
@@ -164,8 +164,15 @@ func TestLRCLibCandidates_SearchMissWhenNoNearDuration(t *testing.T) {
 	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{
 		Title: "Live Forever", Artist: "Oasis", Duration: 9999,
 	}, time.Now().Add(testLookupBudget))
-	if err != nil || len(candidates) != 0 || health != Healthy {
-		t.Fatalf("result = %#v/%v/%v; want clean miss", candidates, health, err)
+	if err != nil || health != Healthy || len(candidates) == 0 {
+		t.Fatalf("result = %#v/%v/%v; want a classifier-reachable candidate", candidates, health, err)
+	}
+	match := lyric.AssessRecording(
+		lyric.RequestRecordingInfo(lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 9999}),
+		candidates[0].RecordingInfo,
+	)
+	if match.Status != lyric.MatchAmbiguous {
+		t.Fatalf("match = %#v, want ambiguous suggestion", match)
 	}
 }
 

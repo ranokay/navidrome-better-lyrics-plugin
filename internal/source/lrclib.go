@@ -106,9 +106,6 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		delta := int64(0)
 		if track.Duration > 0 {
 			delta = int64(math.Abs(float64(int64(math.Round(result.Duration)) - target)))
-			if delta > 2 {
-				continue
-			}
 		}
 		if len(best) > 0 && delta >= bestDelta {
 			continue

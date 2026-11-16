@@ -117,7 +117,6 @@ func AssessRecording(request, returned RecordingInfo) RecordingMatch {
 		match.Reasons = reasons
 		return match
 	}
-
 	requestMarkers := versionMarkers(request.Title, request.Album)
 	returnedMarkers := versionMarkers(returnedTitle, returned.Album)
 	markerRelation := compareMarkers(requestMarkers, returnedMarkers)
@@ -131,6 +130,11 @@ func AssessRecording(request, returned RecordingInfo) RecordingMatch {
 		add("version-unconfirmed")
 	case markersAgree:
 		add("version-agrees")
+	}
+	if !sameQualifierSignature(request.Title, returnedTitle) {
+		add("qualifier-differs")
+		match.Reasons = reasons
+		return match
 	}
 
 	if request.Duration > 0 && returned.Duration > 0 {
@@ -193,9 +197,10 @@ func compareMarkers(request, returned map[string]bool) markerRelation {
 	if len(request) == 0 || len(returned) == 0 {
 		return markersOneSided
 	}
-	// Live and studio are explicit opposites. Any other one-sided qualifier is
-	// still only an unconfirmed version, not proof of a different recording.
-	if request["live"] != returned["live"] || request["studio"] != returned["studio"] {
+	// Live and studio are explicit opposites. A live/acoustic or remix/remix
+	// combination is still only an unconfirmed version, not proof of a
+	// different recording.
+	if (request["live"] && returned["studio"]) || (request["studio"] && returned["live"]) {
 		return markersConflict
 	}
 	if len(request) != len(returned) {
@@ -253,6 +258,26 @@ func markerPattern(marker string) *regexp.Regexp {
 	pattern := regexp.MustCompile(`(?:^|[^a-z0-9])` + regexp.QuoteMeta(marker) + `(?:$|[^a-z0-9])`)
 	actual, _ := markerPatternCache.LoadOrStore(marker, pattern)
 	return actual.(*regexp.Regexp)
+}
+
+// sameQualifierSignature keeps distinguishing performance/remix text such as
+// "Live at Wembley" versus "Live at Knebworth" from validating as the same
+// recording merely because both carry the generic live marker.
+func sameQualifierSignature(requestTitle, returnedTitle string) bool {
+	request := qualifierSignature(requestTitle)
+	returned := qualifierSignature(returnedTitle)
+	if len(request) == 0 || len(returned) == 0 {
+		return true
+	}
+	return sameTokens(request, returned)
+}
+
+func qualifierSignature(title string) []string {
+	value := strings.ToLower(qualifierText(title))
+	for _, marker := range editionMarkers {
+		value = markerPattern(marker).ReplaceAllString(value, " ")
+	}
+	return NormalizedTokens(value)
 }
 
 var bracketedSuffix = regexp.MustCompile(`\s*[\(\[\{][^\)\]\}]*[\)\]\}]`)

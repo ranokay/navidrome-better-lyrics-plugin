@@ -312,3 +312,35 @@ func TestFlaggedMalformedAssertionKeepsEvidenceAndIncompleteCoverage(t *testing.
 		t.Fatalf("winner = %#v/%v, want incomplete coverage", envelope, ok)
 	}
 }
+
+func TestCleanSourceRefreshInvalidatesPriorEvidence(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	sources := []source.Source{{ID: "one"}}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	evidence := seededMatchingCandidate("", "plain", lyric.RecordingMatch{Status: lyric.MatchUnassessed})
+	evidence.Evidence = []lyric.Evidence{{Kind: lyric.EvidenceInstrumental, Provider: "LRCLib", Recording: "1"}}
+	p.cacheSourceCandidate(track, "one", evidence)
+	if got := p.readCachedSourceEvidence(track, "one"); len(got) != 1 {
+		t.Fatalf("seeded evidence = %#v", got)
+	}
+	p.invalidateSourceObservations(track, "one")
+	if got := p.readCachedSourceEvidence(track, "one"); len(got) != 0 {
+		t.Fatalf("evidence after clean refresh = %#v, want invalidated", got)
+	}
+	if got := p.readCachedSourceCandidates(track, "one"); len(got) != 0 {
+		t.Fatalf("candidates after clean refresh = %#v, want invalidated", got)
+	}
+}
+
+func TestCachedSourceCoveragePreservesMatchMetadata(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{{ID: "one"}}, nil)
+	candidate := seededMatchingCandidate("[00:01.00]line", "lrc", lyric.RecordingMatch{Status: lyric.MatchValidated, AutoSave: true})
+	p.cacheSourceCandidate(track, "one", candidate)
+	got, _, ok := p.readCachedSourceCoverageWithExpiry(track, "one")
+	if !ok || got.Match.Status != lyric.MatchValidated || !got.Match.AutoSave {
+		t.Fatalf("cached coverage = %#v/%v, want validated match metadata", got, ok)
+	}
+}

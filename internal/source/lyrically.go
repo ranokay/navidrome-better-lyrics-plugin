@@ -68,43 +68,45 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 	}
 	target := int64(math.Round(float64(track.Duration) * 1000.0))
 	titleTokens := lyric.NormalizedTokens(track.Title)
-	var trackID int64
+	var selectedID int64
 	var selectedInfo lyric.RecordingInfo
+	var fallbackID int64
+	var fallbackInfo lyric.RecordingInfo
 	bestDelta := int64(math.MaxInt64)
-	found := false
 	for _, result := range search.Results {
 		if result.TrackID <= 0 {
 			continue
 		}
-		// Duration alone does not identify a recording: covers and live
-		// versions share runtimes, so the returned identity gates first and
-		// the duration ranks the survivors.
 		if !lyric.TokensMatch(lyric.NormalizedTokens(result.TrackName), titleTokens) {
 			continue
 		}
 		if !appleLyricallyArtistMatches(result.ArtistName, lyric.TrackArtist(track)) {
 			continue
 		}
+		delta := int64(0)
 		if track.Duration > 0 {
-			// The duration gate applies only when the request carries one.
-			delta := int64(math.Abs(float64(result.TrackTimeMillis - target)))
-			if delta > 2000 || delta >= bestDelta {
-				continue
-			}
-			trackID, bestDelta, found = result.TrackID, delta, true
-			selectedInfo = lyric.RecordingInfo{Title: result.TrackName, Artist: result.ArtistName, Duration: float64(result.TrackTimeMillis) / 1000}
-			continue
+			delta = int64(math.Abs(float64(result.TrackTimeMillis - target)))
 		}
-		if !found {
-			trackID, bestDelta, found = result.TrackID, 0, true
-			selectedInfo = lyric.RecordingInfo{Title: result.TrackName, Artist: result.ArtistName, Duration: float64(result.TrackTimeMillis) / 1000}
+		info := lyric.RecordingInfo{Title: result.TrackName, Artist: result.ArtistName, Duration: float64(result.TrackTimeMillis) / 1000}
+		switch lyric.AssessRecording(lyric.RequestRecordingInfo(track), info).Status {
+		case lyric.MatchValidated:
+			if selectedID == 0 || delta < bestDelta {
+				selectedID, selectedInfo, bestDelta = result.TrackID, info, delta
+			}
+		case lyric.MatchAmbiguous:
+			if fallbackID == 0 {
+				fallbackID, fallbackInfo = result.TrackID, info
+			}
 		}
 	}
-	if !found {
+	if selectedID == 0 {
+		selectedID, selectedInfo = fallbackID, fallbackInfo
+	}
+	if selectedID == 0 {
 		return nil, Healthy, nil
 	}
 
-	mirrorURL := lyricallyMirrorEndpoint + "?id=" + strconv.FormatInt(trackID, 10)
+	mirrorURL := lyricallyMirrorEndpoint + "?id=" + strconv.FormatInt(selectedID, 10)
 	response, err = get(rt, "Lyrically lyrics", mirrorURL, rt.DefaultHeaders(), deadline)
 	if err != nil {
 		return nil, Degraded, err
@@ -134,7 +136,7 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 	// mirror conversions and are never labelled originals themselves.
 	nativeTTML := mirror.TTMLContent
 	withDocument := func(candidate lyric.Candidate) lyric.Candidate {
-		candidate = candidate.WithRecording(strconv.FormatInt(trackID, 10)).WithRecordingInfo(selectedInfo)
+		candidate = candidate.WithRecording(strconv.FormatInt(selectedID, 10)).WithRecordingInfo(selectedInfo)
 		if strings.TrimSpace(nativeTTML) != "" {
 			return candidate.WithOriginal("ttml", lyric.OriginalSupplied, []byte(nativeTTML))
 		}

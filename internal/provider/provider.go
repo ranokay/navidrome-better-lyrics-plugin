@@ -359,6 +359,7 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 		if !foundCandidate && !sourceFailed {
 			switch sourceHealth {
 			case source.Healthy, source.Uncertain:
+				p.invalidateSourceObservations(track, src.ID)
 				// Healthy clean misses and anonymous cache-only misses are
 				// bounded coverage: persist them so the sweep and later
 				// lookups skip the refetch. The miss keys

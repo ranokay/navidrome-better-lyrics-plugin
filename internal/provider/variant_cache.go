@@ -293,6 +293,33 @@ func (p *Provider) readCachedSourceCandidates(track lyrics.TrackInfo, sourceID s
 	return []lyric.Candidate{candidate}
 }
 
+// invalidateSourceObservations clears a source's prior positive/suggestion
+// bundle after a successful clean miss. Failure paths do not call this, so a
+// transient outage cannot erase a previously observed assertion.
+func (p *Provider) invalidateSourceObservations(track lyrics.TrackInfo, sourceID string) {
+	credentials := p.sourceCredentialsFingerprint(sourceID)
+	now := p.now().Unix()
+	expiresAt := now + negativeLyricsCacheTTLSeconds
+	if key, ok := lyricsCacheKeyForSource(track, sourceID); ok {
+		value, err := json.Marshal(cachedLyricsEnvelope{
+			Generation: lyricsCacheGeneration, Credentials: credentials,
+			ExpiresAt: expiresAt,
+		})
+		if err == nil {
+			p.storeCandidateBytes(key, value, false, negativeLyricsCacheTTLSeconds)
+		}
+	}
+	if key, ok := lyricsVariantCacheKey(track, sourceID); ok {
+		value, err := json.Marshal(cachedSourceBundle{
+			Generation: lyricsCacheGeneration, Credentials: credentials,
+			ExpiresAt: expiresAt,
+		})
+		if err == nil {
+			p.storeCandidateBytes(key, value, false, negativeLyricsCacheTTLSeconds)
+		}
+	}
+}
+
 // readCachedSourceEvidence returns typed assertions stored with a source's
 // candidate bundle. It never fabricates evidence from misses or errors.
 func (p *Provider) readCachedSourceEvidence(track lyrics.TrackInfo, sourceID string) []lyric.Evidence {

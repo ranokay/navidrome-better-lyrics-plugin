@@ -352,7 +352,7 @@ func (p *Provider) readCachedSourceCoverage(track lyrics.TrackInfo, sourceID str
 func (p *Provider) readCachedSourceCoverageWithExpiry(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, int64, bool) {
 	if key, ok := lyricsCacheKeyForSource(track, sourceID); ok {
 		if envelope, found := p.readCachedEnvelope(key); found && envelope.Generation == lyricsCacheGeneration && envelope.Credentials == p.sourceCredentialsFingerprint(sourceID) {
-			return lyric.Candidate{Response: envelope.Response, Quality: envelope.Quality}, envelope.ExpiresAt, true
+			return cachedCandidate(envelope), envelope.ExpiresAt, true
 		}
 	}
 	key, ok := p.sourceMissKey(track, sourceID)
