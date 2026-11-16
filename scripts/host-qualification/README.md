@@ -51,6 +51,10 @@ The runtime test covers:
 - authenticated retrieval plus unauthenticated and invalid-selection rejection;
 - artifact eviction followed by a same-selection refetch, and a changed document
   that reports unavailable instead of replacing the selection;
+- invalid native TTML (malformed, non-TTML, contentless or overly deep) reported
+  unavailable while supported playback continues;
+- a failed original refetch applying the source-failure backoff, suppressing an
+  immediate retry and recovering after the window;
 - the legacy-plugin fallback.
 
 The runner prints the package hash and host head and checks that the host's Git

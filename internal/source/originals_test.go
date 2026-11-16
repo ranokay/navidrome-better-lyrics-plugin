@@ -275,6 +275,35 @@ func TestLyricallyOriginalsFollowProvenance(t *testing.T) {
 	if got := convertedOnly[0].OriginalDetails().Reason; got != lyric.OriginalReasonConversionOnly {
 		t.Fatalf("reason = %q, want the explicit conversion reason", got)
 	}
+
+	overdepthTTML := strings.Repeat("<div>", 200) + "<p begin=\"1\" end=\"2\">line</p>" + strings.Repeat("</div>", 200)
+	badNativeDocuments := map[string]string{
+		"malformed":   "<tt><body><p begin=\"1\" end=\"2\">line",
+		"non-ttml":    "not a ttml document",
+		"contentless": "<tt><body><div></div></body></tt>",
+		"overdepth":   overdepthTTML,
+	}
+	for name, native := range badNativeDocuments {
+		t.Run("invalid-native-"+name, func(t *testing.T) {
+			t.Parallel()
+			mirror := fmt.Sprintf(`{"elrc":"[00:01.00]line","ttmlContent":%q}`, native)
+			candidates := run(mirror)
+			if len(candidates) != 1 || !candidates[0].Present() {
+				t.Fatalf("playback = %#v, want supported ELRC playback", candidates)
+			}
+			if candidates[0].Original != nil {
+				t.Fatalf("invalid %s native document was attached as supplied", name)
+			}
+			if got := candidates[0].OriginalDetails().Reason; got != lyric.OriginalReasonInvalidDocument {
+				t.Fatalf("reason = %q, want the explicit invalid-document reason", got)
+			}
+		})
+	}
+
+	plainWithContentlessNative := run(`{"plain":"plain line","ttmlContent":"<tt><body/></tt>"}`)
+	if !plainWithContentlessNative[0].Present() || plainWithContentlessNative[0].Original != nil {
+		t.Fatalf("plain fallback = %#v, want playback with unavailable native TTML", plainWithContentlessNative[0])
+	}
 }
 
 func TestLyricsPlusOriginalIsUnavailable(t *testing.T) {

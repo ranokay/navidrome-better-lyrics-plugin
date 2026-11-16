@@ -341,3 +341,150 @@ func TestProvider_BundleTruncationReportsUnavailable(t *testing.T) {
 		t.Fatalf("dropped selection = %#v/%q, want explicit unavailable", document, reason)
 	}
 }
+
+func deleteOriginalArtifacts(cache *fakeLyricsCache) {
+	for key := range cache.values {
+		if strings.HasPrefix(key, lyricsOriginalCacheKeyPrefix) {
+			delete(cache.values, key)
+		}
+	}
+}
+
+func TestProvider_OriginalRefetchAppliesFailureBackoff(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	now := time.Unix(1_800_000_000, 0)
+	fail := false
+	fetches := 0
+	src := source.Source{
+		ID: "flaky", Display: "Flaky", Hosts: []string{"flaky.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			fetches++
+			if fail {
+				return nil, source.Degraded, errors.New("upstream unavailable")
+			}
+			return []lyric.Candidate{originalCandidate("lrc", "[00:01.00]line", "lrc", []byte("[00:01.00]line"), "rec-1")}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithDeps(nil, cache, func() time.Time { return now }, nil, nil)
+	p.sources = []source.Source{src}
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 1 {
+		t.Fatalf("listing = %#v", listing)
+	}
+	identity := listing[0].Identity
+	deleteOriginalArtifacts(cache)
+
+	fail = true
+	before := fetches
+	if document, reason := p.GetLyricsOriginal(track, identity); reason == "" || len(document.Bytes) != 0 {
+		t.Fatalf("first failed refetch = %#v/%q, want unavailable", document, reason)
+	}
+	if fetches != before+1 {
+		t.Fatalf("fetches = %d, want one failed attempt", fetches)
+	}
+	if p.sourceFailureBackoff("flaky") <= 0 {
+		t.Fatal("a failed retrieval must persist the source-failure backoff")
+	}
+	before = fetches
+	if _, reason := p.GetLyricsOriginal(track, identity); reason != "source is cooling down" {
+		t.Fatalf("suppressed reason = %q, want the cooling-down reason", reason)
+	}
+	if fetches != before {
+		t.Fatal("a backed-off source must not be fetched again")
+	}
+
+	now = now.Add(6 * time.Second)
+	fail = false
+	document, reason := p.GetLyricsOriginal(track, identity)
+	if reason != "" || string(document.Bytes) != "[00:01.00]line" {
+		t.Fatalf("recovered refetch = %#v/%q, want the exact document", document, reason)
+	}
+	if p.sourceFailureBackoff("flaky") != 0 {
+		t.Fatal("a healthy refetch must reset the failure backoff")
+	}
+
+	deleteOriginalArtifacts(cache)
+	before = fetches
+	if document, reason := p.GetLyricsOriginal(track, identity); reason != "" || string(document.Bytes) != "[00:01.00]line" {
+		t.Fatalf("post-recovery refetch = %#v/%q", document, reason)
+	}
+	if fetches != before+1 {
+		t.Fatal("recovery must allow another refetch without suppression")
+	}
+}
+
+func TestProvider_OriginalRefetchBudgetDoesNotPersistFailure(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	budgetError := false
+	fetches := 0
+	src := source.Source{
+		ID: "budgeted", Display: "Budgeted", Hosts: []string{"budgeted.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			fetches++
+			if budgetError {
+				return nil, source.Degraded, source.ErrLookupBudgetExhausted
+			}
+			return []lyric.Candidate{originalCandidate("lrc", "[00:01.00]line", "lrc", []byte("[00:01.00]line"), "rec-1")}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	identity := p.GetLyricsVariants(track)[0].Identity
+	deleteOriginalArtifacts(cache)
+
+	budgetError = true
+	before := fetches
+	if _, reason := p.GetLyricsOriginal(track, identity); reason == "" {
+		t.Fatal("a budget timeout must report unavailable")
+	}
+	if p.sourceFailureBackoff("budgeted") != 0 {
+		t.Fatal("a budget timeout must not persist an outage backoff")
+	}
+	if _, reason := p.GetLyricsOriginal(track, identity); reason == "" || fetches != before+2 {
+		t.Fatalf("retry fetches = %d, want a fresh bounded attempt", fetches)
+	}
+}
+
+func TestProvider_OriginalRefetchRespectsCooldown(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	fetches := 0
+	src := source.Source{
+		ID: "cooled", Display: "Cooled", Hosts: []string{"cooled.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			fetches++
+			return []lyric.Candidate{originalCandidate("lrc", "[00:01.00]line", "lrc", []byte("[00:01.00]line"), "rec-1")}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	identity := p.GetLyricsVariants(track)[0].Identity
+	deleteOriginalArtifacts(cache)
+	p.RememberCooldown(source.GlobalCooldownKey("cooled"), time.Hour)
+
+	before := fetches
+	if _, reason := p.GetLyricsOriginal(track, identity); reason != "source is cooling down" {
+		t.Fatalf("reason = %q, want the persisted cooldown", reason)
+	}
+	if fetches != before {
+		t.Fatal("a cooled-down source must not be fetched")
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/navidrome/navidrome/core/lyrics"
 	"github.com/navidrome/navidrome/model"
@@ -198,6 +199,8 @@ func TestLyricsOriginalsQualification(t *testing.T) {
 	t.Run("LRCLib keeps and retrieves every representation", testLRCLibVariants)
 	t.Run("TTML native bytes survive the plugin and host path", testTTMLOriginal)
 	t.Run("QRC native bytes survive the plugin and host path", testQRCOriginal)
+	t.Run("invalid native TTML is unavailable while playback continues", testInvalidNativeTTML)
+	t.Run("failed original refetch backs off and recovers", testOriginalRefetchBackoff)
 }
 
 func testLRCLibVariants(t *testing.T) {
@@ -385,6 +388,99 @@ func testQRCOriginal(t *testing.T) {
 	}
 	if host.transport.requests() <= before {
 		t.Fatal("an evicted QRC artifact must refetch the same selection")
+	}
+}
+
+func testInvalidNativeTTML(t *testing.T) {
+	search, _ := json.Marshal(map[string]any{"results": []map[string]any{{
+		"trackId": 9, "trackName": qualificationTrackTitle,
+		"artistName": qualificationTrackArtist, "trackTimeMillis": 200000,
+	}}})
+	host := newQualificationHost(t, []string{"apple-lyrically"}, func(request *http.Request) (int, []byte) {
+		switch {
+		case request.URL.Host == "itunes.apple.com":
+			return http.StatusOK, search
+		case request.URL.Host == "lyrics.paxsenix.org":
+			return http.StatusOK, []byte(`{"elrc":"[00:01.00]line","ttmlContent":"not a ttml document"}`)
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 1 || playback.StructuredLyrics[0].Variant == nil {
+		t.Fatalf("playback = %#v, want the supported ELRC entry", playback.StructuredLyrics)
+	}
+	entry := playback.StructuredLyrics[0]
+	if entry.Variant.Format != "elrc" {
+		t.Fatalf("playback format = %q, want elrc", entry.Variant.Format)
+	}
+	listing := host.variants(t)
+	if len(listing.Variants) != 1 {
+		t.Fatalf("listing = %#v, want one variant", listing.Variants)
+	}
+	original := listing.Variants[0].Original
+	if original.Available {
+		t.Fatal("invalid native TTML must not be listed as an available original")
+	}
+	if !strings.Contains(original.Reason, "valid native document") {
+		t.Fatalf("reason = %q, want the explicit invalid-native reason", original.Reason)
+	}
+	status, _, body := host.original(t, entry.Selection)
+	expectRejected(t, status, body, "not a ttml document", "<tt")
+}
+
+func testOriginalRefetchBackoff(t *testing.T) {
+	ttml := []byte("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p begin=\"00:00.00\" end=\"00:01.00\">backoff line</p></div></body></tt>")
+	envelope, err := json.Marshal(map[string]string{"ttml": string(ttml)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := false
+	host := newQualificationHost(t, []string{"better-lyrics"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lyrics-api.boidu.dev" && strings.Contains(request.URL.Path, "/getLyrics") {
+			if failing {
+				return http.StatusInternalServerError, []byte("upstream unavailable")
+			}
+			return http.StatusOK, envelope
+		}
+		return http.StatusNotFound, nil
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 1 || playback.StructuredLyrics[0].Variant == nil {
+		t.Fatalf("playback = %#v", playback.StructuredLyrics)
+	}
+	entry := playback.StructuredLyrics[0]
+	status, _, body := host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) {
+		t.Fatalf("initial TTML original = %d/%q", status, body)
+	}
+
+	// Evict, fail the upstream, and confirm one bounded refetch attempt.
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	failing = true
+	status, _, body = host.original(t, entry.Selection)
+	expectRejected(t, status, body, "backoff line")
+	before := host.transport.requests()
+	status, _, body = host.original(t, entry.Selection)
+	expectRejected(t, status, body, "backoff line")
+	if host.transport.requests() != before {
+		t.Fatal("a backed-off source must not be fetched again immediately")
+	}
+
+	// Recovery after the backoff window resets the source and serves bytes.
+	time.Sleep(6 * time.Second)
+	failing = false
+	status, _, body = host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) {
+		t.Fatalf("recovered TTML original = %d/%q", status, body)
+	}
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	before = host.transport.requests()
+	status, _, body = host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) || host.transport.requests() <= before {
+		t.Fatalf("post-recovery refetch = %d/%q, want a fresh successful fetch", status, body)
 	}
 }
 

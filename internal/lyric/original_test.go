@@ -12,6 +12,9 @@ func TestNewOriginalPreservesSuppliedDocuments(t *testing.T) {
 
 	for _, format := range []string{"ttml", "lrc", "elrc", "qrc", "krc", "yrc", "lyl", "wsy", "lyricsfile", "plain"} {
 		document := []byte("exact " + format + " document")
+		if format == "ttml" {
+			document = []byte("<tt><body><p begin=\"1\" end=\"2\">line</p></body></tt>")
+		}
 		original, ok := NewOriginal(format, OriginalSupplied, document)
 		if !ok || original.Format != format || string(original.Bytes) != string(document) {
 			t.Fatalf("format %q: original = %#v/%v, want exact preserved bytes", format, original, ok)
@@ -90,5 +93,39 @@ func TestCandidateRecordingIdentityFallsBackToContent(t *testing.T) {
 	withDocument := candidate.WithOriginal("ttml", OriginalSupplied, document.Bytes)
 	if withDocument.RecordingIdentity() == first {
 		t.Fatal("the native document, not the playback reconstruction, must seed the identity")
+	}
+}
+
+func TestNewOriginalValidatesTTMLIndependently(t *testing.T) {
+	t.Parallel()
+
+	validWithWhitespace := "  <tt><body><p begin=\"1\" end=\"2\">line</p></body></tt>\n"
+	original, ok := NewOriginal("ttml", OriginalSupplied, []byte(validWithWhitespace))
+	if !ok || string(original.Bytes) != validWithWhitespace {
+		t.Fatalf("whitespace-wrapped TTML = %#v/%v, want exact bytes preserved", original, ok)
+	}
+
+	overdepth := "<tt><body>" + strings.Repeat("<div>", maxXMLDepth) + "<p begin=\"1\" end=\"2\">line</p>" + strings.Repeat("</div>", maxXMLDepth) + "</body></tt>"
+	cases := map[string]string{
+		"malformed":   "<tt><body><p begin=\"1\" end=\"2\">line",
+		"non-ttml":    "not a ttml document",
+		"contentless": "<tt><body><div></div></body></tt>",
+		"overdepth":   overdepth,
+	}
+	for name, document := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, ok := NewOriginal("ttml", OriginalSupplied, []byte(document)); ok {
+				t.Fatalf("%s TTML must not be a valid original", name)
+			}
+			candidate := NewCandidate(lyrics.LyricsText{Text: "[00:01.00]line"}, "Provider", "elrc").
+				WithOriginal("ttml", OriginalSupplied, []byte(document))
+			if candidate.Original != nil {
+				t.Fatalf("%s TTML must not be attached as supplied", name)
+			}
+			if got := candidate.OriginalDetails().Reason; got != OriginalReasonInvalidDocument {
+				t.Fatalf("%s reason = %q, want the explicit invalid-document reason", name, got)
+			}
+		})
 	}
 }

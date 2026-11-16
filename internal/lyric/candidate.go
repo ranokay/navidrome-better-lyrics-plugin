@@ -75,9 +75,13 @@ func NewCandidate(text lyrics.LyricsText, provider, format string) Candidate {
 func (candidate Candidate) WithOriginal(format string, provenance OriginalProvenance, document []byte) Candidate {
 	original, ok := NewOriginal(format, provenance, document)
 	if !ok {
+		reason := OriginalReasonNoDocument
 		if len(document) > MaxDocumentBytes {
-			candidate.OriginalSummary = UnavailableOriginalInfo(OriginalReasonTooLarge)
+			reason = OriginalReasonTooLarge
+		} else if strings.EqualFold(strings.TrimSpace(format), "ttml") && len(document) > 0 {
+			reason = OriginalReasonInvalidDocument
 		}
+		candidate.OriginalSummary = UnavailableOriginalInfo(reason)
 		return candidate
 	}
 	candidate.Original = original

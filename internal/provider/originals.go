@@ -71,9 +71,20 @@ func (p *Provider) GetLyricsOriginal(track lyrics.TrackInfo, identity lyric.Vari
 		return lyric.Original{}, "source is cooling down"
 	}
 	deadline := p.now().Add(originalRefetchBudget)
-	candidates, _, err := src.Fetch(p, track, deadline)
+	started := p.now()
+	candidates, health, err := src.Fetch(p, track, deadline)
 	if err != nil {
+		// Mirror the foreground and sweep failure contract: an upstream
+		// outage backs off so repeated downloads cannot hammer it. A budget
+		// timeout is not an outage and is skipped by rememberSourceFailure.
+		if p.now().Before(deadline) {
+			p.rememberSourceFailure(src.ID, err)
+		}
+		p.logSourceFailure(src.ID, started, err)
 		return lyric.Original{}, "selection unavailable"
+	}
+	if health <= source.Uncertain {
+		p.resetSourceFailure(src.ID)
 	}
 	for index := range candidates {
 		p.prepareCandidate(track, sourceID, &candidates[index])

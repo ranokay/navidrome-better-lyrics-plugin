@@ -16,11 +16,12 @@ const (
 
 // Reasons reported when a variant has no retrievable original.
 const (
-	OriginalReasonNoDocument     = "source supplies no native document"
-	OriginalReasonConversionOnly = "provider supplies only a converted representation"
-	OriginalReasonReconstructed  = "only an API envelope or reconstruction was available"
-	OriginalReasonTooLarge       = "document exceeds the cache entry limit"
-	OriginalReasonCacheRefused   = "cache refused the document"
+	OriginalReasonNoDocument      = "source supplies no native document"
+	OriginalReasonConversionOnly  = "provider supplies only a converted representation"
+	OriginalReasonReconstructed   = "only an API envelope or reconstruction was available"
+	OriginalReasonTooLarge        = "document exceeds the cache entry limit"
+	OriginalReasonInvalidDocument = "provider supplied no valid native document"
+	OriginalReasonCacheRefused    = "cache refused the document"
 )
 
 // Original is one exact source-native document captured before conversion.
@@ -55,7 +56,25 @@ func NewOriginal(format string, provenance OriginalProvenance, bytes []byte) (*O
 	if len(bytes) == 0 || len(bytes) > MaxDocumentBytes {
 		return nil, false
 	}
+	// TTML originals must be independently valid documents: a provider can
+	// return a valid converted representation alongside a malformed, empty or
+	// overly deep native document. Validation trims only insignificant outer
+	// whitespace; the stored bytes stay exact.
+	if format == "ttml" && !ValidTTMLDocument(string(bytes)) {
+		return nil, false
+	}
 	return &Original{Format: format, Provenance: provenance, Bytes: bytes}, true
+}
+
+// ValidTTMLDocument reports a bounded, well-formed TTML document with lyric
+// content. It validates the document itself, independent of which playback
+// representation was selected.
+func ValidTTMLDocument(document string) bool {
+	if len(document) > MaxDocumentBytes {
+		return false
+	}
+	_, content, valid := inspectTTMLTimingQuality(strings.TrimSpace(document))
+	return valid && content
 }
 
 // Info summarizes a present or missing original.
