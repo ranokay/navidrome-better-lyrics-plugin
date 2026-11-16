@@ -1,7 +1,7 @@
 {
   "version": 1,
   "captured": "2026-11-16",
-  "notes": "Metadata-only extracts from bounded public LRCLib searches. Raw responses are not committed because they contain lyric bodies; provenance and raw-response SHA-256 are in README.md.",
+  "notes": "Metadata-only extracts from bounded public LRCLib searches. Raw responses are not committed because they contain lyric bodies; provenance and raw-response SHA-256 are in README.md. The label field is an implementer-assigned reference label derived from captured provider metadata, not a human-reviewed annotation or external ground truth.",
   "cases": [
     {
       "id": "live-forever-studio-exact",

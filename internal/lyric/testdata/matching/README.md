@@ -21,13 +21,18 @@ with the queries recorded in `corpus.json`. Each case names its record IDs.
 
 ## Labels and calibration use
 
-Each case carries an independent human `label` (`same`, `different`,
+Each case carries an independent reference `label` (`same`, `different`,
 `uncertain`) and a `timing` tier in addition to the classifier expectation.
+These labels were assigned during implementation from the captured provider
+metadata and release context; they are not human-reviewed annotations or
+external ground truth. They are kept separate from the classifier's expected
+status so calibration does not reuse its own prediction.
 Only cases without `"synthetic": true` may justify a numeric constant.
 Synthetic cases exercise missing fields, contradictory markers and error paths;
 they are deliberately excluded from threshold calibration. The corpus is a
-small labelled comparison set, not a population sample, and this document makes
-no accuracy claim beyond the listed cases.
+small implementer-labelled comparison set, not a population sample or
+human-reviewed benchmark, and this document makes no accuracy claim beyond the
+listed cases.
 
 ## Evidence supporting the rule
 

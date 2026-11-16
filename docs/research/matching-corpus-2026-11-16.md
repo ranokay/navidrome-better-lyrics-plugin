@@ -1,7 +1,6 @@
 # Recording-matching corpus evidence — 2026-11-16
 
-This is a small, independently labelled comparison corpus, not a population
-sample. It makes no accuracy claim about providers, tracks, or users. The
+This is a small reference-labelled comparison corpus, not a population sample. It makes no accuracy claim about providers, tracks, or users. The
 committed metadata extracts and their provenance are in
 `internal/lyric/testdata/matching/README.md`.
 
@@ -12,9 +11,9 @@ committed metadata extracts and their provenance are in
 | Total cases | 17 |
 | Provenance-backed cases | 13 |
 | Synthetic edge cases (excluded from calibration) | 4 |
-| Human label `same` (all cases) | 7 |
-| Human label `different` (all cases) | 7 |
-| Human label `uncertain` (all cases) | 3 |
+| Reference label `same` (all cases) | 7 |
+| Reference label `different` (all cases) | 7 |
+| Reference label `uncertain` (all cases) | 3 |
 | Classifier `validated` | 6 |
 | Classifier `ambiguous` | 9 |
 | Classifier `mismatch` | 2 |
@@ -29,14 +28,17 @@ studio request.
 
 ## Independent labels and measured outcomes
 
-Human labels are recorded separately from the classifier's expected status, so
-calibration does not reuse its own prediction. Among provenance-backed cases:
+Reference labels were assigned by the implementer from the captured provider
+metadata and release context. They are not human-reviewed annotations,
+independent third-party ground truth, or population evidence. They are recorded
+separately from the classifier's expected status so threshold checks do not
+reuse the classifier's own prediction. Among provenance-backed cases:
 
 - correct `same` deltas are 0–4.0 s; the 4.0 s case is deliberately expected
   `ambiguous` because the available metadata cannot confirm it;
 - the smallest markerless `different` delta is 45 s;
-- `wrongMatches` (human label `different` but classifier `validated`) = **0**;
-- `conservativeMisses` (human label `same` but not auto-playable) = **1**, the
+- `wrongMatches` (reference label `different` but classifier `validated`) = **0**;
+- `conservativeMisses` (reference label `same` but not auto-playable) = **1**, the
   correct 4.0 s drift case;
 - synthetic cases are excluded from these calibration counts.
 

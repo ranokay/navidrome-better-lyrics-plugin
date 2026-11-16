@@ -16,9 +16,9 @@ KV, or UI.
   `dcb3c537eb488b2f77a6c7aeaece334267051bc43855d08db2c962a92e340cac`.
 - Test host binary SHA-256:
   `6263a733ee407f221d195a33619e5b28739fca3b88717105027d560040a4a3fa`.
-- Overlay transport: `runtime-fixture/host_httpclient_fixture.go`
+- Overlay transport: `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/host_httpclient_fixture.go`
   `c5cdb6029643e14e054b5ff285a9ea3e0601db53bc59499f7dcbb667faedae3e`;
-  fixture transport `runtime-fixture/zz_fixture_transport.go`
+  fixture transport `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/zz_fixture_transport.go`
   `1aecad9917658cde6aa27f96a2dd58293e27748ba8afbc42049be77368c92d7d`.
 - The supplemental test plugin was loaded by the host but excluded from
   `LyricsPriority`; every result below came from `nd-better-lyrics`.
@@ -38,21 +38,21 @@ All runs used the real UI with the scanned track Shape of You / Ed Sheeran /
 
 ## Receipts
 
-- Scenario JSON: `navidrome-runtime/probe/ambiguous.json`, `evidence.json`,
-  `conflict.json`, `outage.json`, `original.json`.
-- Original listing: `navidrome-runtime/probe/original-list.json`; exact bytes:
-  `navidrome-runtime/probe/original-bytes.ttml`; headers:
-  `navidrome-runtime/probe/original-headers.txt`.
-- Screenshots: `navidrome-runtime/scenario-ambiguous.png`,
-  `scenario-evidence.png`, `scenario-conflict.png`, `scenario-outage.png`,
-  `scenario-original.png`.
-- Host logs: `navidrome-runtime/server-ambiguous.log`,
-  `server-evidence.log`, `server-conflict.log`, `server-outage.log`,
-  `server-original.log`; each shows the changed `nd-better-lyrics` package
+- Scenario JSON: `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/ambiguous.json`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/evidence.json`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/conflict.json`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/outage.json`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/original.json`.
+- Original listing: `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/original-list.json`; exact bytes:
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/original-bytes.ttml`; headers:
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/probe/original-headers.txt`.
+- Screenshots: `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/scenario-ambiguous.png`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/scenario-evidence.png`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/scenario-conflict.png`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/scenario-outage.png`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/scenario-original.png`.
+- Host logs: `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/server-ambiguous.log`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/server-evidence.log`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/server-conflict.log`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/server-outage.log`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/navidrome-runtime/server-original.log`; each shows the changed `nd-better-lyrics` package
   loaded.
-- Fixtures: `runtime-fixture/ambiguous.json` `172d3d03…`,
-  `evidence.json` `ad9ac323…`, `conflict.json` `280af500…`,
-  `outage.json` `74d4e564…`, `original.json` `694a3d5c…`.
+- Fixtures: `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/ambiguous.json` `172d3d03…`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/evidence.json` `ad9ac323…`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/conflict.json` `280af500…`,
+  `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/outage.json` `74d4e564…`, `/private/var/folders/m0/5z6zglhn7jd4vm967sf2wydr0000gn/T/opencode/runtime-fixture/original.json` `694a3d5c…`.
 
 The all-scenario run was a single local headless Chromium session per
 scenario, with a fresh browser context and cleared plugin KV. It does not

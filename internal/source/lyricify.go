@@ -125,7 +125,10 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 		WithOriginal("lyl", lyric.OriginalSupplied, []byte(payloadEnvelope.Text)).
 		WithRecording(isrc)
 	if !candidate.Present() {
-		return []lyric.Candidate{evidence}, Healthy, nil
+		if payloadEnvelope.IsInstrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
+		return nil, Healthy, nil
 	}
 	if payloadEnvelope.IsInstrumental {
 		candidate.Evidence = evidence.Evidence
