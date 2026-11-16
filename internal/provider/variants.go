@@ -90,7 +90,8 @@ type V2Response struct {
 }
 
 // VariantSummary is one listing row. PlaybackIndex is advisory: identity is the
-// stable link to the playback entry.
+// stable link to the playback entry. It is -1 when the current playback winner
+// is not known without fetching.
 type VariantSummary struct {
 	Identity      lyric.VariantIdentity
 	Provider      string
@@ -184,7 +185,11 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 	if len(sources) == 0 {
 		return nil
 	}
+	playbackKnown := false
 	candidate, ok, sweepComplete := p.readCachedWinner(track, sources)
+	if ok {
+		playbackKnown = true
+	}
 	if ok && candidate.Present() && !sweepComplete {
 		if best, _ := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
 			candidate = best
@@ -192,6 +197,9 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 	}
 	if !ok || !candidate.Present() {
 		best, _ := p.readBestFromSourceCache(track, sources)
+		if best.Present() {
+			playbackKnown = true
+		}
 		if !best.Present() {
 			// The legacy per-source entry may have been refused while a
 			// smaller bundled representation fit; list that instead.
@@ -217,13 +225,17 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 		if entry.Text.Source != nil {
 			provider = entry.Text.Source.Provider
 		}
+		playbackIndex := -1
+		if playbackKnown {
+			playbackIndex = index
+		}
 		summaries = append(summaries, VariantSummary{
 			Identity:      *entry.Identity,
 			Provider:      provider,
 			Language:      entry.Identity.Language,
 			Role:          entry.Identity.Role,
 			Format:        entry.Identity.Format,
-			PlaybackIndex: index,
+			PlaybackIndex: playbackIndex,
 			Original:      entry.Original,
 		})
 		if len(summaries) >= MaxListedVariants {

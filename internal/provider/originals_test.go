@@ -356,6 +356,9 @@ func TestProvider_BundleTruncationReportsUnavailable(t *testing.T) {
 	if len(listing) != 1 || !strings.HasPrefix(listing[0].Identity.Recording, "rec-small@") {
 		t.Fatalf("listing = %#v, want the bundled small representation", listing)
 	}
+	if listing[0].PlaybackIndex != -1 {
+		t.Fatalf("playback index = %d, want unknown (-1) when the winner is not cacheable", listing[0].PlaybackIndex)
+	}
 
 	// The dropped selection has no address: it is reported unavailable and is
 	// never remapped to the candidate that fit.
@@ -626,5 +629,32 @@ func TestProvider_ProviderRecordingRevisionRejectsChangedContent(t *testing.T) {
 	}
 	if fetches != before+1 {
 		t.Fatalf("fetches = %d, want one refetch attempt", fetches)
+	}
+}
+
+func TestProvider_InstanceSaltReadErrorDoesNotOverwrite(t *testing.T) {
+	t.Parallel()
+
+	persisted := []byte("persisted-salt-0123456789abcdef")
+	cache := newFakeLyricsCache()
+	cache.values[instanceSaltKey] = persisted
+	cache.getError = errors.New("salt read unavailable")
+	p := newTestProviderWithSources(nil, cache, time.Now, nil, nil)
+	first := p.sourceInstanceID("read-error")
+	if first == "" {
+		t.Fatal("a read-error salt must still yield a per-process identity")
+	}
+	if string(cache.values[instanceSaltKey]) != string(persisted) {
+		t.Fatal("a salt read error must not overwrite the persisted installation salt")
+	}
+	if _, wrote := cache.ttlsForKey[instanceSaltKey]; wrote {
+		t.Fatal("a salt read error must not write a replacement salt")
+	}
+
+	recovered := newFakeLyricsCache()
+	recovered.values[instanceSaltKey] = persisted
+	recoveredProvider := newTestProviderWithSources(nil, recovered, time.Now, nil, nil)
+	if recoveredProvider.sourceInstanceID("read-error") == first {
+		t.Fatal("a recovered persisted salt must produce a different instance than the per-process fallback")
 	}
 }

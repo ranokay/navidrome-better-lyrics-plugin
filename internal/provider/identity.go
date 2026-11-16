@@ -29,7 +29,8 @@ func (p *Provider) instanceSalt() []byte {
 	if len(p.instanceSaltBytes) >= 16 {
 		return p.instanceSaltBytes
 	}
-	if raw, exists, _ := p.cache.Get(instanceSaltKey); exists && len(raw) >= 16 {
+	raw, exists, readErr := p.cache.Get(instanceSaltKey)
+	if readErr == nil && exists && len(raw) >= 16 {
 		p.instanceSaltBytes = raw
 		return raw
 	}
@@ -37,6 +38,13 @@ func (p *Provider) instanceSalt() []byte {
 	if _, err := rand.Read(salt); err != nil {
 		p.logf("variant identity salt unavailable: secure randomness failed; originals disabled for this process")
 		return nil
+	}
+	if readErr != nil {
+		// A read failure may hide a persisted salt. Keep a per-process salt and
+		// never overwrite the store, so a later successful read retains the
+		// installation's original identity separation.
+		p.instanceSaltBytes = salt
+		return salt
 	}
 	_ = p.cache.SetWithTTL(instanceSaltKey, salt, credentialSaltTTL)
 	p.instanceSaltBytes = salt

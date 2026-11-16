@@ -134,6 +134,7 @@ type fakeLyricsCache struct {
 	ttls       []int64
 	ttlsForKey map[string]int64
 	setError   error
+	getError   error
 }
 
 func newFakeLyricsCache() *fakeLyricsCache {
@@ -143,6 +144,9 @@ func newFakeLyricsCache() *fakeLyricsCache {
 func (c *fakeLyricsCache) Get(key string) ([]byte, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.getError != nil {
+		return nil, false, c.getError
+	}
 	value, exists := c.values[key]
 	return append([]byte(nil), value...), exists, nil
 }
