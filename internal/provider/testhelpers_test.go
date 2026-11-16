@@ -9,6 +9,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
@@ -133,6 +134,7 @@ type fakeLyricsCache struct {
 	ttls       []int64
 	ttlsForKey map[string]int64
 	setError   error
+	getError   error
 }
 
 func newFakeLyricsCache() *fakeLyricsCache {
@@ -142,6 +144,9 @@ func newFakeLyricsCache() *fakeLyricsCache {
 func (c *fakeLyricsCache) Get(key string) ([]byte, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.getError != nil {
+		return nil, false, c.getError
+	}
 	value, exists := c.values[key]
 	return append([]byte(nil), value...), exists, nil
 }
@@ -182,4 +187,11 @@ func (c *fakeLyricsCache) sourceTTL(track lyrics.TrackInfo, sourceID string) int
 	defer c.mu.Unlock()
 	key, _ := lyricsCacheKeyForSource(track, sourceID)
 	return c.ttlsForKey[key]
+}
+
+// cacheSourceCandidate adapts the pre-bundle single-candidate test seam to the
+// production multi-candidate writer.
+func (p *Provider) cacheSourceCandidate(track lyrics.TrackInfo, sourceID string, candidate lyric.Candidate) bool {
+	p.prepareCandidate(track, sourceID, &candidate)
+	return p.cacheSourceCandidates(track, sourceID, []lyric.Candidate{candidate})
 }

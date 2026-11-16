@@ -1,0 +1,556 @@
+//go:build qualification
+
+// Disposable-host runtime qualification for the optional lyrics-variants
+// capability. It loads the production plugin package into the real WASI plugin
+// manager, real KV/HTTP services, the real Subsonic router and auth middleware,
+// and serves deterministic provider responses through the host HTTP boundary.
+package plugins_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/navidrome/navidrome/core/lyrics"
+	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/plugins"
+	"github.com/navidrome/navidrome/server/subsonic"
+	"github.com/navidrome/navidrome/server/subsonic/responses"
+	"github.com/navidrome/navidrome/tests"
+)
+
+const (
+	qualificationTrackTitle  = "Qualification Song"
+	qualificationTrackArtist = "Qualification Artist"
+	qualificationUser        = "qualification-user"
+	qualificationPassword    = "qualification-pass"
+)
+
+type cannedTransport struct {
+	mu      sync.Mutex
+	handler func(*http.Request) (int, []byte)
+	count   int
+}
+
+func (t *cannedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.count++
+	handler := t.handler
+	t.mu.Unlock()
+	status, body := handler(request)
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    request,
+	}, nil
+}
+
+func (t *cannedTransport) requests() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.count
+}
+
+type qualificationHost struct {
+	server    *httptest.Server
+	transport *cannedTransport
+	plugin    *plugins.QualificationPlugin
+}
+
+type qualificationPlayers struct{}
+
+func (qualificationPlayers) Get(_ context.Context, _ string) (*model.Player, error) {
+	return &model.Player{ID: "player-1", UserId: "user-1"}, nil
+}
+
+func (qualificationPlayers) Register(_ context.Context, _, _, _, _ string) (*model.Player, *model.Transcoding, error) {
+	return &model.Player{ID: "player-1", UserId: "user-1"}, nil, nil
+}
+
+func (qualificationPlayers) Touch(_ context.Context, _ model.Player, _, _, _ string) (*model.Player, *model.Transcoding, error) {
+	return &model.Player{ID: "player-1", UserId: "user-1"}, nil, nil
+}
+
+func newQualificationHost(t *testing.T, sources []string, handler func(*http.Request) (int, []byte)) *qualificationHost {
+	t.Helper()
+	packagePath := os.Getenv("BETTER_LYRICS_PACKAGE")
+	if packagePath == "" {
+		t.Fatal("BETTER_LYRICS_PACKAGE must name the built .ndp")
+	}
+	transport := &cannedTransport{handler: handler}
+	helper := plugins.LoadQualificationPlugin(t, packagePath, sources, transport)
+
+	userRepo := tests.CreateMockUserRepo()
+	if err := userRepo.Put(t.Context(), &model.User{
+		ID: "user-1", UserName: qualificationUser, Name: "Qualification User", NewPassword: qualificationPassword,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mediaRepo := &tests.MockMediaFileRepo{}
+	mediaRepo.SetData(model.MediaFiles{{
+		ID: "track-1", Title: qualificationTrackTitle, Artist: qualificationTrackArtist,
+		Album: "Qualification Album", Duration: 200, LibraryID: 1, LibraryPath: "qualification",
+	}})
+	ds := &tests.MockDataStore{MockedUser: userRepo, MockedMediaFile: mediaRepo}
+	service := lyrics.NewLyrics(ds, helper.Manager)
+	router := subsonic.New(ds, nil, nil, nil, qualificationPlayers{}, nil, nil, nil, nil, nil, nil, nil, nil, service, nil, nil)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	return &qualificationHost{server: server, transport: transport, plugin: helper}
+}
+
+func (h *qualificationHost) auth() string {
+	return fmt.Sprintf("u=%s&p=%s&v=1.16.1&c=qualification&f=json", qualificationUser, qualificationPassword)
+}
+
+func (h *qualificationHost) get(t *testing.T, path string) (int, http.Header, []byte) {
+	t.Helper()
+	response, err := http.Get(h.server.URL + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return response.StatusCode, response.Header, body
+}
+
+func (h *qualificationHost) playback(t *testing.T) responses.LyricsList {
+	t.Helper()
+	_, _, body := h.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&"+h.auth())
+	var wrapper responses.JsonWrapper
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		t.Fatalf("decode playback: %v: %s", err, body)
+	}
+	if wrapper.Subsonic.Status != responses.StatusOK {
+		t.Fatalf("playback status = %q: %s", wrapper.Subsonic.Status, body)
+	}
+	if wrapper.Subsonic.LyricsList == nil {
+		t.Fatalf("playback has no lyricsList: %s", body)
+	}
+	return *wrapper.Subsonic.LyricsList
+}
+
+func (h *qualificationHost) variants(t *testing.T) responses.LyricsVariants {
+	t.Helper()
+	_, _, body := h.get(t, "/getLyricsVariants?id=track-1&"+h.auth())
+	var wrapper responses.JsonWrapper
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		t.Fatalf("decode variants: %v: %s", err, body)
+	}
+	if wrapper.Subsonic.Status != responses.StatusOK || wrapper.Subsonic.LyricsVariants == nil {
+		t.Fatalf("variants status = %q: %s", wrapper.Subsonic.Status, body)
+	}
+	return *wrapper.Subsonic.LyricsVariants
+}
+
+func (h *qualificationHost) original(t *testing.T, selection string) (int, http.Header, []byte) {
+	t.Helper()
+	return h.get(t, "/getLyricsOriginal?id=track-1&selection="+selection+"&"+h.auth())
+}
+
+func expectRejected(t *testing.T, status int, body []byte, forbidden ...string) {
+	t.Helper()
+	var wrapper responses.JsonWrapper
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		t.Fatalf("expected a Subsonic error envelope, got %q: %v", body, err)
+	}
+	if wrapper.Subsonic.Status != responses.StatusFailed || wrapper.Subsonic.Error == nil {
+		t.Fatalf("status = %q, want a failed error envelope: %s", wrapper.Subsonic.Status, body)
+	}
+	for _, value := range forbidden {
+		if len(value) > 0 && bytes.Contains(body, []byte(value)) {
+			t.Fatalf("rejected response leaked %q", value)
+		}
+	}
+}
+
+func fixture(t *testing.T, name string) []byte {
+	t.Helper()
+	path := os.Getenv(name)
+	if path == "" {
+		t.Fatalf("%s must point at the committed native-document fixture", name)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return data
+}
+
+func TestLyricsOriginalsQualification(t *testing.T) {
+	if os.Getenv("BETTER_LYRICS_EXPECT") == "legacy" {
+		t.Run("old plugin keeps playback and reports unsupported originals", testLegacyPlugin)
+		return
+	}
+	t.Run("LRCLib keeps and retrieves every representation", testLRCLibVariants)
+	t.Run("TTML native bytes survive the plugin and host path", testTTMLOriginal)
+	t.Run("QRC native bytes survive the plugin and host path", testQRCOriginal)
+	t.Run("invalid native TTML is unavailable while playback continues", testInvalidNativeTTML)
+	t.Run("failed original refetch backs off and recovers", testOriginalRefetchBackoff)
+}
+
+func testLRCLibVariants(t *testing.T) {
+	lyricsFile := "version: '1.0'\nmetadata:\n  title: " + qualificationTrackTitle + "\nlines:\n- start_ms: 1000\n  end_ms: 2000\n  text: synced line\n  words:\n  - text: synced\n    start_ms: 1000\n    end_ms: 1400\n  - text: line\n    start_ms: 1400\n    end_ms: 2000\n"
+	record, err := json.Marshal(map[string]any{
+		"id": 1250, "trackName": qualificationTrackTitle, "artistName": qualificationTrackArtist,
+		"duration": 200, "hasWordSync": true, "lyricsfile": lyricsFile,
+		"syncedLyrics": "[00:01.00]synced line", "plainLyrics": "plain line",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lrclib.net" && strings.HasPrefix(request.URL.Path, "/api/get") {
+			return http.StatusOK, record
+		}
+		return http.StatusNotFound, nil
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 3 {
+		t.Fatalf("playback variants = %d, want ELRC, LRC and plain", len(playback.StructuredLyrics))
+	}
+	byFormat := map[string]responses.StructuredLyric{}
+	for _, entry := range playback.StructuredLyrics {
+		if entry.Variant == nil || entry.Selection == "" {
+			t.Fatalf("playback entry %q has no identity/selection: %#v", entry.Lang, entry)
+		}
+		if entry.Source == nil || entry.Source.PluginID != "nd-better-lyrics" {
+			t.Fatalf("playback entry has no plugin id: %#v", entry.Source)
+		}
+		byFormat[entry.Variant.Format] = entry
+	}
+	for _, format := range []string{"elrc", "lrc", "plain"} {
+		if _, ok := byFormat[format]; !ok {
+			t.Fatalf("playback lacks the %q representation: %#v", format, playback.StructuredLyrics)
+		}
+	}
+	if !strings.HasPrefix(byFormat["elrc"].Variant.Recording, "1250@") {
+		t.Fatalf("ELRC recording = %q, want the LRCLib id with a revision digest", byFormat["elrc"].Variant.Recording)
+	}
+
+	listing := host.variants(t)
+	if len(listing.Variants) != 3 {
+		t.Fatalf("listing variants = %d, want 3", len(listing.Variants))
+	}
+	listed := map[string]responses.LyricsVariant{}
+	for _, variant := range listing.Variants {
+		playbackIdentity := identityOf(byFormat[variant.Format].Variant)
+		if playbackIdentity == nil || modelIdentity(variant.Identity) != *playbackIdentity {
+			t.Fatalf("listing identity for %q does not match playback", variant.Format)
+		}
+		listed[variant.Format] = variant
+	}
+
+	status, headers, body := host.original(t, byFormat["lrc"].Selection)
+	if status != http.StatusOK || !bytes.Equal(body, []byte("[00:01.00]synced line")) {
+		t.Fatalf("LRC original = %d/%q, want exact syncedLyrics bytes", status, body)
+	}
+	if headers.Get("Content-Type") != "text/plain; charset=utf-8" || headers.Get("Content-Disposition") == "" {
+		t.Fatalf("LRC original headers = %v", headers)
+	}
+	status, _, body = host.original(t, byFormat["plain"].Selection)
+	if status != http.StatusOK || !bytes.Equal(body, []byte("plain line")) {
+		t.Fatalf("plain original = %d/%q", status, body)
+	}
+	status, headers, body = host.original(t, byFormat["elrc"].Selection)
+	if status != http.StatusOK || !bytes.Equal(body, []byte(lyricsFile)) {
+		t.Fatalf("ELRC original = %d/%q, want the exact lyricsfile", status, body)
+	}
+	if headers.Get("Content-Type") != "application/yaml" || !strings.HasSuffix(headers.Get("Content-Disposition"), ".yaml\"") {
+		t.Fatalf("lyricsfile headers = %v, want a YAML download", headers)
+	}
+	if strings.Contains(string(byFormat["elrc"].Line[0].Value), "version: '1.0'") {
+		t.Fatal("ELRC playback must be the reconstruction, not the native lyricsfile")
+	}
+
+	// Unauthenticated and wrong-password requests are rejected with no bytes.
+	status, _, body = host.get(t, "/getLyricsOriginal?id=track-1&f=json&selection="+byFormat["lrc"].Selection)
+	if status == http.StatusOK && bytes.Equal(body, []byte("[00:01.00]synced line")) {
+		t.Fatal("unauthenticated retrieval returned the document")
+	}
+	expectRejected(t, status, body, "synced line")
+	status, _, body = host.get(t, "/getLyricsOriginal?id=track-1&selection=not-a-selection&"+host.auth())
+	expectRejected(t, status, body, "synced line")
+
+	// Eviction only deletes disposable test KV, then refetches the same selection.
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	before := host.transport.requests()
+	status, _, body = host.original(t, byFormat["lrc"].Selection)
+	if status != http.StatusOK || !bytes.Equal(body, []byte("[00:01.00]synced line")) {
+		t.Fatalf("evicted LRC original = %d/%q", status, body)
+	}
+	if host.transport.requests() <= before {
+		t.Fatal("an evicted artifact must refetch the same selection")
+	}
+
+	// A provider editing the lyrics under the same record id must not resolve
+	// the earlier selection to the new bytes.
+	changed, err := json.Marshal(map[string]any{
+		"id": 1250, "trackName": qualificationTrackTitle, "artistName": qualificationTrackArtist,
+		"duration": 200, "hasWordSync": true, "lyricsfile": lyricsFile,
+		"syncedLyrics": "[00:01.00]changed line", "plainLyrics": "changed plain",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record = changed
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	status, _, body = host.original(t, byFormat["lrc"].Selection)
+	expectRejected(t, status, body, "changed line")
+}
+
+func testTTMLOriginal(t *testing.T) {
+	ttml := fixture(t, "BETTER_LYRICS_TTML_FIXTURE")
+	current := append([]byte(nil), ttml...)
+	host := newQualificationHost(t, []string{"binimum"}, func(request *http.Request) (int, []byte) {
+		switch {
+		case request.URL.Path == "/" && request.URL.Query().Get("track") != "":
+			body, _ := json.Marshal(map[string]any{"results": []map[string]any{{
+				"track_name": qualificationTrackTitle, "artist_name": qualificationTrackArtist,
+				"duration": 200, "lyricsUrl": "https://lyrics-api.binimum.org/q.ttml", "timing_type": "word",
+			}}})
+			return http.StatusOK, body
+		case request.URL.Path == "/q.ttml":
+			return http.StatusOK, current
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 1 {
+		t.Fatalf("TTML playback variants = %d, want one", len(playback.StructuredLyrics))
+	}
+	entry := playback.StructuredLyrics[0]
+	if entry.Variant == nil || !strings.HasPrefix(entry.Variant.Recording, "sha256:") {
+		t.Fatalf("TTML identity = %#v, want a content-addressed recording", entry.Variant)
+	}
+	status, headers, body := host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) {
+		t.Fatalf("TTML original = %d/%x, want %x", status, sha256.Sum256(body), sha256.Sum256(ttml))
+	}
+	if headers.Get("Content-Type") != "application/ttml+xml" {
+		t.Fatalf("TTML media type = %q", headers.Get("Content-Type"))
+	}
+
+	// Evict and refetch the same bytes.
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	status, _, body = host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) {
+		t.Fatalf("evicted TTML original = %d/%x", status, sha256.Sum256(body))
+	}
+
+	// A changed document cannot silently replace the earlier selection.
+	current = append(append([]byte(nil), ttml...), []byte("\n<!-- changed upstream -->")...)
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	status, _, body = host.original(t, entry.Selection)
+	expectRejected(t, status, body, string(ttml))
+}
+
+func testQRCOriginal(t *testing.T) {
+	qrc := fixture(t, "BETTER_LYRICS_QRC_FIXTURE")
+	envelope, err := json.Marshal(map[string]string{"lyrics": string(qrc)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := newQualificationHost(t, []string{"better-lyrics-portato"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lyrics-api.boidu.dev" && strings.Contains(request.URL.Path, "/qq/getLyrics") {
+			return http.StatusOK, envelope
+		}
+		return http.StatusNotFound, nil
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 1 {
+		t.Fatalf("QRC playback variants = %d, want one converted ELRC", len(playback.StructuredLyrics))
+	}
+	entry := playback.StructuredLyrics[0]
+	if entry.Variant == nil || entry.Variant.Format != "elrc" {
+		t.Fatalf("QRC identity = %#v, want the ELRC playback format", entry.Variant)
+	}
+	listed := host.variants(t)
+	if len(listed.Variants) != 1 || listed.Variants[0].Original.Format != "qrc" {
+		t.Fatalf("QRC listing = %#v, want the qrc original", listed.Variants)
+	}
+	status, headers, body := host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, qrc) {
+		t.Fatalf("QRC original = %d/%x, want %x", status, sha256.Sum256(body), sha256.Sum256(qrc))
+	}
+	if headers.Get("Content-Type") != "application/xml" || !strings.HasSuffix(headers.Get("Content-Disposition"), ".qrc\"") {
+		t.Fatalf("QRC original headers = %v", headers)
+	}
+	if strings.Contains(entry.Line[0].Value, "QrcInfos") {
+		t.Fatal("QRC playback must be the converted ELRC, not the native container")
+	}
+
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	before := host.transport.requests()
+	status, _, body = host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, qrc) {
+		t.Fatalf("evicted QRC original = %d/%x", status, sha256.Sum256(body))
+	}
+	if host.transport.requests() <= before {
+		t.Fatal("an evicted QRC artifact must refetch the same selection")
+	}
+}
+
+func testInvalidNativeTTML(t *testing.T) {
+	search, _ := json.Marshal(map[string]any{"results": []map[string]any{{
+		"trackId": 9, "trackName": qualificationTrackTitle,
+		"artistName": qualificationTrackArtist, "trackTimeMillis": 200000,
+	}}})
+	host := newQualificationHost(t, []string{"apple-lyrically"}, func(request *http.Request) (int, []byte) {
+		switch {
+		case request.URL.Host == "itunes.apple.com":
+			return http.StatusOK, search
+		case request.URL.Host == "lyrics.paxsenix.org":
+			return http.StatusOK, []byte(`{"elrc":"[00:01.00]line","ttmlContent":"not a ttml document"}`)
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 1 || playback.StructuredLyrics[0].Variant == nil {
+		t.Fatalf("playback = %#v, want the supported ELRC entry", playback.StructuredLyrics)
+	}
+	entry := playback.StructuredLyrics[0]
+	if entry.Variant.Format != "elrc" {
+		t.Fatalf("playback format = %q, want elrc", entry.Variant.Format)
+	}
+	listing := host.variants(t)
+	if len(listing.Variants) != 1 {
+		t.Fatalf("listing = %#v, want one variant", listing.Variants)
+	}
+	original := listing.Variants[0].Original
+	if original.Available {
+		t.Fatal("invalid native TTML must not be listed as an available original")
+	}
+	if !strings.Contains(original.Reason, "valid native document") {
+		t.Fatalf("reason = %q, want the explicit invalid-native reason", original.Reason)
+	}
+	status, _, body := host.original(t, entry.Selection)
+	expectRejected(t, status, body, "not a ttml document", "<tt")
+}
+
+func testOriginalRefetchBackoff(t *testing.T) {
+	ttml := []byte("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p begin=\"00:00.00\" end=\"00:01.00\">backoff line</p></div></body></tt>")
+	envelope, err := json.Marshal(map[string]string{"ttml": string(ttml)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := false
+	host := newQualificationHost(t, []string{"better-lyrics"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lyrics-api.boidu.dev" && strings.Contains(request.URL.Path, "/getLyrics") {
+			if failing {
+				return http.StatusInternalServerError, []byte("upstream unavailable")
+			}
+			return http.StatusOK, envelope
+		}
+		return http.StatusNotFound, nil
+	})
+
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) != 1 || playback.StructuredLyrics[0].Variant == nil {
+		t.Fatalf("playback = %#v", playback.StructuredLyrics)
+	}
+	entry := playback.StructuredLyrics[0]
+	status, _, body := host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) {
+		t.Fatalf("initial TTML original = %d/%q", status, body)
+	}
+
+	// Evict, fail the upstream, and confirm one bounded refetch attempt.
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	failing = true
+	status, _, body = host.original(t, entry.Selection)
+	expectRejected(t, status, body, "backoff line")
+	before := host.transport.requests()
+	status, _, body = host.original(t, entry.Selection)
+	expectRejected(t, status, body, "backoff line")
+	if host.transport.requests() != before {
+		t.Fatal("a backed-off source must not be fetched again immediately")
+	}
+
+	// Recovery after the backoff window resets the source and serves bytes.
+	time.Sleep(6 * time.Second)
+	failing = false
+	status, _, body = host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) {
+		t.Fatalf("recovered TTML original = %d/%q", status, body)
+	}
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	before = host.transport.requests()
+	status, _, body = host.original(t, entry.Selection)
+	if status != http.StatusOK || !bytes.Equal(body, ttml) || host.transport.requests() <= before {
+		t.Fatalf("post-recovery refetch = %d/%q, want a fresh successful fetch", status, body)
+	}
+}
+
+func testLegacyPlugin(t *testing.T) {
+	record, err := json.Marshal(map[string]any{
+		"id": 1250, "trackName": qualificationTrackTitle, "artistName": qualificationTrackArtist,
+		"duration": 200, "hasWordSync": false, "syncedLyrics": "[00:01.00]legacy line",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lrclib.net" {
+			return http.StatusOK, record
+		}
+		return http.StatusNotFound, nil
+	})
+	playback := host.playback(t)
+	if len(playback.StructuredLyrics) == 0 {
+		t.Fatal("old plugin must still serve playback")
+	}
+	for _, entry := range playback.StructuredLyrics {
+		if entry.Variant != nil || entry.Selection != "" {
+			t.Fatalf("old plugin must not claim identities: %#v", entry)
+		}
+	}
+	listing := host.variants(t)
+	if len(listing.Variants) != 0 {
+		t.Fatalf("old plugin listing = %#v, want empty", listing.Variants)
+	}
+	fabricated := model.LyricsVariantIdentity{Version: 1, Instance: "lrclib:0123456789abcdef0123456789abcdef", Recording: "1250", Role: "main", Format: "lrc"}
+	selection, ok := model.EncodeLyricsSelection("nd-better-lyrics", fabricated)
+	if !ok {
+		t.Fatal("fabricated selection must encode")
+	}
+	status, _, body := host.original(t, selection)
+	expectRejected(t, status, body, "legacy line")
+}
+
+func modelIdentity(identity responses.LyricsVariantIdentity) model.LyricsVariantIdentity {
+	return model.LyricsVariantIdentity{
+		Version: identity.Version, Instance: identity.Instance, Recording: identity.Recording,
+		Language: identity.Language, Role: identity.Role, Format: identity.Format,
+	}
+}
+
+func identityOf(variant *responses.LyricsVariantIdentity) *model.LyricsVariantIdentity {
+	if variant == nil {
+		return nil
+	}
+	return &model.LyricsVariantIdentity{
+		Version: variant.Version, Instance: variant.Instance, Recording: variant.Recording,
+		Language: variant.Language, Role: variant.Role, Format: variant.Format,
+	}
+}

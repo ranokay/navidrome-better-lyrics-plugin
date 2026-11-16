@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -28,8 +29,8 @@ class RunnerTests(unittest.TestCase):
         self.package = self.root / "trusted plugin.ndp"
         self.package.write_bytes(b"test package")
 
-    def invoke(self, checkout=None, package=None):
-        argv = ["run.py", str(checkout or self.checkout), str(package or self.package)]
+    def invoke(self, checkout=None, package=None, *flags):
+        argv = ["run.py", *flags, str(checkout or self.checkout), str(package or self.package)]
         with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
             return runner.main()
 
@@ -111,6 +112,42 @@ class RunnerTests(unittest.TestCase):
                 with patch.object(runner.subprocess, "run", side_effect=successful_test):
                     self.assertEqual(self.invoke(), 2)
 
+    def test_originals_mode_uses_a_second_overlay_and_fixtures(self):
+        calls = []
 
+        def successful_test(command, **kwargs):
+            overlay_path = Path(command[command.index("-overlay") + 1])
+            calls.append((command, kwargs, overlay_path.read_text()))
+            return runner.subprocess.CompletedProcess(command, 0)
+
+        with patch.object(runner, "git_output", return_value=str(self.checkout)):
+            with patch.object(runner, "host_state", return_value=("head", "", "")):
+                with patch.object(runner.shutil, "which", return_value="/trusted/go"):
+                    with patch.object(runner.subprocess, "run", side_effect=successful_test):
+                        self.assertEqual(self.invoke(None, None, "--originals", "--expect", "legacy"), 0)
+        command, kwargs, overlay_text = calls[0]
+        self.assertEqual(kwargs["cwd"], self.checkout)
+        self.assertIn("-tags=netgo,sqlite_fts5,qualification", command)
+        self.assertEqual(command[command.index("-run") + 1], "^" + runner.ORIGINALS_TEST_NAME + "$")
+        self.assertEqual(kwargs["env"]["BETTER_LYRICS_EXPECT"], "legacy")
+        self.assertTrue(kwargs["env"]["BETTER_LYRICS_TTML_FIXTURE"].endswith("binimum/lyrics.ttml"))
+        self.assertTrue(kwargs["env"]["BETTER_LYRICS_QRC_FIXTURE"].endswith("portato/lyrics.qrc"))
+        overlay = json.loads(overlay_text)
+        self.assertEqual(len(overlay["Replace"]), 2)
+
+    def test_expect_requires_originals_mode(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            self.invoke(None, None, "--expect", "legacy")
+        self.assertEqual(error.exception.code, 2)
+
+    def test_existing_originals_overlay_paths_are_preserved(self):
+        (self.checkout / "plugins" / "zz_betterlyrics_qualification_support.go").write_text("keep")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            self.invoke(None, None, "--originals")
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(
+            (self.checkout / "plugins" / "zz_betterlyrics_qualification_support.go").read_text(),
+            "keep",
+        )
 if __name__ == "__main__":
     unittest.main()

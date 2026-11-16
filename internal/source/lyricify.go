@@ -109,7 +109,9 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 		return nil, Healthy, nil
 	}
 	lines = applyLyricsOffset(lines, payloadEnvelope.Offset)
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Lyricify", "elrc")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "Lyricify", "elrc").
+		WithOriginal("lyl", lyric.OriginalSupplied, []byte(payloadEnvelope.Text)).
+		WithRecording(isrc)
 	if !candidate.Present() {
 		return nil, Healthy, nil
 	}

@@ -85,7 +85,8 @@ func fetchBinimum(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 		return nil, Healthy, nil
 	}
 	text := string(lyricsResponse.Body)
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "BiniLyrics", "ttml")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "BiniLyrics", "ttml").
+		WithOriginal("ttml", lyric.OriginalSupplied, lyricsResponse.Body)
 	if !candidate.Present() {
 		if lyric.EmptyDocument(text, "ttml") {
 			return nil, Healthy, nil

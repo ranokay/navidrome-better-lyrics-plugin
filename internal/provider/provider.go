@@ -70,6 +70,8 @@ type Provider struct {
 	// credentialSaltBytes memoizes the per-installation HMAC salt for this
 	// process so stores whose reads fail do not remint on every fingerprint.
 	credentialSaltBytes []byte
+	// instanceSaltBytes memoizes the identity salt; see instanceSalt.
+	instanceSaltBytes []byte
 }
 
 var _ lyrics.Lyrics = (*Provider)(nil)
@@ -125,11 +127,30 @@ func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track ly
 }
 
 // GetLyrics prefers rich TTML, then synchronized provider/community results, while
-// retaining plain text as the final fallback.
+// retaining plain text as the final fallback. This is the required capability
+// and its response shape stays compatible with older hosts and clients.
 func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsResponse, error) {
+	candidate, sources, err := p.resolveLyrics(input)
+	return p.responsesWithVariants(input.Track, sources, candidate), err
+}
+
+// GetLyricsV2 is the optional playback export: the same selection plus a
+// versioned identity on every entry and every cached representation from each
+// source. It resolves once and does not add a second fetch.
+func (p *Provider) GetLyricsV2(input lyrics.GetLyricsRequest) (V2Response, error) {
+	candidate, sources, err := p.resolveLyrics(input)
+	if err != nil {
+		return V2Response{}, err
+	}
+	return p.buildV2Response(input.Track, sources, candidate), nil
+}
+
+// resolveLyrics selects the servable candidate and keeps the source order for
+// callers that build variant responses.
+func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, []source.Source, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
-		return lyrics.GetLyricsResponse{}, nil
+		return lyric.Candidate{}, nil, nil
 	}
 
 	sources := p.activeSources()
@@ -138,13 +159,7 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		// serve nothing without touching the winner cache or task queue — an
 		// empty source order creates no key and would wedge every lookup
 		// through the unschedulable sweep path.
-		return lyrics.GetLyricsResponse{}, nil
-	}
-
-	// respond serves the winner plus every other cached source-tagged variant,
-	// so hosts that understand per-entry sources can offer a source switcher.
-	respond := func(candidate lyric.Candidate) lyrics.GetLyricsResponse {
-		return p.responsesWithVariants(track, sources, candidate)
+		return lyric.Candidate{}, sources, nil
 	}
 
 	if candidate, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
@@ -160,14 +175,14 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 				}
 				p.maybeEnqueueSweep(track)
 			}
-			return respond(candidate), nil
+			return candidate, sources, nil
 		}
 		// A cached miss must not shield fresh sweep results: the background sweep
 		// may have written better candidates per source after the miss landed.
 		if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
 			p.cacheWinnerUntil(track, sources, best, false, expiry)
 			p.maybeEnqueueSweep(track)
-			return respond(best), nil
+			return best, sources, nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -175,12 +190,12 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		if !sweepComplete {
 			p.maybeEnqueueSweep(track)
 		}
-		return respond(candidate), nil
+		return candidate, sources, nil
 	}
 	if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
 		p.cacheWinnerUntil(track, sources, best, false, expiry)
 		p.maybeEnqueueSweep(track)
-		return respond(best), nil
+		return best, sources, nil
 	}
 
 	candidate, health, coveredAll, err := p.fetchLyrics(input)
@@ -189,7 +204,7 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 		if !coveredAll {
 			p.maybeEnqueueSweep(track)
 		}
-		return respond(candidate), nil
+		return candidate, sources, nil
 	}
 	if err == nil && health < source.Degraded {
 		p.cacheNegativeWinner(track, sources, coveredAll)
@@ -207,7 +222,7 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 	if err == nil && health >= source.Degraded {
 		err = errors.New("lyrics sources temporarily unavailable")
 	}
-	return candidate.Response, p.safeDiagnosticError(err)
+	return candidate, sources, p.safeDiagnosticError(err)
 }
 
 // activeSources resolves the source order for this lookup: the injected test
@@ -304,13 +319,17 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 			p.resetSourceFailure(src.ID)
 		}
 		foundCandidate := false
-		for _, candidate := range candidates {
+		for index := range candidates {
+			candidate := &candidates[index]
 			if !candidate.Present() {
 				continue
 			}
 			foundCandidate = true
-			p.cacheSourceCandidate(track, src.ID, candidate)
-			best = lyric.Prefer(best, candidate)
+			p.prepareCandidate(track, src.ID, candidate)
+			best = lyric.Prefer(best, *candidate)
+		}
+		if foundCandidate {
+			p.cacheSourceCandidates(track, src.ID, candidates)
 		}
 		coveredThisSource := true
 		if !foundCandidate {

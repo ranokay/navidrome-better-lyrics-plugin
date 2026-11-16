@@ -126,22 +126,34 @@ func fetchLyrically(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]l
 		return nil, Degraded, fmt.Errorf("decode Lyrically lyrics response: %w", err)
 	}
 
+	// Capture the Apple document before any trimming: this is the only
+	// source-native representation the mirror passes through. ELRC/plain are
+	// mirror conversions and are never labelled originals themselves.
+	nativeTTML := mirror.TTMLContent
+	withDocument := func(candidate lyric.Candidate) lyric.Candidate {
+		candidate = candidate.WithRecording(strconv.FormatInt(trackID, 10))
+		if strings.TrimSpace(nativeTTML) != "" {
+			return candidate.WithOriginal("ttml", lyric.OriginalSupplied, []byte(nativeTTML))
+		}
+		return candidate.WithOriginalUnavailable(lyric.OriginalReasonConversionOnly)
+	}
+
 	if elrc := strings.TrimSpace(mirror.ELRC); elrc != "" {
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: elrc}, "Apple Music (Lyrically)", "elrc")
+		candidate := withDocument(lyric.NewCandidate(lyrics.LyricsText{Text: elrc}, "Apple Music (Lyrically)", "elrc"))
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}
 	}
 	malformedTTML := false
 	if ttml := strings.TrimSpace(mirror.TTMLContent); ttml != "" {
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: ttml}, "Apple Music (Lyrically)", "ttml")
+		candidate := withDocument(lyric.NewCandidate(lyrics.LyricsText{Text: ttml}, "Apple Music (Lyrically)", "ttml"))
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}
 		malformedTTML = !lyric.EmptyDocument(ttml, "ttml")
 	}
 	if plain := strings.TrimSpace(mirror.Plain); plain != "" {
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: plain}, "Apple Music (Lyrically)", "plain")
+		candidate := withDocument(lyric.NewCandidate(lyrics.LyricsText{Text: plain}, "Apple Music (Lyrically)", "plain"))
 		if candidate.Present() {
 			return []lyric.Candidate{candidate}, Healthy, nil
 		}

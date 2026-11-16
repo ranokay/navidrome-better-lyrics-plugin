@@ -44,6 +44,9 @@ Notes that affect parser/shaper tests:
 | lrclib/get.json | live | Shape of You — `plainLyrics`, `syncedLyrics`, `lyricsfile`, `hasWordSync:false` |
 | lrclib/search.json | live | Live Forever — 20 results |
 | betterlyrics/qq.txt | live | boidu `/qq/getLyrics` JSON envelope with QRC `LyricContent` |
+| portato/lyrics.qrc | live, unwrapped | exact `lyrics` field of betterlyrics/qq.txt: the documented `QrcInfos` QRC XML container, byte-for-byte. SHA-256 `729723cb9d31592d522a0142bb52403680eef513bed0b2180e32df0541048f56`. The outer JSON envelope and the extracted `LyricContent` rows are not originals. |
+| luna/lyrics.krc | live, unwrapped | exact `lyric.content` of luna/detail.json (KRC text). SHA-256 `8ac90086413f01c475a326b48aa85ff3822e8d5dab0325b8572356997b1b83df`. |
+| binimum/lyrics.ttml | live | exact TTML response body; used as the representative native TTML fixture. SHA-256 `cf2a75ae7a6f75e14a19cc022fa968e5477b708b07e03bbc568232a81a5a3303`. |
 
 | lyricsplus/get.json | live 2026-10 | apple-backed LyricsPlus mirror payload (`/v2/lyrics/get?...&source=apple`): `type:Word`, syllabus tokens |
 | genius/search.json + page.html | live 2026-10 | keyless `genius.com/api/search` + the matched song page slice from the first lyric container to the footer |

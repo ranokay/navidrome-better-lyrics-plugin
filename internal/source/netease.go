@@ -85,22 +85,33 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 		return nil, health, err
 	}
 
+	recording := strconv.FormatInt(song.ID, 10)
+	var candidates []lyric.Candidate
 	var yrcParseErr error
-	if yrc := strings.TrimSpace(lyricEnvelope.YRC.Lyric); yrc != "" {
+	rawYRC := lyricEnvelope.YRC.Lyric
+	if yrc := strings.TrimSpace(rawYRC); yrc != "" {
 		lines, parseErr := lyric.ParseKFamily(lyric.YRC, stripNetEaseCreditLines(yrc))
 		if parseErr == nil && len(lines) > 0 {
-			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "NetEase", "elrc")
+			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "NetEase", "elrc").
+				WithOriginal("yrc", lyric.OriginalSupplied, []byte(rawYRC)).
+				WithRecording(recording)
 			if candidate.Present() {
-				return []lyric.Candidate{candidate}, Healthy, nil
+				candidates = append(candidates, candidate)
 			}
 		}
 		yrcParseErr = parseErr
 	}
-	if lrc := strings.TrimSpace(lyricEnvelope.LRC.Lyric); lrc != "" {
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc")
+	rawLRC := lyricEnvelope.LRC.Lyric
+	if lrc := strings.TrimSpace(rawLRC); lrc != "" {
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc").
+			WithOriginal("lrc", lyric.OriginalSupplied, []byte(rawLRC)).
+			WithRecording(recording)
 		if candidate.Present() {
-			return []lyric.Candidate{candidate}, Healthy, nil
+			candidates = append(candidates, candidate)
 		}
+	}
+	if len(candidates) > 0 {
+		return candidates, Healthy, nil
 	}
 	if yrcParseErr != nil {
 		// Nonempty YRC that failed to parse with no usable LRC fallback is a

@@ -139,7 +139,9 @@ func fetchAMLL(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 	}
 
 	lyricsBody := getEnvelope.Data.Lyrics
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyricsBody}, "AMLL", "ttml")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyricsBody}, "AMLL", "ttml").
+		WithOriginal("ttml", lyric.OriginalSupplied, []byte(lyricsBody)).
+		WithRecording(string(matched.ID))
 	if !candidate.Present() {
 		if lyric.EmptyDocument(lyricsBody, "ttml") {
 			return nil, Healthy, nil

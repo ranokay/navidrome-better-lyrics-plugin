@@ -51,7 +51,8 @@ func fetchBetterLyrics(rt Runtime, track lyrics.TrackInfo, deadline time.Time) (
 			continue
 		}
 
-		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "Better Lyrics", "ttml")
+		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "Better Lyrics", "ttml").
+			WithOriginal("ttml", lyric.OriginalSupplied, []byte(text))
 		if !candidate.Present() {
 			lookupErrors = append(lookupErrors, fmt.Errorf("better lyrics API returned malformed TTML"))
 			health = health.Merge(Degraded)

@@ -159,7 +159,8 @@ func lyricsPlusCandidates(payload lyricsPlusPayload) []lyric.Candidate {
 		return nil
 	}
 	text := lyric.EnhancedLRC(lines)
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, lyricsPlusProviderName, "elrc")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, lyricsPlusProviderName, "elrc").
+		WithOriginalUnavailable(lyric.OriginalReasonReconstructed)
 	if !candidate.Present() {
 		return nil
 	}

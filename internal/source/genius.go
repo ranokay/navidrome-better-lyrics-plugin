@@ -84,7 +84,9 @@ func fetchGenius(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 	if strings.TrimSpace(text) == "" {
 		return nil, Healthy, nil
 	}
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, geniusProviderName, "plain")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, geniusProviderName, "plain").
+		WithOriginalUnavailable(lyric.OriginalReasonReconstructed).
+		WithRecording(pageURL)
 	if !candidate.Present() {
 		return nil, Healthy, nil
 	}

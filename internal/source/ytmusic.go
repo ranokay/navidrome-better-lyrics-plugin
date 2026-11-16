@@ -131,7 +131,9 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	if strings.TrimSpace(text) == "" {
 		return nil, Healthy, nil
 	}
-	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, ytmusicProviderName, "plain")
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, ytmusicProviderName, "plain").
+		WithOriginalUnavailable(lyric.OriginalReasonReconstructed).
+		WithRecording(videoID)
 	if !candidate.Present() {
 		return nil, Healthy, nil
 	}
