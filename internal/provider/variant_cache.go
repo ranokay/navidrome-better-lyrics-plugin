@@ -182,26 +182,41 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 	if ttl <= 0 {
 		return
 	}
-	for len(entries) > 0 {
-		value, err := json.Marshal(cachedSourceBundle{
+	encode := func(candidates []cachedSourceVariant) ([]byte, error) {
+		return json.Marshal(cachedSourceBundle{
 			Generation:  lyricsCacheGeneration,
-			Candidates:  entries,
+			Candidates:  candidates,
 			Credentials: credentials,
 			ExpiresAt:   now + ttl,
 		})
-		if err != nil {
-			p.logf(fmt.Sprintf("lyrics variant bundle encode failed: %v", p.safeDiagnosticError(err)))
-			return
-		}
-		if len(value) <= MaxCacheEntryBytes {
-			p.storeCandidateBytes(key, value, false, ttl)
-			return
-		}
-		// Deterministic truncation keeps the highest-priority candidates that
-		// fit. Dropped selections stay absent and are reported unavailable;
-		// they are never remapped to another candidate.
-		entries = entries[:len(entries)-1]
 	}
+	value, err := encode(entries)
+	if err != nil {
+		p.logf(fmt.Sprintf("lyrics variant bundle encode failed: %v", p.safeDiagnosticError(err)))
+		return
+	}
+	if len(value) > MaxCacheEntryBytes {
+		// Deterministically keep the highest-priority candidates that fit,
+		// skipping an oversized entry instead of discarding later ones. A
+		// dropped selection stays absent (and therefore unavailable); it is
+		// never remapped to another candidate.
+		kept := make([]cachedSourceVariant, 0, len(entries))
+		for _, entry := range entries {
+			trial := append(kept, entry)
+			trialValue, trialErr := encode(trial)
+			if trialErr != nil {
+				continue
+			}
+			if len(trialValue) <= MaxCacheEntryBytes {
+				kept = trial
+				value = trialValue
+			}
+		}
+		if len(kept) == 0 {
+			return
+		}
+	}
+	p.storeCandidateBytes(key, value, false, ttl)
 }
 
 // readCachedSourceCandidates returns every cached representation for a source.

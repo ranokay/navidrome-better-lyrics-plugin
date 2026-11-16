@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -270,5 +271,73 @@ func TestProvider_RetrievalIsBoundToTrackPluginAndCurrentInstance(t *testing.T) 
 	encoded, _ := json.Marshal(identity)
 	if strings.Contains(string(encoded), "secret-a") || strings.Contains(string(encoded), "secret-b") {
 		t.Fatal("identity JSON must never expose credentials")
+	}
+}
+
+func TestProvider_InstanceSaltFailureKeepsCredentialSeparation(t *testing.T) {
+	t.Parallel()
+
+	// A store that cannot persist the salt must still use fresh randomness; a
+	// shared public fallback would make instance ids predictable across
+	// installations and weaken credential separation.
+	firstCache := newFakeLyricsCache()
+	firstCache.setError = errors.New("store unavailable")
+	first := newTestProviderWithSources(nil, firstCache, time.Now, nil, nil)
+	firstID := first.sourceInstanceID("better-lyrics")
+	if firstID == "" {
+		t.Fatal("an unpersistable salt must still yield a per-process identity")
+	}
+	if first.sourceInstanceID("better-lyrics") != firstID {
+		t.Fatal("the per-process salt must stay stable within the process")
+	}
+	secondCache := newFakeLyricsCache()
+	secondCache.setError = errors.New("store unavailable")
+	second := newTestProviderWithSources(nil, secondCache, time.Now, nil, nil)
+	if second.sourceInstanceID("better-lyrics") == firstID {
+		t.Fatal("separate processes must not share a predictable fallback instance")
+	}
+}
+
+func TestProvider_BundleTruncationReportsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	small := originalCandidate("plain", "small", "plain", []byte("small"), "rec-small")
+	hugeText := strings.Repeat("[00:01.00]huge line\n", (MaxCacheEntryBytes/20)+100)
+	huge := lyric.NewCandidate(lyrics.LyricsText{Text: hugeText}, "Same Provider", "lrc").
+		WithOriginal("lrc", lyric.OriginalSupplied, []byte(hugeText)).
+		WithRecording("rec-huge")
+	src := source.Source{
+		ID: "bounded", Display: "Bounded", Hosts: []string{"bounded.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			// Highest quality first; the bundle keeps what fits and drops the rest.
+			return []lyric.Candidate{huge, small}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := lyricsVariantCacheKey(track, "bounded")
+	raw, exists, _ := cache.Get(key)
+	if !exists {
+		t.Fatal("bundle must keep the candidate that fits")
+	}
+	var bundle cachedSourceBundle
+	if err := json.Unmarshal(raw, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Candidates) == 0 || bundle.Candidates[0].Quality != lyric.TimingUnsynced {
+		t.Fatalf("bundle = %#v, want the small representation kept", bundle.Candidates)
+	}
+
+	// The dropped selection has no address: it is reported unavailable and is
+	// never remapped to the candidate that fit.
+	hugeIdentity := lyric.NewVariantIdentity(p.sourceInstanceID("bounded"), "rec-huge", "", "main", "lrc")
+	document, reason := p.GetLyricsOriginal(track, hugeIdentity)
+	if reason == "" || len(document.Bytes) != 0 {
+		t.Fatalf("dropped selection = %#v/%q, want explicit unavailable", document, reason)
 	}
 }
