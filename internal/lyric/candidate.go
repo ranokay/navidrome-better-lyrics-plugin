@@ -105,6 +105,7 @@ func (candidate Candidate) WithOriginal(format string, provenance OriginalProven
 		} else if strings.EqualFold(strings.TrimSpace(format), "ttml") && len(document) > 0 {
 			reason = OriginalReasonInvalidDocument
 		}
+		candidate.Original = nil
 		candidate.OriginalSummary = UnavailableOriginalInfo(reason)
 		return candidate
 	}

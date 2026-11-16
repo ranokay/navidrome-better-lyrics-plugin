@@ -87,12 +87,13 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 
 	recording := strconv.FormatInt(song.ID, 10)
 	info := lyric.RecordingInfo{Title: song.Name, Duration: float64(song.Duration) / 1000}
+	artists := make([]string, 0, len(song.Artists))
 	for _, artist := range song.Artists {
-		if strings.TrimSpace(artist.Name) != "" {
-			info.Artist = artist.Name
-			break
+		if name := strings.TrimSpace(artist.Name); name != "" {
+			artists = append(artists, name)
 		}
 	}
+	info.Artist = strings.Join(artists, ", ")
 	var candidates []lyric.Candidate
 	var yrcParseErr error
 	rawYRC := lyricEnvelope.YRC.Lyric

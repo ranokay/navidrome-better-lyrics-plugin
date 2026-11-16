@@ -134,6 +134,18 @@ func TestNumberedTitlePartsStayDistinct(t *testing.T) {
 	}
 }
 
+func TestNumberedPartSurvivesARemovedVersionQualifier(t *testing.T) {
+	request := RecordingInfo{Title: "Song (Part 1)", Artist: "Artist", Album: "Album", Duration: 200}
+	returned := RecordingInfo{Title: "Song (Part 1) (Live)", Artist: "Artist", Album: "Live", Duration: 200}
+	if got := AssessRecording(request, returned); got.Status == MatchValidated {
+		t.Fatalf("a one-sided live qualifier must remain ambiguous: %#v", got)
+	}
+	base := baseTitleTokens(returned.Title)
+	if len(base) != 3 || base[0] != "song" || base[1] != "part" || base[2] != "1" {
+		t.Fatalf("base = %v, want the numbered part preserved without the live qualifier", base)
+	}
+}
+
 func TestOneSidedNonOppositeMarkerIsAmbiguousNotMismatch(t *testing.T) {
 	request := RecordingInfo{Title: "Song (Live)", Artist: "Artist", Duration: 200}
 	returned := RecordingInfo{Title: "Song (Live) (Acoustic)", Artist: "Artist", Duration: 200}

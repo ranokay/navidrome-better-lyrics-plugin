@@ -51,12 +51,13 @@ func fetchLuna(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 	}
 	trackID := string(selected.ID)
 	info := lyric.RecordingInfo{Title: selected.Name, Duration: float64(selected.Duration) / 1000}
+	artists := make([]string, 0, len(selected.Artists))
 	for _, artist := range selected.Artists {
-		if strings.TrimSpace(artist.Name) != "" {
-			info.Artist = artist.Name
-			break
+		if name := strings.TrimSpace(artist.Name); name != "" {
+			artists = append(artists, name)
 		}
 	}
+	info.Artist = strings.Join(artists, ", ")
 
 	query := url.Values{"track_id": {trackID}, "device_platform": {"web"}}
 	response, err = get(rt, "Luna track", lunaDetailEndpoint+"?"+query.Encode(), lunaDetailHeaders(), deadline)

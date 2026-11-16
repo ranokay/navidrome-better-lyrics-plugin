@@ -259,24 +259,43 @@ var dashSuffix = regexp.MustCompile(`\s+[-–—]\s+.*$`)
 // It intentionally does not preserve prefix tolerance: a shorter title is not
 // the same recording.
 func baseTitleTokens(value string) []string {
-	base := strings.TrimSpace(value)
-	base = cutTitleQualifier(base)
-	return NormalizedTokens(base)
+	return NormalizedTokens(stripKnownQualifiers(value))
 }
 
-func cutTitleQualifier(value string) string {
-	cut := len(value)
-	for _, marker := range []string{" (", " [", " {", " - ", " – ", " — "} {
-		index := strings.Index(value, marker)
-		if index < 0 || index >= cut {
-			continue
+var bracketQualifierPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\[[^\]]*\]`),
+	regexp.MustCompile(`\{[^{}]*\}`),
+	regexp.MustCompile(`\([^()]*\)`),
+}
+
+// stripKnownQualifiers removes only recognized version/edition qualifiers.
+// Other parenthesized text, including numbered parts, stays in the title.
+func stripKnownQualifiers(value string) string {
+	value = strings.TrimSpace(value)
+	for {
+		changed := false
+		for _, pattern := range bracketQualifierPatterns {
+			next := pattern.ReplaceAllStringFunc(value, func(segment string) string {
+				if containsKnownQualifier(strings.ToLower(segment)) {
+					changed = true
+					return " "
+				}
+				return segment
+			})
+			value = strings.TrimSpace(next)
 		}
-		suffix := strings.ToLower(value[index:])
-		if containsKnownQualifier(suffix) {
-			cut = index
+		if loc := dashSuffix.FindStringIndex(value); loc != nil && containsKnownQualifier(strings.ToLower(value[loc[0]:])) {
+			value = strings.TrimSpace(value[:loc[0]])
+			changed = true
+		}
+		if index := strings.Index(value, "/"); index >= 0 && containsKnownQualifier(strings.ToLower(value[index:])) {
+			value = strings.TrimSpace(value[:index])
+			changed = true
+		}
+		if !changed {
+			return value
 		}
 	}
-	return strings.TrimSpace(value[:cut])
 }
 
 // containsKnownQualifier is deliberately narrower than "any bracketed text":
@@ -294,6 +313,7 @@ func containsKnownQualifier(value string) bool {
 var editionMarkers = []string{
 	"remaster", "remastered", "deluxe", "expanded", "anniversary", "explicit",
 	"clean", "censored", "uncensored", "bonus", "special edition",
+	"album version", "single version",
 }
 
 func sameTokens(left, right []string) bool {
