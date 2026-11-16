@@ -103,9 +103,9 @@ func fetchBinimum(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimumResult, bool) {
 	target := int64(math.Round(float64(track.Duration)))
 	title := lyric.NormalizedTokens(track.Title)
-	var best binimumResult
+	var best, fallback binimumResult
 	bestDelta := int64(math.MaxInt64)
-	found := false
+	found, fallbackFound := false, false
 	for _, candidateResult := range results {
 		if !lyric.TokensMatch(lyric.NormalizedTokens(candidateResult.TrackName), title) ||
 			!lyric.ArtistMatch(candidateResult.ArtistName, lyric.TrackArtist(track)) {
@@ -116,23 +116,32 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 		if !binimumLyricsURLAllowed(candidateResult.LyricsURL) {
 			continue
 		}
+		delta := int64(0)
 		if track.Duration > 0 {
-			// The duration gate applies only when the request carries one:
-			// durationless library entries still match on identity.
-			delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
+			delta = int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
 			if delta > 2 {
 				continue
 			}
-			if delta < bestDelta {
+		}
+		match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), lyric.RecordingInfo{
+			Title: candidateResult.TrackName, Artist: candidateResult.ArtistName,
+			Album: candidateResult.AlbumName, Duration: candidateResult.Duration,
+		})
+		switch match.Status {
+		case lyric.MatchValidated:
+			if !found || delta < bestDelta {
 				best, bestDelta, found = candidateResult, delta, true
 			}
-			continue
-		}
-		if !found {
-			best, bestDelta, found = candidateResult, 0, true
+		case lyric.MatchAmbiguous:
+			if !fallbackFound {
+				fallback, fallbackFound = candidateResult, true
+			}
 		}
 	}
-	return best, found
+	if found {
+		return best, true
+	}
+	return fallback, fallbackFound
 }
 
 // binimumLyricsURLAllowed gates provider-supplied lyrics URLs to the two

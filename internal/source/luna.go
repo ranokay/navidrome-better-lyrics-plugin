@@ -172,6 +172,8 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 func pickLunaTrackInfo(groups []lunaResultGroup, track lyrics.TrackInfo) (lunaSearchTrack, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
 	titleNorm := strings.ToLower(lyric.OnlyLettersAndDigits(track.Title))
+	var fallback lunaSearchTrack
+	fallbackFound := false
 	for _, group := range groups {
 		for _, datum := range group.Data {
 			trackInfo := datum.Entity.Track
@@ -197,10 +199,15 @@ func pickLunaTrackInfo(groups []lunaResultGroup, track lyrics.TrackInfo) (lunaSe
 					continue
 				}
 			}
-			return trackInfo, true
+			if strings.ToLower(lyric.OnlyLettersAndDigits(trackInfo.Name)) == titleNorm {
+				return trackInfo, true
+			}
+			if !fallbackFound {
+				fallback, fallbackFound = trackInfo, true
+			}
 		}
 	}
-	return lunaSearchTrack{}, false
+	return fallback, fallbackFound
 }
 
 type lunaSearchTrack struct {

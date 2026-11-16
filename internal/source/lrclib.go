@@ -49,8 +49,13 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		}
 		if matched {
 			candidates, candErr := lrclibCandidates(rt, response)
-			if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
-				return nil, Degraded, candErr
+			if candErr != nil {
+				if len(candidates) > 0 {
+					return candidates, Degraded, candErr
+				}
+				if !errors.Is(candErr, errNoLRCLibPayload) {
+					return nil, Degraded, candErr
+				}
 			}
 			if candErr == nil {
 				var present []lyric.Candidate
@@ -117,6 +122,9 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		}
 		candidates, err := lrclibCandidates(rt, rowJSON)
 		if err != nil {
+			if len(candidates) > 0 {
+				evidence = append(evidence, candidates...)
+			}
 			if !errors.Is(err, errNoLRCLibPayload) {
 				candidateErrors = append(candidateErrors, err)
 			}
@@ -152,6 +160,9 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		return append(fallback, evidence...), Healthy, nil
 	}
 	if err := errors.Join(candidateErrors...); err != nil {
+		if len(evidence) > 0 {
+			return evidence, Degraded, err
+		}
 		return nil, Degraded, err
 	}
 	if len(evidence) > 0 {
@@ -266,6 +277,16 @@ func lrclibCandidates(rt Runtime, record []byte) ([]lyric.Candidate, error) {
 		})
 	}
 	if len(candidates) > 0 {
+		hasPlayable := false
+		for _, candidate := range candidates {
+			if candidate.Present() {
+				hasPlayable = true
+				break
+			}
+		}
+		if lyricsFileErr != nil && !hasPlayable {
+			return candidates, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
+		}
 		return candidates, nil
 	}
 	if lyricsFileErr != nil {

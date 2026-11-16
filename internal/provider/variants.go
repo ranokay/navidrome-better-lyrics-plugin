@@ -186,11 +186,8 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 	if len(sources) == 0 {
 		return nil
 	}
-	playbackKnown := false
 	candidate, _, ok, sweepComplete := p.readCachedWinner(track, sources)
-	if ok {
-		playbackKnown = true
-	}
+	playbackKnown := ok && candidate.Present()
 	if ok && candidate.Present() && !sweepComplete {
 		if best, _ := p.readBestFromSourceCache(track, sources); lyric.AtLeastAsPreferred(candidate, best) {
 			candidate = best

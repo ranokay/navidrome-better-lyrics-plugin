@@ -344,3 +344,17 @@ func TestCachedSourceCoveragePreservesMatchMetadata(t *testing.T) {
 		t.Fatalf("cached coverage = %#v/%v, want validated match metadata", got, ok)
 	}
 }
+
+func TestBundledSuggestionAfterNegativeWinnerDoesNotClaimPlaybackIndex(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	sources := []source.Source{{ID: "one"}}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	ambiguous := seededMatchingCandidate("[00:01.00]live", "lrc", lyric.RecordingMatch{Status: lyric.MatchAmbiguous})
+	p.cacheSourceCandidate(track, "one", ambiguous)
+	p.cacheNegativeWinner(track, sources, true, nil)
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 1 || listing[0].PlaybackIndex != -1 {
+		t.Fatalf("listing = %#v, want one suggestion with unknown playback index", listing)
+	}
+}
