@@ -192,3 +192,11 @@ func TestMatchingCorpusSummary(t *testing.T) {
 		statuses[MatchValidated], statuses[MatchAmbiguous], statuses[MatchMismatch],
 		timing["line"], timing["word"], timing["plain"], wrongMatches, misses)
 }
+
+func TestJoinedCollaboratorArtistInfoMatchesOneRequestedCredit(t *testing.T) {
+	request := RecordingInfo{Title: "Song", Artist: "Second Artist", Album: "Album", Duration: 200}
+	returned := RecordingInfo{Title: "Song", Artist: "First Artist, Second Artist", Album: "Album", Duration: 200}
+	if got := AssessRecording(request, returned); got.Status != MatchValidated {
+		t.Fatalf("joined collaborator metadata = %#v, want validated", got)
+	}
+}

@@ -283,3 +283,32 @@ func TestAmbiguousSuggestionSurvivesSourceOutage(t *testing.T) {
 		t.Fatalf("v1 = %#v, want no auto-playback", v1.Lyrics)
 	}
 }
+
+func TestFlaggedMalformedAssertionKeepsEvidenceAndIncompleteCoverage(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	evidence := lyric.Candidate{
+		Evidence: []lyric.Evidence{{Kind: lyric.EvidenceInstrumental, Provider: "Lyricify", Recording: "1"}},
+		Match:    lyric.RecordingMatch{Status: lyric.MatchUnassessed},
+	}
+	sources := []source.Source{
+		stubSource("lyricify", &[]string{}, func() ([]lyric.Candidate, source.Health, error) {
+			return []lyric.Candidate{evidence}, source.Degraded, errTestOutage
+		}),
+	}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil || len(v2.Evidence) != 1 {
+		t.Fatalf("v2 = %#v/%v, want retained evidence", v2, err)
+	}
+	missKey, _ := p.sourceMissKey(track, "lyricify")
+	if _, exists, _ := cache.Get(missKey); exists {
+		t.Fatal("a flagged malformed response must not be cached as a clean miss")
+	}
+	key, _ := lyricsWinnerCacheKey(track, []string{"lyricify"})
+	envelope, ok := p.readCachedEnvelope(key)
+	if !ok || envelope.SweepComplete {
+		t.Fatalf("winner = %#v/%v, want incomplete coverage", envelope, ok)
+	}
+}
