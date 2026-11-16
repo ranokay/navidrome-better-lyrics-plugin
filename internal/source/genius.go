@@ -64,32 +64,50 @@ func fetchGenius(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 	if hit.URL == "" {
 		return nil, Healthy, nil
 	}
-	if hit.Instrumental {
-		return []lyric.Candidate{{
-			RecordingInfo: lyric.RecordingInfo{Title: hit.Title, Artist: hit.Artist},
-			Evidence: []lyric.Evidence{{
-				Kind: lyric.EvidenceInstrumental, Provider: geniusProviderName, Recording: hit.URL,
-			}},
-		}}, Healthy, nil
+	evidence := lyric.Candidate{
+		RecordingInfo: lyric.RecordingInfo{Title: hit.Title, Artist: hit.Artist},
+		Evidence: []lyric.Evidence{{
+			Kind: lyric.EvidenceInstrumental, Provider: geniusProviderName, Recording: hit.URL,
+		}},
 	}
-
+	withEvidence := func(candidates []lyric.Candidate) []lyric.Candidate {
+		if hit.Instrumental && len(candidates) == 1 && candidates[0].Present() {
+			candidates[0].Evidence = evidence.Evidence
+		}
+		return candidates
+	}
 	response, err = get(rt, "Genius lyrics", hit.URL, geniusPageHeaders(), deadline)
 	if err != nil {
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Degraded, err
+		}
 		return nil, Degraded, err
 	}
 	switch response.StatusCode {
 	case 200:
 		// pass to the page scrape below
 	case 404:
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	case 429:
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Degraded, rateLimitFailure(rt, "genius", "Genius lyrics", response)
+		}
 		return nil, Degraded, rateLimitFailure(rt, "genius", "Genius lyrics", response)
 	default:
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Degraded, providerResponseError("Genius lyrics", response)
+		}
 		return nil, Degraded, providerResponseError("Genius lyrics", response)
 	}
 
 	text := geniusLyricsText(response.Body, strings.TrimSpace(title))
 	if strings.TrimSpace(text) == "" {
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	}
 	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, geniusProviderName, "plain").
@@ -97,9 +115,12 @@ func fetchGenius(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		WithRecording(hit.URL).
 		WithRecordingInfo(lyric.RecordingInfo{Title: hit.Title, Artist: hit.Artist})
 	if !candidate.Present() {
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	}
-	return []lyric.Candidate{candidate}, Healthy, nil
+	return withEvidence([]lyric.Candidate{candidate}), Healthy, nil
 }
 
 type geniusSearchEnvelope struct {

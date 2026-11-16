@@ -231,6 +231,9 @@ func qualifierText(title string) string {
 	if match := dashSuffix.FindString(title); match != "" {
 		parts = append(parts, match)
 	}
+	if match := slashSuffix.FindString(title); match != "" {
+		parts = append(parts, match)
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -254,6 +257,7 @@ func markerPattern(marker string) *regexp.Regexp {
 
 var bracketedSuffix = regexp.MustCompile(`\s*[\(\[\{][^\)\]\}]*[\)\]\}]`)
 var dashSuffix = regexp.MustCompile(`\s+[-–—]\s+.*$`)
+var slashSuffix = regexp.MustCompile(`\s*/\s*.*$`)
 
 // baseTitleTokens removes version qualifiers before comparing the song title.
 // It intentionally does not preserve prefix tolerance: a shorter title is not

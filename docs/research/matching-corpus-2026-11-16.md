@@ -1,62 +1,62 @@
 # Recording-matching corpus evidence — 2026-11-16
 
-This is a small, labelled comparison corpus, not a population sample. It makes
-no accuracy claim about providers, tracks, or users. The committed metadata
-extracts and their provenance are in
+This is a small, independently labelled comparison corpus, not a population
+sample. It makes no accuracy claim about providers, tracks, or users. The
+committed metadata extracts and their provenance are in
 `internal/lyric/testdata/matching/README.md`.
 
-## Composition
+## Composition (measured from the committed corpus)
 
 | Measure | Count |
 |---|---|
-| Total cases | 16 |
-| Provenance-backed cases (eligible for calibration) | 12 |
+| Total cases | 17 |
+| Provenance-backed cases | 13 |
 | Synthetic edge cases (excluded from calibration) | 4 |
-| Expected validated | 6 |
-| Expected ambiguous | 8 |
-| Expected mismatch | 2 |
+| Human label `same` (all cases) | 7 |
+| Human label `different` (all cases) | 7 |
+| Human label `uncertain` (all cases) | 3 |
+| Classifier `validated` | 6 |
+| Classifier `ambiguous` | 9 |
+| Classifier `mismatch` | 2 |
+| Timing tier `line` | 13 |
+| Timing tier `word` | 4 |
 
-Categories: live/studio 5, clean/explicit 2, correct metadata drift 2,
-ambiguous title 1, different duration 1, edit/remix close 1, cover 1,
-missing metadata 2, instrumental identity 1.
+Categories include live/studio, edit/remix, radio edit, cover, clean/explicit,
+missing metadata, ambiguous titles, instrumental identity and explicit marker
+conflict. The added remix case is
+`Mr. Brightside (The Lindbergh Palace radio edit)` at 249 s against a 222 s
+studio request.
 
-## Wrong matches and misses
+## Independent labels and measured outcomes
 
-Two close-duration wrong recordings are represented by explicit markers:
+Human labels are recorded separately from the classifier's expected status, so
+calibration does not reuse its own prediction. Among provenance-backed cases:
 
-- `Bad Guy (Live)` at 196 s against a 194 s studio request (2 s delta);
-- `Mr Brightside (radio edit)` at 223 s against a 222 s request (1 s delta).
+- correct `same` deltas are 0–4.0 s; the 4.0 s case is deliberately expected
+  `ambiguous` because the available metadata cannot confirm it;
+- the smallest markerless `different` delta is 45 s;
+- `wrongMatches` (human label `different` but classifier `validated`) = **0**;
+- `conservativeMisses` (human label `same` but not auto-playable) = **1**, the
+  correct 4.0 s drift case;
+- synthetic cases are excluded from these calibration counts.
 
-Duration alone would accept both; the version markers classify them
-`ambiguous`, and neither is auto-playable or auto-save eligible. A markerless
-45 s-shorter `bad guy` record is also `ambiguous`, not `mismatch`: duration
-alone never proves a different recording.
+The deterministic public-provider corpus test drove all 17 cases through one
+stub fetch each, then replayed through caches. It asserted: validated cases
+play and are auto-save eligible; ambiguous cases never appear in v1, appear as
+one non-save suggestion in v2/listing, and survive cache replay; mismatch cases
+are absent; typed evidence survives; and the second public v2 call made no
+additional source request. Measured in-process: **17 source requests for 17
+cases, elapsed 6.4 ms** (`TestPublicMatchingCorpusBehavior`). These are harness
+measurements, not provider latency.
 
-The only mismatch cases are independent identity contradictions: a cover by a
-different artist and explicitly conflicting live/studio markers. The corpus
-contains no lyric-content miss used for calibration; empty/error instrumental
-behavior is covered by deterministic provider tests, not this corpus.
-
-## Timing tiers
-
-The corpus itself is metadata-only. The deterministic provider behavior test
-uses a word-timed ambiguous candidate against a line-timed validated candidate
-and asserts the validated line recording wins. Existing parser/quality tests
-cover unsynced, line, word and syllable tiers; timing richness does not enter
-the identity classification.
-
-## Deterministic latency and request count
-
-The corpus/classifier tests use no network. The provider behavior tests walk
-in-process stubs under a fixed clock and assert bounded request counts; the
-ambiguous synchronized result does not stop the foreground walk before the
-validated source. The plugin retains the existing three-source, two-second,
-750 ms-per-source foreground bounds.
+Existing parser/quality tests cover unsynced, line, word and syllable tiers.
+The corpus provider test uses word-timed ambiguous suggestions and line-timed
+validated results; timing richness never changes the classification.
 
 ## Separately dated live observation
 
-Captured 2026-11-16 with the existing bounded `scripts/provider-probe` command
-(one query per source; no credentials):
+Captured 2026-11-16 with the bounded `scripts/provider-probe` command (one
+query per source; no credentials):
 
 | Source | Query | Elapsed | Provider replies | Formats |
 |---|---|---|---|---|

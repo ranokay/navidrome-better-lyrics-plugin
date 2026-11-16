@@ -184,3 +184,102 @@ var errTestOutage = &testOutageError{}
 type testOutageError struct{}
 
 func (*testOutageError) Error() string { return "outage" }
+
+func seededMatchingCandidate(text, format string, match lyric.RecordingMatch) lyric.Candidate {
+	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "stub", format)
+	candidate.Match = match
+	return candidate
+}
+
+func TestCachedRankingIsValidityFirst(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	unassessed := seededMatchingCandidate("[00:01.00]<00:01.00>rich<00:02.00>word", "elrc", lyric.RecordingMatch{Status: lyric.MatchUnassessed})
+	validated := seededMatchingCandidate("[00:01.00]validated line", "lrc", lyric.RecordingMatch{Status: lyric.MatchValidated, AutoSave: true})
+	sources := []source.Source{{ID: "one"}, {ID: "two"}}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	p.cacheWinner(track, sources, unassessed, false)
+	p.cacheSourceCandidate(track, "two", validated)
+
+	result, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if err != nil || result.Lyrics[0].Text != "[00:01.00]validated line" {
+		t.Fatalf("cached winner re-rank = %#v/%v, want validated line over richer unassessed", result, err)
+	}
+	winner, _, ok, _ := p.readCachedWinner(track, sources)
+	if !ok || winner.Match.Status != lyric.MatchValidated {
+		t.Fatalf("promoted winner = %#v, want validated candidate", winner)
+	}
+}
+
+func TestColdWinnerUsesValidityFirstSourceCacheOrder(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	unassessed := seededMatchingCandidate("[00:01.00]<00:01.00>rich<00:02.00>word", "elrc", lyric.RecordingMatch{Status: lyric.MatchUnassessed})
+	validated := seededMatchingCandidate("[00:01.00]validated line", "lrc", lyric.RecordingMatch{Status: lyric.MatchValidated, AutoSave: true})
+	for _, order := range [][]string{{"one", "two"}, {"two", "one"}} {
+		sources := []source.Source{{ID: order[0]}, {ID: order[1]}}
+		p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+		p.cacheSourceCandidate(track, "one", unassessed)
+		p.cacheSourceCandidate(track, "two", validated)
+		result, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+		if err != nil || result.Lyrics[0].Text != "[00:01.00]validated line" {
+			t.Fatalf("cold cached winner order %v = %#v/%v, want validated candidate", order, result, err)
+		}
+	}
+}
+
+func TestAssertionSurvivesAnotherSourceOutage(t *testing.T) {
+	t.Parallel()
+	var assertionCalls, outageCalls int
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	assertion := lyric.Candidate{
+		RecordingInfo: lyric.RecordingInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194},
+		Evidence:      []lyric.Evidence{{Kind: lyric.EvidenceInstrumental, Provider: "LRCLib", Recording: "1"}},
+	}
+	sources := []source.Source{
+		stubSource("assertion", &[]string{}, func() ([]lyric.Candidate, source.Health, error) {
+			assertionCalls++
+			return []lyric.Candidate{assertion}, source.Healthy, nil
+		}),
+		stubSource("outage", &[]string{}, func() ([]lyric.Candidate, source.Health, error) {
+			outageCalls++
+			return nil, source.Degraded, errTestOutage
+		}),
+	}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil || len(v2.Evidence) != 1 {
+		t.Fatalf("v2 = %#v/%v, want the assertion despite the other outage", v2, err)
+	}
+	second, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil || len(second.Evidence) != 1 {
+		t.Fatalf("cached v2 = %#v/%v, want evidence", second, err)
+	}
+	if assertionCalls != 1 {
+		t.Fatalf("assertion source requests = %d, want the cached evidence to replay once", assertionCalls)
+	}
+	if outageCalls == 0 {
+		t.Fatal("want the outage source attempted")
+	}
+}
+
+func TestAmbiguousSuggestionSurvivesSourceOutage(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	ambiguous := matchingCandidate("[00:01.00]live", "lrc",
+		lyric.RecordingInfo{Title: "Song (Live)", Artist: "Artist", Album: "Live", Duration: 196})
+	sources := []source.Source{
+		stubSource("ambiguous", &[]string{}, func() ([]lyric.Candidate, source.Health, error) {
+			return []lyric.Candidate{ambiguous}, source.Degraded, errTestOutage
+		}),
+	}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, nil)
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil || len(v2.Entries) != 1 || v2.Entries[0].Match.Status != lyric.MatchAmbiguous {
+		t.Fatalf("v2 = %#v/%v, want the ambiguous suggestion despite the outage", v2, err)
+	}
+	v1, _ := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
+	if len(v1.Lyrics) != 0 {
+		t.Fatalf("v1 = %#v, want no auto-playback", v1.Lyrics)
+	}
+}

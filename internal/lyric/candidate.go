@@ -217,23 +217,42 @@ func (candidate Candidate) Present() bool {
 // source in configured order wins. Ambiguous candidates never displace a
 // playable one; they remain separately listable suggestions.
 func Prefer(current, next Candidate) Candidate {
-	if !next.Present() || !next.Playable() {
-		return current
-	}
-	if !current.Present() {
-		return next
-	}
-	currentRank, nextRank := playbackRank(current), playbackRank(next)
-	if nextRank != currentRank {
-		if nextRank > currentRank {
-			return next
-		}
-		return current
-	}
-	if next.Quality > current.Quality {
+	if MorePreferred(current, next) {
 		return next
 	}
 	return current
+}
+
+// AtLeastAsPreferred reports whether next should replace current on a cache
+// refresh: validity first, timing richness second, equal timing allowed.
+func AtLeastAsPreferred(current, next Candidate) bool {
+	if !next.Present() || !next.Playable() {
+		return false
+	}
+	if !current.Present() {
+		return true
+	}
+	currentRank, nextRank := playbackRank(current), playbackRank(next)
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	return next.Quality >= current.Quality
+}
+
+// MorePreferred reports whether next strictly outranks current for playback:
+// validity first, timing richness second, earlier position on ties.
+func MorePreferred(current, next Candidate) bool {
+	if !next.Present() || !next.Playable() {
+		return false
+	}
+	if !current.Present() {
+		return true
+	}
+	currentRank, nextRank := playbackRank(current), playbackRank(next)
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	return next.Quality > current.Quality
 }
 
 // PreferSuggestion orders ambiguous suggestions for the listing only. It never

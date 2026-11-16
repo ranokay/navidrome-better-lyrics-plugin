@@ -10,6 +10,9 @@ type matchingCorpus struct {
 	Cases []struct {
 		ID        string        `json:"id"`
 		Category  string        `json:"category"`
+		Label     string        `json:"label"`
+		Timing    string        `json:"timing"`
+		Evidence  bool          `json:"evidence"`
 		Synthetic bool          `json:"synthetic"`
 		Request   RecordingInfo `json:"request"`
 		Returned  RecordingInfo `json:"returned"`
@@ -100,15 +103,12 @@ func TestCorpusThresholdIsBoundedByObservedEvidence(t *testing.T) {
 		if delta < 0 {
 			delta = -delta
 		}
-		switch test.Expect.Status {
-		case MatchValidated:
+		switch test.Label {
+		case "same":
 			if delta > correctMax {
 				correctMax = delta
 			}
-		case MatchAmbiguous, MatchMismatch:
-			if test.Category == "correct metadata drift" {
-				continue
-			}
+		case "different":
 			// Only duration-based wrong rows (no marker/artist conflict) inform
 			// the drift ceiling. Marker-only cases are deliberately 1-2 s away.
 			if len(versionMarkers(test.Returned.Title, test.Returned.Album)) == 0 && test.Returned.Artist == test.Request.Artist {
@@ -152,4 +152,43 @@ func TestOneSidedNonOppositeMarkerIsAmbiguousNotMismatch(t *testing.T) {
 	if got := AssessRecording(request, returned); got.Status != MatchAmbiguous {
 		t.Fatalf("status = %q, want ambiguous for an unconfirmed extra qualifier", got.Status)
 	}
+}
+
+func TestSlashVersionQualifiersCannotValidateCloseWrongRecordings(t *testing.T) {
+	for _, returned := range []string{"Song / Live", "Song / Remix", "Song / Radio Edit"} {
+		t.Run(returned, func(t *testing.T) {
+			request := RecordingInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}
+			got := AssessRecording(request, RecordingInfo{Title: returned, Artist: "Artist", Album: "Album", Duration: 201})
+			if got.Status == MatchValidated || got.AutoSave {
+				t.Fatalf("returned %q classified %#v, want non-playable/non-save ambiguity", returned, got)
+			}
+		})
+	}
+}
+
+func TestMatchingCorpusSummary(t *testing.T) {
+	corpus := loadMatchingCorpus(t)
+	counts := map[string]int{}
+	statuses := map[MatchStatus]int{}
+	timing := map[string]int{}
+	wrongMatches, misses, synthetic := 0, 0, 0
+	for _, test := range corpus.Cases {
+		counts[test.Label]++
+		statuses[AssessRecording(test.Request, test.Returned).Status]++
+		timing[test.Timing]++
+		if test.Synthetic {
+			synthetic++
+		}
+		status := AssessRecording(test.Request, test.Returned).Status
+		if test.Label == "different" && status == MatchValidated {
+			wrongMatches++
+		}
+		if test.Label == "same" && status != MatchValidated {
+			misses++
+		}
+	}
+	t.Logf("corpus total=%d same=%d different=%d uncertain=%d synthetic=%d validated=%d ambiguous=%d mismatch=%d timing_line=%d timing_word=%d timing_plain=%d wrongMatches=%d conservativeMisses=%d",
+		len(corpus.Cases), counts["same"], counts["different"], counts["uncertain"], synthetic,
+		statuses[MatchValidated], statuses[MatchAmbiguous], statuses[MatchMismatch],
+		timing["line"], timing["word"], timing["plain"], wrongMatches, misses)
 }

@@ -283,6 +283,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 		}
 		storedAny := false
 		hadCandidates := false
+		hadPlayable := false
 		assessed := make([]lyric.Candidate, 0, len(candidates))
 		for index := range candidates {
 			candidate := &candidates[index]
@@ -292,6 +293,9 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			}
 			if candidate.Present() {
 				hadCandidates = true
+				if candidate.Playable() {
+					hadPlayable = true
+				}
 				p.prepareCandidate(track, src.ID, candidate)
 			}
 			assessed = append(assessed, *candidate)
@@ -307,6 +311,11 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 					coverageTTL = covered
 				}
 			}
+		case hadPlayable:
+			// A playable positive was refused by the size/quota guard. That is
+			// not a miss and must stay retryable; never freeze the sweep on a
+			// false negative.
+			notCovered++
 		case hadCandidates:
 			// Ambiguous suggestions are cached but are not playable coverage:
 			// persist a miss so the source is not re-walked every pass.

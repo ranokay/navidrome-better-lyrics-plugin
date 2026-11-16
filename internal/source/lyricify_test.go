@@ -129,3 +129,20 @@ func TestLyricifyCandidates_WordOutputLabelsAsElrc(t *testing.T) {
 	}
 	assertLyricsSource(t, candidates[0].Response.Source, "Lyricify", "elrc")
 }
+
+func TestLyricifyInstrumentalFlagKeepsUsableLyrics(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "credits.fm") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"isrc":"GBQCP1400011"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"text":"[type:LyricifyLines]\n[1000,500]line one\n","offset":0,"isInstrumental":true}`)}, nil
+	})
+	candidates, health, err := fetchLyricify(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %v/%v", health, err)
+	}
+	if len(candidates) != 1 || !candidates[0].Present() || len(candidates[0].Evidence) == 0 {
+		t.Fatalf("candidates = %#v, want lyrics and the retained assertion", candidates)
+	}
+}

@@ -139,11 +139,11 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 // source. It resolves once and does not add a second fetch.
 func (p *Provider) GetLyricsV2(input lyrics.GetLyricsRequest) (V2Response, error) {
 	candidate, sources, evidence, err := p.resolveLyrics(input)
-	if err != nil {
-		return V2Response{}, err
-	}
 	response := p.buildV2Response(input.Track, sources, candidate)
 	response.Evidence = dedupeEvidence(append(evidence, response.Evidence...))
+	if err != nil && len(response.Entries) == 0 && len(response.Evidence) == 0 {
+		return V2Response{}, err
+	}
 	return response, nil
 }
 
@@ -174,7 +174,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate
 			if !sweepComplete {
 				// The sweep may have cached a better result after this winner
 				// was written: re-rank before serving.
-				if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
+				if best, expiry := p.readBestFromSourceCache(track, sources); lyric.AtLeastAsPreferred(candidate, best) {
 					p.cacheWinnerUntil(track, sources, best, false, expiry, evidence)
 					candidate = best
 				}
@@ -218,11 +218,22 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate
 			// source already answered inside stage one.
 			p.maybeEnqueueSweep(track)
 		}
+	} else if !candidate.Present() && len(evidence) > 0 {
+		// Preserve a successful assertion across another source's outage while
+		// keeping the pass explicitly incomplete for retry/sweep purposes.
+		p.cacheNegativeWinner(track, sources, false, evidence)
+		p.maybeEnqueueSweep(track)
 	} else {
 		// Retain the error, but an incomplete walk must still reach the tail:
 		// schedule the sweep so the returned error is the only failure the
 		// request exposes.
 		p.maybeEnqueueSweep(track)
+	}
+	if !candidate.Present() && len(evidence) > 0 {
+		// A successful assertion from one source survives another source's
+		// failed attempt. The evidence was not inferred from the empty/error
+		// result, so it remains visible and does not become a clean negative.
+		return candidate, sources, p.sourceEvidence(track, sources, evidence), nil
 	}
 	if err == nil && health >= source.Degraded {
 		err = errors.New("lyrics sources temporarily unavailable")
@@ -304,8 +315,9 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 		started := p.now()
 		sourceDeadline := minTime(deadline, started.Add(stageOneSourceBudget))
 		candidates, sourceHealth, err := src.Fetch(p, track, sourceDeadline)
+		sourceFailed := err != nil
 		health = health.Merge(sourceHealth)
-		if err != nil {
+		if sourceFailed {
 			lookupErrors = append(lookupErrors, err)
 			health = health.Merge(source.Degraded)
 			// The short foreground slot may expire for a healthy, slower
@@ -319,9 +331,7 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 					coldHosts[hostName] = true
 				}
 			}
-			continue
-		}
-		if sourceHealth <= source.Uncertain {
+		} else if sourceHealth <= source.Uncertain {
 			p.resetSourceFailure(src.ID)
 		}
 		foundCandidate := false
@@ -345,8 +355,8 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 		if len(assessed) > 0 {
 			p.cacheSourceCandidates(track, src.ID, assessed)
 		}
-		coveredThisSource := true
-		if !foundCandidate {
+		coveredThisSource := !sourceFailed
+		if !foundCandidate && !sourceFailed {
 			switch sourceHealth {
 			case source.Healthy, source.Uncertain:
 				// Healthy clean misses and anonymous cache-only misses are
@@ -362,6 +372,9 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest) (lyric.Candidate, 
 				health = health.Merge(sourceHealth)
 				coveredThisSource = false
 			}
+		}
+		if sourceFailed {
+			coveredThisSource = false
 		}
 		if coveredThisSource {
 			walkedTotal++

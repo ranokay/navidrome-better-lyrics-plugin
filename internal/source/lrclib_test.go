@@ -2,6 +2,7 @@ package source
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -464,5 +465,68 @@ func TestLRCLibInstrumentalFlagKeepsUsableLyricsAndEvidence(t *testing.T) {
 	}
 	if !lyricsFound || !evidenceFound {
 		t.Fatalf("candidates = %#v, want both lyrics and the attributed assertion", candidates)
+	}
+}
+
+func TestLRCLibExactAssertionAndFallbackSurviveSearchFailures(t *testing.T) {
+	cases := []struct {
+		name       string
+		instrument bool
+		status     int32
+		body       string
+		error      bool
+		health     Health
+	}{
+		{name: "404", status: 404, health: Healthy},
+		{name: "500", status: 500, health: Degraded},
+		{name: "malformed", status: 200, body: "{not-json", health: Degraded},
+		{name: "transport error", status: 0, error: true, health: Degraded},
+	}
+	for _, test := range cases {
+		for _, instrumental := range []bool{false, true} {
+			name := test.name + "-instrumental"
+			if !instrumental {
+				name = test.name + "-ambiguous"
+			}
+			t.Run(name, func(t *testing.T) {
+				rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+					if strings.Contains(request.URL, "/api/get") {
+						body := `{"id":1,"trackName":"Song (Live)","artistName":"Artist","albumName":"Live","duration":201,"syncedLyrics":"[00:01.00]live"}`
+						if instrumental {
+							body = `{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true}`
+						}
+						return &host.HTTPResponse{StatusCode: 200, Body: []byte(body)}, nil
+					}
+					if test.error {
+						return nil, errors.New("search outage")
+					}
+					return &host.HTTPResponse{StatusCode: test.status, Body: []byte(test.body)}, nil
+				})
+				candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+				if test.error && err == nil {
+					t.Fatal("want the search outage requested")
+				}
+				if !test.error && test.status == 200 && test.body != "" && err == nil {
+					t.Fatal("want malformed search to remain degraded")
+				}
+				if health != test.health {
+					t.Fatalf("health = %v, want %v", health, test.health)
+				}
+				foundEvidence, foundFallback := false, false
+				for _, candidate := range candidates {
+					foundEvidence = foundEvidence || len(candidate.Evidence) > 0
+					foundFallback = foundFallback || (candidate.Present() && strings.Contains(candidate.Response.Lyrics[0].Text, "live"))
+					if !instrumental && candidate.Present() && candidate.Evidence != nil {
+						foundEvidence = foundEvidence || len(candidate.Evidence) > 0
+					}
+				}
+				if instrumental && !foundEvidence {
+					t.Fatalf("candidates = %#v, want the exact instrumental assertion preserved", candidates)
+				}
+				if !instrumental && !foundFallback {
+					t.Fatalf("candidates = %#v, want the exact ambiguous suggestion preserved", candidates)
+				}
+			})
+		}
 	}
 }

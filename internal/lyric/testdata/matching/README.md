@@ -19,8 +19,10 @@ only the recording metadata used by the identity rule.
 Additional live/studio and radio-edit rows were read from the same endpoint
 with the queries recorded in `corpus.json`. Each case names its record IDs.
 
-## Calibration use
+## Labels and calibration use
 
+Each case carries an independent human `label` (`same`, `different`,
+`uncertain`) and a `timing` tier in addition to the classifier expectation.
 Only cases without `"synthetic": true` may justify a numeric constant.
 Synthetic cases exercise missing fields, contradictory markers and error paths;
 they are deliberately excluded from threshold calibration. The corpus is a
@@ -37,6 +39,8 @@ no accuracy claim beyond the listed cases.
   does.
 - A wrong radio edit was observed 1 s away (`Mr Brightside (radio edit)`:
   223 s vs 222 s); the marker, not duration, distinguishes it.
+- A remix case is included (`The Lindbergh Palace radio edit`, 249 s vs 222 s)
+  so edit/remix coverage is not limited to the shorter radio edit.
 - A markerless wrong recording in this corpus is at least 45 s away
   (`bad guy`: 149 s vs 194 s), but duration alone is still classified as
   ambiguous rather than a proven mismatch. The rule does not claim that a

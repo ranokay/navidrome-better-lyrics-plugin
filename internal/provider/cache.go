@@ -378,7 +378,7 @@ func (p *Provider) readBestFromSourceCache(track lyrics.TrackInfo, order []sourc
 			continue
 		}
 		candidate, expiry, ok := p.readCachedCandidateWithExpiry(key)
-		if ok && candidate.Playable() && (!best.Present() || candidate.Quality > best.Quality) {
+		if ok && lyric.MorePreferred(best, candidate) {
 			best, expiresAt = candidate, expiry
 		}
 	}
