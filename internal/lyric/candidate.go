@@ -139,14 +139,29 @@ func (candidate Candidate) OriginalDetails() OriginalInfo {
 	return UnavailableOriginalInfo(OriginalReasonNoDocument)
 }
 
-// RecordingIdentity resolves the recording address: the provider id when
-// supplied, otherwise a content digest over the exact native document (or the
-// served text when no document is known). A refetch that returns different
-// bytes therefore cannot silently match this selection.
+// RecordingIdentity resolves the recording address. A provider id is kept as
+// an opaque prefix, but a content-revision digest is always appended, so a
+// provider editing a document cannot resolve under an earlier selection. With
+// no provider id the whole address is a content digest. A refetch that returns
+// different bytes therefore cannot silently match this selection.
 func (candidate Candidate) RecordingIdentity() string {
+	digest := candidate.contentDigest()
 	if recording := strings.TrimSpace(candidate.Recording); recording != "" {
-		return recording
+		base := recording
+		if len(base) > 90 {
+			// Keep the address bounded when a provider returns a long URL-like
+			// id; retain a stable hash of it instead of truncating ambiguously.
+			hashed := sha256.Sum256([]byte(base))
+			base = fmt.Sprintf("id:%x", hashed[:16])
+		}
+		return fmt.Sprintf("%s@%x", base, digest[:16])
 	}
+	return fmt.Sprintf("sha256:%x", digest)
+}
+
+// contentDigest covers the exact native document, or the served text when no
+// document is known.
+func (candidate Candidate) contentDigest() [sha256.Size]byte {
 	digest := sha256.New()
 	if candidate.Original != nil && len(candidate.Original.Bytes) > 0 {
 		digest.Write(candidate.Original.Bytes)
@@ -156,7 +171,9 @@ func (candidate Candidate) RecordingIdentity() string {
 			digest.Write([]byte{0})
 		}
 	}
-	return fmt.Sprintf("sha256:%x", digest.Sum(nil))
+	var result [sha256.Size]byte
+	copy(result[:], digest.Sum(nil))
+	return result
 }
 
 // Present reports whether the candidate carries servable lyrics.

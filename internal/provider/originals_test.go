@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -75,8 +76,8 @@ func TestProvider_EveryAdapterCandidateIsAddressable(t *testing.T) {
 	if v2.Entries[0].Identity.Equal(*v2.Entries[1].Identity) {
 		t.Fatal("same-provider variants must have distinct identities")
 	}
-	if v2.Entries[0].Identity.Recording != "rec-A" || v2.Entries[1].Identity.Recording != "rec-B" {
-		t.Fatalf("recordings = %q/%q, want the provider ids", v2.Entries[0].Identity.Recording, v2.Entries[1].Identity.Recording)
+	if !strings.HasPrefix(v2.Entries[0].Identity.Recording, "rec-A@") || !strings.HasPrefix(v2.Entries[1].Identity.Recording, "rec-B@") {
+		t.Fatalf("recordings = %q/%q, want provider ids with revision digests", v2.Entries[0].Identity.Recording, v2.Entries[1].Identity.Recording)
 	}
 
 	listing := p.GetLyricsVariants(track)
@@ -117,8 +118,8 @@ func TestProvider_EveryAdapterCandidateIsAddressable(t *testing.T) {
 	if err := json.Unmarshal(raw, &bundle); err != nil || len(bundle.Candidates) != 2 {
 		t.Fatalf("bundle = %#v/%v, want both candidates", bundle, err)
 	}
-	if ttl := cache.ttlsForKey[key]; ttl != lyricsCacheHourTTLSeconds {
-		t.Fatalf("bundle TTL = %d, want the shortest candidate TTL (%d)", ttl, lyricsCacheHourTTLSeconds)
+	if ttl := cache.ttlsForKey[key]; ttl != lyricsCacheDayTTLSeconds {
+		t.Fatalf("bundle TTL = %d, want the longest candidate TTL (%d)", ttl, lyricsCacheDayTTLSeconds)
 	}
 
 	// Eviction refetches the same selection and preserves exact bytes.
@@ -344,7 +345,7 @@ func TestProvider_BundleTruncationReportsUnavailable(t *testing.T) {
 	}
 	foundSmall := false
 	for _, entry := range v2.Entries {
-		if entry.Identity != nil && entry.Identity.Recording == "rec-small" {
+		if entry.Identity != nil && strings.HasPrefix(entry.Identity.Recording, "rec-small@") {
 			foundSmall = true
 		}
 	}
@@ -352,13 +353,13 @@ func TestProvider_BundleTruncationReportsUnavailable(t *testing.T) {
 		t.Fatal("v2 must keep the bundled small representation addressable")
 	}
 	listing := p.GetLyricsVariants(track)
-	if len(listing) != 1 || listing[0].Identity.Recording != "rec-small" {
+	if len(listing) != 1 || !strings.HasPrefix(listing[0].Identity.Recording, "rec-small@") {
 		t.Fatalf("listing = %#v, want the bundled small representation", listing)
 	}
 
 	// The dropped selection has no address: it is reported unavailable and is
 	// never remapped to the candidate that fit.
-	hugeIdentity := lyric.NewVariantIdentity(p.sourceInstanceID("bounded"), "rec-huge", "", "main", "lrc")
+	hugeIdentity := lyric.NewVariantIdentity(p.sourceInstanceID("bounded"), huge.RecordingIdentity(), "", "main", "lrc")
 	document, reason := p.GetLyricsOriginal(track, hugeIdentity)
 	if reason == "" || len(document.Bytes) != 0 {
 		t.Fatalf("dropped selection = %#v/%q, want explicit unavailable", document, reason)
@@ -509,5 +510,121 @@ func TestProvider_OriginalRefetchRespectsCooldown(t *testing.T) {
 	}
 	if fetches != before {
 		t.Fatal("a cooled-down source must not be fetched")
+	}
+}
+
+func TestProvider_BundleKeepsPerCandidateExpiry(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	now := time.Unix(1_800_000_000, 0)
+	src := source.Source{
+		ID: "expiring", Display: "Expiring", Hosts: []string{"expiring.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return []lyric.Candidate{
+				originalCandidate("lrc", "[00:01.00]synced", "lrc", []byte("[00:01.00]synced"), "rec-lrc"),
+				originalCandidate("plain", "plain", "plain", []byte("plain"), "rec-plain"),
+			}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{src}, nil)
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	if listing := p.GetLyricsVariants(track); len(listing) != 2 {
+		t.Fatalf("initial listing = %#v, want both representations", listing)
+	}
+
+	now = now.Add(2 * time.Hour)
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 1 || listing[0].Format != "lrc" {
+		t.Fatalf("after the plain TTL = %#v, want the synchronized representation only", listing)
+	}
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range v2.Entries {
+		if entry.Identity != nil && entry.Identity.Format == "plain" {
+			t.Fatal("an expired plain representation must not remain addressable")
+		}
+	}
+}
+
+func TestProvider_VariantResponseAndListingShareTheBound(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	candidates := make([]lyric.Candidate, 0, MaxListedVariants+6)
+	for index := 0; index < MaxListedVariants+6; index++ {
+		candidates = append(candidates, originalCandidate(
+			"lrc", fmt.Sprintf("[00:01.00]line %d", index), "lrc",
+			[]byte(fmt.Sprintf("[00:01.00]line %d", index)), fmt.Sprintf("rec-%d", index),
+		))
+	}
+	src := source.Source{
+		ID: "many", Display: "Many", Hosts: []string{"many.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return candidates, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v2.Entries) != MaxListedVariants {
+		t.Fatalf("v2 entries = %d, want the shared bound %d", len(v2.Entries), MaxListedVariants)
+	}
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != MaxListedVariants {
+		t.Fatalf("listing = %d, want the shared bound %d", len(listing), MaxListedVariants)
+	}
+	for index, summary := range listing {
+		if v2.Entries[index].Identity == nil || !summary.Identity.Equal(*v2.Entries[index].Identity) {
+			t.Fatalf("listing identity %d does not match playback", index)
+		}
+	}
+}
+
+func TestProvider_ProviderRecordingRevisionRejectsChangedContent(t *testing.T) {
+	t.Parallel()
+
+	cache := seededCache(t)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}
+	document := []byte("[00:01.00]old")
+	fetches := 0
+	src := source.Source{
+		ID: "revised", Display: "Revised", Hosts: []string{"revised.test"}, DefaultEnabled: true,
+		Originals: source.OriginalsNative,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			fetches++
+			return []lyric.Candidate{lyric.NewCandidate(lyrics.LyricsText{Text: string(document)}, "Same Provider", "lrc").
+				WithOriginal("lrc", lyric.OriginalSupplied, document).
+				WithRecording("rec-1")}, source.Healthy, nil
+		},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	identity := p.GetLyricsVariants(track)[0].Identity
+	if !strings.HasPrefix(identity.Recording, "rec-1@") {
+		t.Fatalf("recording = %q, want the provider id with a revision digest", identity.Recording)
+	}
+	deleteOriginalArtifacts(cache)
+
+	document = []byte("[00:01.00]new")
+	before := fetches
+	got, reason := p.GetLyricsOriginal(track, identity)
+	if reason == "" || len(got.Bytes) != 0 {
+		t.Fatalf("changed provider document = %#v/%q, want unavailable with no replacement", got, reason)
+	}
+	if fetches != before+1 {
+		t.Fatalf("fetches = %d, want one refetch attempt", fetches)
 	}
 }

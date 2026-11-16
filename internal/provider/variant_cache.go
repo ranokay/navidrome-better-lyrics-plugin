@@ -12,10 +12,11 @@ import (
 // cachedSourceVariant is one addressable representation stored in a source
 // bundle. Every candidate an adapter returned is kept, not only the winner.
 type cachedSourceVariant struct {
-	Quality  lyric.TimingQuality      `json:"quality"`
-	Response lyrics.GetLyricsResponse `json:"response"`
-	Variant  *lyric.VariantIdentity   `json:"variant,omitempty"`
-	Original *lyric.OriginalInfo      `json:"original,omitempty"`
+	Quality   lyric.TimingQuality      `json:"quality"`
+	Response  lyrics.GetLyricsResponse `json:"response"`
+	Variant   *lyric.VariantIdentity   `json:"variant,omitempty"`
+	Original  *lyric.OriginalInfo      `json:"original,omitempty"`
+	ExpiresAt int64                    `json:"expiresAt,omitempty"`
 }
 
 type cachedSourceBundle struct {
@@ -160,22 +161,23 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 		return
 	}
 	now := p.now().Unix()
-	ttl := int64(0)
+	maxTTL := int64(0)
 	entries := make([]cachedSourceVariant, 0, len(candidates))
 	for _, candidate := range candidates {
 		candidateTTL := sourceCacheTTLSeconds(candidate.Quality)
-		if ttl == 0 || candidateTTL < ttl {
-			ttl = candidateTTL
+		if candidateTTL > maxTTL {
+			maxTTL = candidateTTL
 		}
 		original := candidate.OriginalSummary
 		entries = append(entries, cachedSourceVariant{
-			Quality:  candidate.Quality,
-			Response: candidate.Response,
-			Variant:  candidate.Identity,
-			Original: &original,
+			Quality:   candidate.Quality,
+			Response:  candidate.Response,
+			Variant:   candidate.Identity,
+			Original:  &original,
+			ExpiresAt: now + candidateTTL,
 		})
 	}
-	if ttl <= 0 {
+	if maxTTL <= 0 {
 		return
 	}
 	encode := func(candidates []cachedSourceVariant) ([]byte, error) {
@@ -183,7 +185,7 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 			Generation:  lyricsCacheGeneration,
 			Candidates:  candidates,
 			Credentials: credentials,
-			ExpiresAt:   now + ttl,
+			ExpiresAt:   now + maxTTL,
 		})
 	}
 	value, err := encode(entries)
@@ -212,7 +214,7 @@ func (p *Provider) storeSourceBundle(track lyrics.TrackInfo, sourceID string, ca
 			return
 		}
 	}
-	p.storeCandidateBytes(key, value, false, ttl)
+	p.storeCandidateBytes(key, value, false, maxTTL)
 }
 
 // readCachedSourceCandidates returns every cached representation for a source.
@@ -230,6 +232,9 @@ func (p *Provider) readCachedSourceCandidates(track lyrics.TrackInfo, sourceID s
 				(bundle.ExpiresAt == 0 || bundle.ExpiresAt > p.now().Unix()) {
 				candidates := make([]lyric.Candidate, 0, len(bundle.Candidates))
 				for _, entry := range bundle.Candidates {
+					if entry.ExpiresAt > 0 && entry.ExpiresAt <= p.now().Unix() {
+						continue
+					}
 					candidate := lyric.Candidate{
 						Response: entry.Response,
 						Quality:  entry.Quality,

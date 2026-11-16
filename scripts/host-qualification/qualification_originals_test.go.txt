@@ -239,8 +239,8 @@ func testLRCLibVariants(t *testing.T) {
 			t.Fatalf("playback lacks the %q representation: %#v", format, playback.StructuredLyrics)
 		}
 	}
-	if byFormat["elrc"].Variant.Recording != "1250" {
-		t.Fatalf("ELRC recording = %q, want the LRCLib record id", byFormat["elrc"].Variant.Recording)
+	if !strings.HasPrefix(byFormat["elrc"].Variant.Recording, "1250@") {
+		t.Fatalf("ELRC recording = %q, want the LRCLib id with a revision digest", byFormat["elrc"].Variant.Recording)
 	}
 
 	listing := host.variants(t)
@@ -297,6 +297,21 @@ func testLRCLibVariants(t *testing.T) {
 	if host.transport.requests() <= before {
 		t.Fatal("an evicted artifact must refetch the same selection")
 	}
+
+	// A provider editing the lyrics under the same record id must not resolve
+	// the earlier selection to the new bytes.
+	changed, err := json.Marshal(map[string]any{
+		"id": 1250, "trackName": qualificationTrackTitle, "artistName": qualificationTrackArtist,
+		"duration": 200, "hasWordSync": true, "lyricsfile": lyricsFile,
+		"syncedLyrics": "[00:01.00]changed line", "plainLyrics": "changed plain",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record = changed
+	host.plugin.Delete(t, "lyrics:v4:original:")
+	status, _, body = host.original(t, byFormat["lrc"].Selection)
+	expectRejected(t, status, body, "changed line")
 }
 
 func testTTMLOriginal(t *testing.T) {

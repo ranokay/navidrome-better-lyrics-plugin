@@ -76,8 +76,9 @@ and the separate #6465 response-cache work do not provide these endpoints.
 - A variant identity is versioned and names source instance, provider recording,
   language, role and playback format. The instance is a keyed HMAC fingerprint
   with at least 128 bits of output; credentials never appear in an identity.
-  Providers without a record id use a content digest of the native document, so a
-  changed document cannot silently match an earlier selection.
+  A provider record id is suffixed with a content-revision digest of the native
+  document; providers without a record id use the content digest as the address.
+  A changed document therefore cannot silently match an earlier selection.
 - Every candidate an adapter returns is kept in a bounded per-source bundle, not
   only the winner or one per-source entry. Playback v2 and the listing expose all
   of them with identities; truncation drops selections, which then report

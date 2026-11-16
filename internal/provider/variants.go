@@ -70,9 +70,10 @@ func sourceProvider(from *lyrics.LyricsSource) string {
 	return strings.TrimSpace(from.Provider)
 }
 
-// MaxListedVariants bounds one variant listing. Dropped selections stay absent
-// (and therefore unavailable); they are never remapped to another candidate.
-const MaxListedVariants = 16
+// MaxListedVariants bounds one variant response. Playback v2 and the listing
+// share this bound, so every emitted identity is listable. Dropped selections
+// stay absent (and therefore unavailable); they are never remapped.
+const MaxListedVariants = 64
 
 // VariantEntry is one playback representation with its addressable identity.
 type VariantEntry struct {
@@ -121,6 +122,9 @@ func (p *Provider) buildV2Response(track lyrics.TrackInfo, sources []source.Sour
 		}
 		seen[key] = true
 		for _, text := range candidate.Response.Lyrics {
+			if len(entries) >= MaxListedVariants {
+				break
+			}
 			if text.Source == nil {
 				text.Source = candidate.Response.Source
 			}

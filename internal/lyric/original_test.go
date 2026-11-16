@@ -82,8 +82,13 @@ func TestCandidateRecordingIdentityFallsBackToContent(t *testing.T) {
 	if !strings.HasPrefix(first, "sha256:") {
 		t.Fatalf("recording = %q, want a content digest when the provider has no id", first)
 	}
-	if candidate.WithRecording("rec-1").RecordingIdentity() != "rec-1" {
-		t.Fatal("provider record ids must win over content digests")
+	withProviderID := candidate.WithRecording("rec-1").RecordingIdentity()
+	if !strings.HasPrefix(withProviderID, "rec-1@") {
+		t.Fatalf("recording = %q, want the provider id prefix plus a revision digest", withProviderID)
+	}
+	changedWithProviderID := NewCandidate(lyrics.LyricsText{Text: "[00:01.00]different line"}, "Provider", "lrc").WithRecording("rec-1")
+	if changedWithProviderID.RecordingIdentity() == withProviderID {
+		t.Fatal("a changed document must change the provider-recording address")
 	}
 	if candidate.WithRecording("").RecordingIdentity() != first {
 		t.Fatal("content recording identity must be deterministic")

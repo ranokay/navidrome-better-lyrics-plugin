@@ -81,7 +81,16 @@ func (p *Provider) assignIdentity(sourceID string, candidate *lyric.Candidate) {
 		candidate.Identity = nil
 		return
 	}
-	identity := lyric.NewVariantIdentity(instance, candidate.RecordingIdentity(), candidate.Language, "", candidate.Format())
+	language := candidate.Language
+	if language == "" {
+		for _, text := range candidate.Response.Lyrics {
+			if text.Lang != "" {
+				language = text.Lang
+				break
+			}
+		}
+	}
+	identity := lyric.NewVariantIdentity(instance, candidate.RecordingIdentity(), language, "", candidate.Format())
 	if !identity.Valid() {
 		candidate.Identity = nil
 		return
