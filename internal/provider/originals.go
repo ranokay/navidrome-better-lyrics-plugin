@@ -111,7 +111,11 @@ func (p *Provider) GetLyricsOriginal(track lyrics.TrackInfo, identity lyric.Vari
 		if document, ok := p.readOriginalArtifact(track, identity); ok {
 			return document, ""
 		}
-		return lyric.Original{}, candidate.OriginalDetails().Reason
+		reason := strings.TrimSpace(candidate.OriginalDetails().Reason)
+		if reason == "" {
+			reason = lyric.OriginalReasonArtifactUnavailable
+		}
+		return lyric.Original{}, reason
 	}
 	return lyric.Original{}, "selection is no longer offered"
 }

@@ -68,6 +68,7 @@ func NewCandidate(text lyrics.LyricsText, provider, format string) Candidate {
 	return Candidate{
 		Response: sourcedResponse(text, provider, format),
 		Quality:  quality,
+		Language: strings.TrimSpace(text.Lang),
 	}
 }
 

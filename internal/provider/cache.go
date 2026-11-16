@@ -104,11 +104,17 @@ func lyricsTrackKey(track lyrics.TrackInfo) (string, bool) {
 }
 
 func lyricsCacheKeyForSource(track lyrics.TrackInfo, sourceID string) (string, bool) {
+	return lyricsSourceCacheKey(track, sourceID, lyricsSourceCacheKeyPrefix)
+}
+
+// lyricsSourceCacheKey centralizes track/source key construction for the
+// per-source and variant-bundle cache families.
+func lyricsSourceCacheKey(track lyrics.TrackInfo, sourceID, prefix string) (string, bool) {
 	trackKey, ok := lyricsTrackKey(track)
-	if !ok || sourceID == "" {
+	if !ok || sourceID == "" || prefix == "" {
 		return "", false
 	}
-	return fmt.Sprintf("%s%s:%s", lyricsSourceCacheKeyPrefix, sourceID, trackKey), true
+	return fmt.Sprintf("%s%s:%s", prefix, sourceID, trackKey), true
 }
 
 // lyricsWinnerCacheKey fingerprints the enabled, ordered source list into the key

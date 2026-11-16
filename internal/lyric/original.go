@@ -8,20 +8,20 @@ import "strings"
 type OriginalProvenance string
 
 const (
-	OriginalSupplied           OriginalProvenance = "supplied"
-	OriginalProviderConversion OriginalProvenance = "provider-conversion"
-	OriginalReconstructed      OriginalProvenance = "reconstructed"
-	OriginalUnavailable        OriginalProvenance = "unavailable"
+	OriginalSupplied      OriginalProvenance = "supplied"
+	OriginalReconstructed OriginalProvenance = "reconstructed"
+	OriginalUnavailable   OriginalProvenance = "unavailable"
 )
 
 // Reasons reported when a variant has no retrievable original.
 const (
-	OriginalReasonNoDocument      = "source supplies no native document"
-	OriginalReasonConversionOnly  = "provider supplies only a converted representation"
-	OriginalReasonReconstructed   = "only an API envelope or reconstruction was available"
-	OriginalReasonTooLarge        = "document exceeds the cache entry limit"
-	OriginalReasonInvalidDocument = "provider supplied no valid native document"
-	OriginalReasonCacheRefused    = "cache refused the document"
+	OriginalReasonNoDocument          = "source supplies no native document"
+	OriginalReasonConversionOnly      = "provider supplies only a converted representation"
+	OriginalReasonReconstructed       = "only an API envelope or reconstruction was available"
+	OriginalReasonTooLarge            = "document exceeds the cache entry limit"
+	OriginalReasonInvalidDocument     = "provider supplied no valid native document"
+	OriginalReasonCacheRefused        = "cache refused the document"
+	OriginalReasonArtifactUnavailable = "original artifact is unavailable"
 )
 
 // Original is one exact source-native document captured before conversion.
@@ -48,9 +48,10 @@ func NewOriginal(format string, provenance OriginalProvenance, bytes []byte) (*O
 	if !documentFormat(format) {
 		return nil, false
 	}
-	switch provenance {
-	case OriginalSupplied, OriginalProviderConversion:
-	default:
+	// Only a document the source actually supplied is a genuine original.
+	// Provider conversions and reconstructions are reported separately as
+	// unavailable; they must never be downloaded as originals.
+	if provenance != OriginalSupplied {
 		return nil, false
 	}
 	if len(bytes) == 0 || len(bytes) > MaxDocumentBytes {
@@ -112,7 +113,7 @@ func OriginalMediaType(format string) string {
 	case "wsy":
 		return "application/octet-stream"
 	case "lyricsfile":
-		return "application/json"
+		return "application/yaml"
 	case "plain":
 		return "text/plain; charset=utf-8"
 	}
@@ -137,7 +138,7 @@ func OriginalExtension(format string) string {
 	case "wsy":
 		return ".wsy"
 	case "lyricsfile":
-		return ".json"
+		return ".yaml"
 	case "plain":
 		return ".txt"
 	}

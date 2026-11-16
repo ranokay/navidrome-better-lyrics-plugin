@@ -133,7 +133,11 @@ func (p *Provider) buildV2Response(track lyrics.TrackInfo, sources []source.Sour
 	}
 
 	if winner.Identity != nil {
-		if sourceID, ok := winner.Identity.InstanceSourceID(); !ok || p.sourceInstanceID(sourceID) != winner.Identity.Instance {
+		sourceID, ok := winner.Identity.InstanceSourceID()
+		if !ok || p.sourceInstanceID(sourceID) != winner.Identity.Instance || !p.cachedIdentityListed(track, *winner.Identity) {
+			// The bundle is the authoritative addressable set. A winner
+			// dropped by bundle truncation remains playable but is not
+			// exposed as a retrievable selection.
 			winner.Identity = nil
 		}
 	}
@@ -148,6 +152,21 @@ func (p *Provider) buildV2Response(track lyrics.TrackInfo, sources []source.Sour
 		responseSource = winner.Response.Source
 	}
 	return V2Response{Entries: entries, Source: responseSource}
+}
+
+// cachedIdentityListed reports whether one identity is part of the current
+// addressable source bundle.
+func (p *Provider) cachedIdentityListed(track lyrics.TrackInfo, identity lyric.VariantIdentity) bool {
+	sourceID, ok := identity.InstanceSourceID()
+	if !ok {
+		return false
+	}
+	for _, candidate := range p.readCachedSourceCandidates(track, sourceID) {
+		if candidate.Identity != nil && candidate.Identity.Equal(identity) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetLyricsVariants lists the currently cached, addressable representations.
@@ -169,6 +188,15 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 	}
 	if !ok || !candidate.Present() {
 		best, _ := p.readBestFromSourceCache(track, sources)
+		if !best.Present() {
+			// The legacy per-source entry may have been refused while a
+			// smaller bundled representation fit; list that instead.
+			for _, src := range sources {
+				for _, bundled := range p.readCachedSourceCandidates(track, src.ID) {
+					best = lyric.Prefer(best, bundled)
+				}
+			}
+		}
 		if !best.Present() {
 			return nil
 		}

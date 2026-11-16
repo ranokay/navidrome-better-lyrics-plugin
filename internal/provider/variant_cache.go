@@ -33,11 +33,7 @@ type cachedOriginalEnvelope struct {
 }
 
 func lyricsVariantCacheKey(track lyrics.TrackInfo, sourceID string) (string, bool) {
-	trackKey, ok := lyricsTrackKey(track)
-	if !ok || sourceID == "" {
-		return "", false
-	}
-	return fmt.Sprintf("%s%s:%s", lyricsVariantCacheKeyPrefix, sourceID, trackKey), true
+	return lyricsSourceCacheKey(track, sourceID, lyricsVariantCacheKeyPrefix)
 }
 
 func lyricsOriginalCacheKey(track lyrics.TrackInfo, identity lyric.VariantIdentity) (string, bool) {

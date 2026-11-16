@@ -333,6 +333,29 @@ func TestProvider_BundleTruncationReportsUnavailable(t *testing.T) {
 		t.Fatalf("bundle = %#v, want the small representation kept", bundle.Candidates)
 	}
 
+	// Playback keeps the winner but must not expose its dropped identity; the
+	// bundled small representation stays addressable.
+	v2, err := p.GetLyricsV2(lyrics.GetLyricsRequest{Track: track})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v2.Entries) == 0 || v2.Entries[0].Identity != nil {
+		t.Fatalf("v2 winner = %#v, want no identity for a truncated winner", v2.Entries)
+	}
+	foundSmall := false
+	for _, entry := range v2.Entries {
+		if entry.Identity != nil && entry.Identity.Recording == "rec-small" {
+			foundSmall = true
+		}
+	}
+	if !foundSmall {
+		t.Fatal("v2 must keep the bundled small representation addressable")
+	}
+	listing := p.GetLyricsVariants(track)
+	if len(listing) != 1 || listing[0].Identity.Recording != "rec-small" {
+		t.Fatalf("listing = %#v, want the bundled small representation", listing)
+	}
+
 	// The dropped selection has no address: it is reported unavailable and is
 	// never remapped to the candidate that fit.
 	hugeIdentity := lyric.NewVariantIdentity(p.sourceInstanceID("bounded"), "rec-huge", "", "main", "lrc")

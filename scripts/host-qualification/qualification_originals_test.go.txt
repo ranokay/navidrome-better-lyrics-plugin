@@ -267,9 +267,12 @@ func testLRCLibVariants(t *testing.T) {
 	if status != http.StatusOK || !bytes.Equal(body, []byte("plain line")) {
 		t.Fatalf("plain original = %d/%q", status, body)
 	}
-	status, _, body = host.original(t, byFormat["elrc"].Selection)
+	status, headers, body = host.original(t, byFormat["elrc"].Selection)
 	if status != http.StatusOK || !bytes.Equal(body, []byte(lyricsFile)) {
 		t.Fatalf("ELRC original = %d/%q, want the exact lyricsfile", status, body)
+	}
+	if headers.Get("Content-Type") != "application/yaml" || !strings.HasSuffix(headers.Get("Content-Disposition"), ".yaml\"") {
+		t.Fatalf("lyricsfile headers = %v, want a YAML download", headers)
 	}
 	if strings.Contains(string(byFormat["elrc"].Line[0].Value), "version: '1.0'") {
 		t.Fatal("ELRC playback must be the reconstruction, not the native lyricsfile")

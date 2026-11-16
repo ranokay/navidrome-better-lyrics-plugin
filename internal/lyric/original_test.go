@@ -41,6 +41,7 @@ func TestNewOriginalRejectsReconstructionsAndUnknownFormats(t *testing.T) {
 		document   []byte
 	}{
 		{"reconstructed", "elrc", OriginalReconstructed, []byte("[00:01.00]line")},
+		{"provider conversion", "elrc", OriginalProvenance("provider-conversion"), []byte("[00:01.00]line")},
 		{"unavailable provenance", "ttml", OriginalUnavailable, []byte("<tt/>")},
 		{"unknown format", "srt", OriginalSupplied, []byte("1")},
 		{"empty document", "ttml", OriginalSupplied, nil},
@@ -64,6 +65,12 @@ func TestNewOriginalRejectsReconstructionsAndUnknownFormats(t *testing.T) {
 	}
 	if !strings.HasPrefix(OriginalMediaType("ttml"), "application/") {
 		t.Fatalf("ttml media type = %q", OriginalMediaType("ttml"))
+	}
+	if got := OriginalMediaType("lyricsfile"); got != "application/yaml" {
+		t.Fatalf("lyricsfile media type = %q, want application/yaml", got)
+	}
+	if got := OriginalExtension("lyricsfile"); got != ".yaml" {
+		t.Fatalf("lyricsfile extension = %q, want .yaml", got)
 	}
 }
 
@@ -127,5 +134,14 @@ func TestNewOriginalValidatesTTMLIndependently(t *testing.T) {
 				t.Fatalf("%s reason = %q, want the explicit invalid-document reason", name, got)
 			}
 		})
+	}
+}
+
+func TestNewCandidateRetainsSourceLanguage(t *testing.T) {
+	t.Parallel()
+
+	candidate := NewCandidate(lyrics.LyricsText{Lang: " ja ", Text: "[00:01.00]line"}, "Provider", "lrc")
+	if candidate.Language != "ja" {
+		t.Fatalf("language = %q, want the adapter-supplied language", candidate.Language)
 	}
 }
