@@ -358,3 +358,27 @@ func TestBundledSuggestionAfterNegativeWinnerDoesNotClaimPlaybackIndex(t *testin
 		t.Fatalf("listing = %#v, want one suggestion with unknown playback index", listing)
 	}
 }
+
+func TestEvidenceOnlyFetchLeavesSourceEvidenceCached(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194}
+	evidence := lyric.Candidate{
+		RecordingInfo: lyric.RecordingInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 194},
+		Evidence:      []lyric.Evidence{{Kind: lyric.EvidenceInstrumental, Provider: "LRCLib", Recording: "1"}},
+	}
+	calls := 0
+	src := source.Source{ID: "one", Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+		calls++
+		return []lyric.Candidate{evidence}, source.Healthy, nil
+	}}
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{src}, func(lyrics.TrackInfo) error { return nil })
+	if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.readCachedSourceEvidence(track, "one"); len(got) != 1 {
+		t.Fatalf("cached evidence = %#v, want evidence-only assertion preserved", got)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d", calls)
+	}
+}

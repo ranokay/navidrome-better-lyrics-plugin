@@ -568,3 +568,64 @@ func TestLRCLibSearchRowParseFailureRetainsExactEvidence(t *testing.T) {
 		t.Fatalf("candidates = %#v, want exact evidence retained", candidates)
 	}
 }
+
+func TestLRCLibExactEvidenceParseFailureContinuesToSearch(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"hasWordSync":true,"lyricsfile":"not: [valid"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"syncedLyrics":"[00:01.00]studio"}]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %v/%v", health, err)
+	}
+	lyricsFound, evidenceFound := false, false
+	for _, candidate := range candidates {
+		lyricsFound = lyricsFound || candidate.Present()
+		evidenceFound = evidenceFound || len(candidate.Evidence) > 0
+	}
+	if !lyricsFound || !evidenceFound {
+		t.Fatalf("candidates = %#v, want search lyrics and exact assertion", candidates)
+	}
+}
+
+func TestLRCLibExactEvidenceParseFailureWithoutSearchLyricsKeepsError(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"hasWordSync":true,"lyricsfile":"not: [valid"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err == nil || health != Degraded || len(candidates) != 1 || len(candidates[0].Evidence) == 0 {
+		t.Fatalf("result = %#v/%v/%v, want retained assertion and parse error", candidates, health, err)
+	}
+}
+
+func TestLRCLibSearchCollectsEvidenceAfterValidatedWinner(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[
+			{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"syncedLyrics":"[00:01.00]studio"},
+			{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true}
+		]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %v/%v", health, err)
+	}
+	lyricsFound, evidenceFound := false, false
+	for _, candidate := range candidates {
+		lyricsFound = lyricsFound || candidate.Present()
+		evidenceFound = evidenceFound || len(candidate.Evidence) > 0
+	}
+	if !lyricsFound || !evidenceFound {
+		t.Fatalf("candidates = %#v, want winner and later assertion", candidates)
+	}
+}

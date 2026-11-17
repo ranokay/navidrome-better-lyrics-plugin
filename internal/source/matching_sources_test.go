@@ -42,3 +42,14 @@ func TestLunaPrefersExactTitleOverEarlierContainment(t *testing.T) {
 		t.Fatalf("selected %#v/%v, want exact title row", got, ok)
 	}
 }
+
+func TestBinimumValidatedRowOutsideTwoSecondsBeatsAmbiguous(t *testing.T) {
+	rows := []binimumResult{
+		{TrackName: "Song (Live)", ArtistName: "Artist", AlbumName: "Live", Duration: 200, LyricsURL: "https://lrc.red/live.ttml"},
+		{TrackName: "Song", ArtistName: "Artist", AlbumName: "Album", Duration: 203, LyricsURL: "https://lrc.red/studio.ttml"},
+	}
+	got, ok := pickBinimumResult(rows, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200})
+	if !ok || got.TrackName != "Song" {
+		t.Fatalf("selected %#v/%v, want validated album row outside the tight band", got, ok)
+	}
+}

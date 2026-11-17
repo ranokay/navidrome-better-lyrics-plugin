@@ -119,9 +119,6 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 		delta := int64(0)
 		if track.Duration > 0 {
 			delta = int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
-			if delta > 2 {
-				continue
-			}
 		}
 		match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), lyric.RecordingInfo{
 			Title: candidateResult.TrackName, Artist: candidateResult.ArtistName,
@@ -133,6 +130,9 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 				best, bestDelta, found = candidateResult, delta, true
 			}
 		case lyric.MatchAmbiguous:
+			if delta > 2 {
+				continue
+			}
 			if !fallbackFound {
 				fallback, fallbackFound = candidateResult, true
 			}

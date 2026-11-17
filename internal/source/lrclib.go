@@ -36,6 +36,7 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		return nil, health, err
 	}
 	var exactFallback []lyric.Candidate
+	var exactErr error
 	if len(response) > 0 {
 		// The exact endpoint uses fuzzy metadata too: its reply is not
 		// guaranteed to describe the requested recording, so the returned
@@ -51,9 +52,9 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 			candidates, candErr := lrclibCandidates(rt, response)
 			if candErr != nil {
 				if len(candidates) > 0 {
-					return candidates, Degraded, candErr
-				}
-				if !errors.Is(candErr, errNoLRCLibPayload) {
+					evidence = append(evidence, candidates...)
+					exactErr = candErr
+				} else if !errors.Is(candErr, errNoLRCLibPayload) {
 					return nil, Degraded, candErr
 				}
 			}
@@ -84,17 +85,17 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 	searchURL := lrclibEndpoint + "/api/search?" + searchQuery.Encode()
 	searchBody, health, err := fetchLRCLibEndpoint(rt, "LRCLib search", searchURL, deadline)
 	if err != nil {
-		return lrclibFallback(exactFallback, evidence, health, err)
+		return lrclibFallback(exactFallback, evidence, health, err, exactErr)
 	}
 	if len(searchBody) == 0 {
 		// The search endpoint answered a miss (404) with no body: decoding nil
 		// would degrade a clean miss (spotted while wiring the metadata gate).
-		return lrclibFallback(exactFallback, evidence, health, nil)
+		return lrclibFallback(exactFallback, evidence, health, nil, exactErr)
 	}
 
 	var results []lrclibRecord
 	if err := json.Unmarshal(searchBody, &results); err != nil {
-		return lrclibFallback(exactFallback, evidence, Degraded, fmt.Errorf("decode LRCLib search response: %w", err))
+		return lrclibFallback(exactFallback, evidence, Degraded, fmt.Errorf("decode LRCLib search response: %w", err), exactErr)
 	}
 	target := int64(math.Round(float64(track.Duration)))
 	var best []lyric.Candidate
@@ -111,9 +112,6 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		delta := int64(0)
 		if track.Duration > 0 {
 			delta = int64(math.Abs(float64(int64(math.Round(result.Duration)) - target)))
-		}
-		if len(best) > 0 && delta >= bestDelta {
-			continue
 		}
 		rowJSON, err := json.Marshal(result)
 		if err != nil {
@@ -142,7 +140,9 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 			match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), present[0].RecordingInfo)
 			switch match.Status {
 			case lyric.MatchValidated:
-				best, bestDelta = present, delta
+				if len(best) == 0 || delta < bestDelta {
+					best, bestDelta = present, delta
+				}
 			case lyric.MatchAmbiguous:
 				if len(fallback) == 0 {
 					fallback = present
@@ -159,6 +159,9 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 	if len(fallback) > 0 {
 		return append(fallback, evidence...), Healthy, nil
 	}
+	if exactErr != nil && len(evidence) > 0 {
+		return evidence, Degraded, exactErr
+	}
 	if err := errors.Join(candidateErrors...); err != nil {
 		if len(evidence) > 0 {
 			return evidence, Degraded, err
@@ -174,12 +177,18 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 // lrclibFallback preserves already-decoded exact suggestions and assertions
 // when the broader search misses or fails. The assertion is never derived from
 // the failed attempt.
-func lrclibFallback(fallback, evidence []lyric.Candidate, health Health, err error) ([]lyric.Candidate, Health, error) {
+func lrclibFallback(fallback, evidence []lyric.Candidate, health Health, err, retainedErr error) ([]lyric.Candidate, Health, error) {
 	out := make([]lyric.Candidate, 0, len(fallback)+len(evidence))
 	out = append(out, fallback...)
 	out = append(out, evidence...)
 	if len(out) == 0 {
 		return nil, health, err
+	}
+	if retainedErr != nil {
+		health = Degraded
+		if err == nil {
+			err = retainedErr
+		}
 	}
 	return out, health, err
 }

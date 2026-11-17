@@ -117,8 +117,8 @@ func AssessRecording(request, returned RecordingInfo) RecordingMatch {
 		match.Reasons = reasons
 		return match
 	}
-	requestMarkers := versionMarkers(request.Title, request.Album)
-	returnedMarkers := versionMarkers(returnedTitle, returned.Album)
+	requestMarkers := versionMarkers(request.Title, "")
+	returnedMarkers := versionMarkers(returnedTitle, "")
 	markerRelation := compareMarkers(requestMarkers, returnedMarkers)
 	switch markerRelation {
 	case markersConflict:
@@ -135,6 +135,17 @@ func AssessRecording(request, returned RecordingInfo) RecordingMatch {
 		add("qualifier-differs")
 		match.Reasons = reasons
 		return match
+	}
+	requestAlbumMarkers := versionMarkers("", request.Album)
+	returnedAlbumMarkers := versionMarkers("", returned.Album)
+	if len(requestAlbumMarkers) > 0 || len(returnedAlbumMarkers) > 0 {
+		if len(requestAlbumMarkers) == 0 || len(returnedAlbumMarkers) == 0 ||
+			!sameMarkerSets(requestAlbumMarkers, returnedAlbumMarkers) ||
+			!sameTokens(albumSignature(request.Album), albumSignature(returned.Album)) {
+			add("album-version-unconfirmed")
+			match.Reasons = reasons
+			return match
+		}
 	}
 
 	if request.Duration > 0 && returned.Duration > 0 {
@@ -263,6 +274,26 @@ func markerPattern(marker string) *regexp.Regexp {
 // sameQualifierSignature keeps distinguishing performance/remix text such as
 // "Live at Wembley" versus "Live at Knebworth" from validating as the same
 // recording merely because both carry the generic live marker.
+func sameMarkerSets(left, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for marker := range left {
+		if !right[marker] {
+			return false
+		}
+	}
+	return true
+}
+
+func albumSignature(album string) []string {
+	value := strings.ToLower(album)
+	for _, marker := range editionMarkers {
+		value = markerPattern(marker).ReplaceAllString(value, " ")
+	}
+	return NormalizedTokens(value)
+}
+
 func sameQualifierSignature(requestTitle, returnedTitle string) bool {
 	request := qualifierSignature(requestTitle)
 	returned := qualifierSignature(returnedTitle)

@@ -222,3 +222,11 @@ func TestLiveVersusAcousticIsAmbiguousNotMismatch(t *testing.T) {
 		t.Fatalf("status = %q, want ambiguous", got.Status)
 	}
 }
+
+func TestDifferentLiveAlbumQualifiersStayAmbiguous(t *testing.T) {
+	request := RecordingInfo{Title: "Song", Artist: "Artist", Album: "Live at Wembley", Duration: 200}
+	returned := RecordingInfo{Title: "Song", Artist: "Artist", Album: "Live at Knebworth", Duration: 200}
+	if got := AssessRecording(request, returned); got.Status != MatchAmbiguous || got.AutoSave {
+		t.Fatalf("match = %#v, want non-save ambiguity for different live albums", got)
+	}
+}
