@@ -72,27 +72,29 @@ func TestWorkflowCheckDiscoversNewWorkflows(t *testing.T) {
 	if err := os.MkdirAll(workflows, 0700); err != nil {
 		t.Fatal(err)
 	}
-	run := func(name string, args ...string) ([]byte, error) {
-		command := exec.Command(name, args...)
+	initialize := exec.Command("git", "init", "--quiet")
+	initialize.Dir = directory
+	if output, err := initialize.CombinedOutput(); err != nil {
+		t.Fatalf("initialize fixture: %v\n%s", err, output)
+	}
+	checkWorkflows := func() ([]byte, error) {
+		command := exec.Command("mise", "run", "workflow-check")
 		command.Dir = directory
 		command.Env = append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+directory)
 		return command.CombinedOutput()
-	}
-	if output, err := run("git", "init", "--quiet"); err != nil {
-		t.Fatalf("initialize fixture: %v\n%s", err, output)
 	}
 	valid := "name: Fixture\non: push\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo checked\n"
 	if err := os.WriteFile(filepath.Join(workflows, "existing.yml"), []byte(valid), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := run("mise", "run", "workflow-check"); err != nil {
+	if output, err := checkWorkflows(); err != nil {
 		t.Fatalf("valid workflow failed: %v\n%s", err, output)
 	}
 	invalid := strings.Replace(valid, "echo checked", "${{ undefined.value }}", 1)
 	if err := os.WriteFile(filepath.Join(workflows, "newly-added.yml"), []byte(invalid), 0600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := run("mise", "run", "workflow-check")
+	output, err := checkWorkflows()
 	if err == nil || !strings.Contains(string(output), "newly-added.yml") {
 		t.Fatalf("new invalid workflow was not reported: error=%v\n%s", err, output)
 	}
