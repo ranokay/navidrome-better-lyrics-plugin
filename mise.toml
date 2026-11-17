@@ -23,7 +23,7 @@ run = "go test -race ./..."
 
 [tasks.workflow-check]
 description = "Validate GitHub Actions workflows"
-run = "actionlint .github/workflows/ci.yml .github/workflows/release.yml"
+run = "actionlint .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/pr-agent.yml"
 
 [tasks.vet]
 description = "Check Go code with vet"
