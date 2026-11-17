@@ -67,3 +67,25 @@ Run the runner's input and cleanup regressions with:
 ```sh
 mise run qualification-runner-check
 ```
+
+## Deterministic product-package browser host
+
+`browser_fixture_host.py` builds a real Navidrome binary with the production
+plugin package and the real UI while replacing only the plugin HTTP transport
+through Go's `-overlay`. The replacement is generated in a private output
+directory; the host checkout is verified unchanged and its HEAD, package
+SHA-256, overlay hash and fixture hash are written to `qualification/receipt.json`.
+The transport matches the real manifest host allowlist and fails closed on an
+unexpected request.
+
+```sh
+make buildjs
+python3 scripts/host-qualification/browser_fixture_host.py \
+  /path/to/companion-navidrome dist/nd-better-lyrics.ndp \
+  /path/to/fixtures.json /path/to/runtime-output
+BETTER_LYRICS_FIXTURES=/path/to/runtime-output/qualification/fixtures.json \
+  /path/to/runtime-output/navidrome
+```
+
+This is a qualification build for deterministic browser downloads, not a
+released-host or live-provider claim.
