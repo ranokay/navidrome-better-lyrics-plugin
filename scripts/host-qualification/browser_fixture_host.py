@@ -8,14 +8,12 @@ real manifest allowlist, WASI loader, KV, router, auth and UI remain active.
 """
 
 import argparse
-import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404
-import tempfile
 
 HTTPCLIENT = "plugins/host_httpclient.go"
 HOOK = "\tsvc.client = &http.Client{Transport: httpclient.NewTransport(svc.transport)}\n"
@@ -123,11 +121,16 @@ def rewrite_httpclient(source: str) -> str:
 """
     rewritten = source.replace(HOOK, hook, 1)
     marker = '\t"encoding/json"\n'
-    if marker not in rewritten:
-        marker = '\t"errors"\n'
-        rewritten = rewritten.replace(marker, marker + '\t"encoding/base64"\n\t"encoding/json"\n\t"os"\n', 1)
-    else:
+    if marker in rewritten:
         rewritten = rewritten.replace(marker, marker + '\t"encoding/base64"\n\t"os"\n', 1)
+    elif '\t"errors"\n' in rewritten:
+        rewritten = rewritten.replace(
+            '\t"errors"\n',
+            '\t"encoding/base64"\n\t"encoding/json"\n\t"errors"\n\t"os"\n',
+            1,
+        )
+    else:
+        raise ValueError("expected an import block for qualification dependencies")
     return rewritten + FIXTURE_HELPER
 
 
