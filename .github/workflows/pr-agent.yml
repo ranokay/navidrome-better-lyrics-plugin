@@ -17,12 +17,12 @@ jobs:
       - name: Check whether the trial is configured
         id: configuration
         env:
-          OPENAI_KEY: ${{ secrets.PR_AGENT_OPENAI_KEY }}
+          OPENCODE_KEY: ${{ secrets.PR_AGENT_OPENCODE_KEY }}
         run: |
-          if [ -n "$OPENAI_KEY" ]; then
+          if [ -n "$OPENCODE_KEY" ]; then
             echo 'configured=true' >> "$GITHUB_OUTPUT"
           else
-            echo '::notice::PR-Agent is disabled until PR_AGENT_OPENAI_KEY is configured.'
+            echo '::notice::PR-Agent is disabled until PR_AGENT_OPENCODE_KEY is configured.'
           fi
 
       - name: Review the pull request
@@ -30,8 +30,10 @@ jobs:
         uses: docker://pragent/pr-agent@sha256:3121a7b8e3ab497b4df09dea6a444da8f01a474496c8c2f722828512c52fd266 # 0.41.0-github_action
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_KEY: ${{ secrets.PR_AGENT_OPENAI_KEY }}
-          config.model: gpt-4o-mini
+          OPENAI__KEY: ${{ secrets.PR_AGENT_OPENCODE_KEY }}
+          OPENAI__API_BASE: https://opencode.ai/zen/go/v1
+          config.model: openai/deepseek-v4.1-flash
+          config.custom_model_max_tokens: '32000'
           config.fallback_models: '[]'
           github_action_config.auto_review: 'true'
           github_action_config.auto_describe: 'false'
