@@ -25,6 +25,10 @@ run = "go test -race ./..."
 description = "Validate GitHub Actions workflows"
 run = "actionlint"
 
+[tasks.workflow-integration-check]
+description = "Verify workflow discovery with the installed toolchain"
+run = "go test -tags=workflowintegration ./scripts/workflows"
+
 [tasks.vet]
 description = "Check Go code with vet"
 run = "go vet ./..."
@@ -65,6 +69,7 @@ description = "Run all checks and build the package"
 run = '''
 mise run fmt-check
 mise run workflow-check
+mise run workflow-integration-check
 mise run vet
 mise run mod-check
 mise run test
