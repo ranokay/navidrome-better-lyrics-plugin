@@ -288,7 +288,7 @@ func testLRCLibVariants(t *testing.T) {
 	expectRejected(t, status, body, "synced line")
 
 	// Eviction only deletes disposable test KV, then refetches the same selection.
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	before := host.transport.requests()
 	status, _, body = host.original(t, byFormat["lrc"].Selection)
 	if status != http.StatusOK || !bytes.Equal(body, []byte("[00:01.00]synced line")) {
@@ -309,7 +309,7 @@ func testLRCLibVariants(t *testing.T) {
 		t.Fatal(err)
 	}
 	record = changed
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	status, _, body = host.original(t, byFormat["lrc"].Selection)
 	expectRejected(t, status, body, "changed line")
 }
@@ -349,7 +349,7 @@ func testTTMLOriginal(t *testing.T) {
 	}
 
 	// Evict and refetch the same bytes.
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	status, _, body = host.original(t, entry.Selection)
 	if status != http.StatusOK || !bytes.Equal(body, ttml) {
 		t.Fatalf("evicted TTML original = %d/%x", status, sha256.Sum256(body))
@@ -357,7 +357,7 @@ func testTTMLOriginal(t *testing.T) {
 
 	// A changed document cannot silently replace the earlier selection.
 	current = append(append([]byte(nil), ttml...), []byte("\n<!-- changed upstream -->")...)
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	status, _, body = host.original(t, entry.Selection)
 	expectRejected(t, status, body, string(ttml))
 }
@@ -398,7 +398,7 @@ func testQRCOriginal(t *testing.T) {
 		t.Fatal("QRC playback must be the converted ELRC, not the native container")
 	}
 
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	before := host.transport.requests()
 	status, _, body = host.original(t, entry.Selection)
 	if status != http.StatusOK || !bytes.Equal(body, qrc) {
@@ -476,7 +476,7 @@ func testOriginalRefetchBackoff(t *testing.T) {
 	}
 
 	// Evict, fail the upstream, and confirm one bounded refetch attempt.
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	failing = true
 	status, _, body = host.original(t, entry.Selection)
 	expectRejected(t, status, body, "backoff line")
@@ -494,7 +494,7 @@ func testOriginalRefetchBackoff(t *testing.T) {
 	if status != http.StatusOK || !bytes.Equal(body, ttml) {
 		t.Fatalf("recovered TTML original = %d/%q", status, body)
 	}
-	host.plugin.Delete(t, "lyrics:v4:original:")
+	host.plugin.Delete(t, "lyrics:v5:original:")
 	before = host.transport.requests()
 	status, _, body = host.original(t, entry.Selection)
 	if status != http.StatusOK || !bytes.Equal(body, ttml) || host.transport.requests() <= before {
