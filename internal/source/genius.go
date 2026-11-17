@@ -55,42 +55,72 @@ func fetchGenius(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		return nil, Degraded, providerResponseError("Genius search", response)
 	}
 
-	pageURL, searchErr := pickGeniusSongURL(response.Body, track)
+	hit, searchErr := pickGeniusSongURL(response.Body, track)
 	if searchErr != nil {
 		// Malformed 200s (transient HTML challenges, truncated replies) are
 		// provider failures, not cacheable misses.
 		return nil, Degraded, fmt.Errorf("decode Genius search response: %w", searchErr)
 	}
-	if pageURL == "" {
+	if hit.URL == "" {
 		return nil, Healthy, nil
 	}
-
-	response, err = get(rt, "Genius lyrics", pageURL, geniusPageHeaders(), deadline)
+	evidence := lyric.Candidate{
+		RecordingInfo: lyric.RecordingInfo{Title: hit.Title, Artist: hit.Artist},
+		Evidence: []lyric.Evidence{{
+			Kind: lyric.EvidenceInstrumental, Provider: geniusProviderName, Recording: hit.URL,
+		}},
+	}
+	withEvidence := func(candidates []lyric.Candidate) []lyric.Candidate {
+		if hit.Instrumental && len(candidates) == 1 && candidates[0].Present() {
+			candidates[0].Evidence = evidence.Evidence
+		}
+		return candidates
+	}
+	response, err = get(rt, "Genius lyrics", hit.URL, geniusPageHeaders(), deadline)
 	if err != nil {
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Degraded, err
+		}
 		return nil, Degraded, err
 	}
 	switch response.StatusCode {
 	case 200:
 		// pass to the page scrape below
 	case 404:
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	case 429:
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Degraded, rateLimitFailure(rt, "genius", "Genius lyrics", response)
+		}
 		return nil, Degraded, rateLimitFailure(rt, "genius", "Genius lyrics", response)
 	default:
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Degraded, providerResponseError("Genius lyrics", response)
+		}
 		return nil, Degraded, providerResponseError("Genius lyrics", response)
 	}
 
 	text := geniusLyricsText(response.Body, strings.TrimSpace(title))
 	if strings.TrimSpace(text) == "" {
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	}
 	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, geniusProviderName, "plain").
 		WithOriginalUnavailable(lyric.OriginalReasonReconstructed).
-		WithRecording(pageURL)
+		WithRecording(hit.URL).
+		WithRecordingInfo(lyric.RecordingInfo{Title: hit.Title, Artist: hit.Artist})
 	if !candidate.Present() {
+		if hit.Instrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	}
-	return []lyric.Candidate{candidate}, Healthy, nil
+	return withEvidence([]lyric.Candidate{candidate}), Healthy, nil
 }
 
 type geniusSearchEnvelope struct {
@@ -102,19 +132,27 @@ type geniusSearchEnvelope struct {
 				TitleWithFeatured string `json:"title_with_featured"`
 				ArtistNames       string `json:"artist_names"`
 				URL               string `json:"url"`
+				Instrumental      bool   `json:"instrumental"`
 			} `json:"result"`
 		} `json:"hits"`
 	} `json:"response"`
 }
 
-// pickGeniusSongURL returns the song-page URL of the first song hit whose
-// collapsed title and artist name both match the request. Genius search is
-// famously fuzzy; the metadata gate keeps unrelated songs out of the plain
-// cache.
-func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
+// geniusHit is the matched search row and its explicit content state.
+type geniusHit struct {
+	URL          string
+	Title        string
+	Artist       string
+	Instrumental bool
+}
+
+// pickGeniusSongURL returns the first song hit whose collapsed title and artist
+// name both match the request. Genius search is famously fuzzy; the metadata
+// gate keeps unrelated songs out of the plain cache.
+func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (geniusHit, error) {
 	var envelope geniusSearchEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return "", err
+		return geniusHit{}, err
 	}
 	titleTokens := lyric.NormalizedTokens(track.Title)
 	for _, hit := range envelope.Response.Hits {
@@ -131,9 +169,12 @@ func pickGeniusSongURL(body []byte, track lyrics.TrackInfo) (string, error) {
 		if !geniusArtistsMatch(hit.Result.ArtistNames, lyric.TrackArtist(track)) {
 			continue
 		}
-		return hit.Result.URL, nil
+		return geniusHit{
+			URL: hit.Result.URL, Title: hit.Result.Title,
+			Artist: hit.Result.ArtistNames, Instrumental: hit.Result.Instrumental,
+		}, nil
 	}
-	return "", nil
+	return geniusHit{}, nil
 }
 
 // geniusArtistsMatch accepts the request when any returned artist name matches

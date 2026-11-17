@@ -27,7 +27,7 @@ func TestCachedWinnerPromotionPreservesSourceExpiry(t *testing.T) {
 			originalExpiry := current.Add(24 * time.Hour).Unix()
 			current = current.Add(23 * time.Hour)
 			if mode == "negative winner" {
-				p.cacheNegativeWinner(track, order, false)
+				p.cacheNegativeWinner(track, order, false, nil)
 			}
 			if _, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track}); err != nil {
 				t.Fatal(err)

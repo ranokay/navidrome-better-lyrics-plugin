@@ -60,15 +60,16 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	if err := checkInnertubeOK(rt, "YouTube Music search", response); err != nil {
 		return nil, Degraded, err
 	}
-	videoID, searchErr := pickYTMusicVideo(response.Body, track)
+	hit, searchErr := pickYTMusicVideo(response.Body, track)
 	if searchErr != nil {
 		// A malformed 200 is a provider failure, not a cacheable miss:
 		// the sweep must not mark the source covered on it.
 		return nil, Degraded, fmt.Errorf("decode YouTube Music search response: %w", searchErr)
 	}
-	if videoID == "" {
+	if hit.videoID == "" {
 		return nil, Healthy, nil
 	}
+	videoID := hit.videoID
 
 	nextBody, err := json.Marshal(map[string]any{
 		"context": innertubeContext(),
@@ -133,7 +134,10 @@ func fetchYTMusic(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	}
 	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, ytmusicProviderName, "plain").
 		WithOriginalUnavailable(lyric.OriginalReasonReconstructed).
-		WithRecording(videoID)
+		WithRecording(videoID).
+		WithRecordingInfo(lyric.RecordingInfo{
+			Title: hit.title, Artist: hit.artists, Duration: float64(hit.durationMs) / 1000,
+		})
 	if !candidate.Present() {
 		return nil, Healthy, nil
 	}
@@ -196,7 +200,7 @@ type ytmusicSearchHit struct {
 // field order (arrays between videoId and lengthText) must not matter.
 // A hit must match the requested identity before its duration qualifies; the
 // first qualifying hit wins and unmatched searches stay misses.
-func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
+func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (ytmusicSearchHit, error) {
 	target := int64(0)
 	if track.Duration > 0 {
 		target = int64(float64(track.Duration)*1000.0 + 0.5)
@@ -204,7 +208,7 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 	titleTokens := lyric.NormalizedTokens(track.Title)
 	hits, err := ytmusicSearchHits(body)
 	if err != nil {
-		return "", err
+		return ytmusicSearchHit{}, err
 	}
 	for _, hit := range hits {
 		if hit.videoID == "" || hit.durationMs <= 0 {
@@ -222,9 +226,9 @@ func pickYTMusicVideo(body []byte, track lyrics.TrackInfo) (string, error) {
 				continue
 			}
 		}
-		return hit.videoID, nil
+		return hit, nil
 	}
-	return "", nil
+	return ytmusicSearchHit{}, nil
 }
 
 // ytmusicArtistsMatch accepts the renderer when any listed artist matches the

@@ -38,6 +38,28 @@ type Candidate struct {
 	Original *Original
 	// OriginalSummary records a cached original's availability without bytes.
 	OriginalSummary OriginalInfo
+
+	// RecordingInfo is the returned recording metadata used for identity
+	// assessment. Zero means the source exposes none; the candidate stays
+	// unassessed and legacy-playable but is never auto-save eligible.
+	RecordingInfo RecordingInfo
+	// Match is the recording-identity assessment, independent of timing.
+	Match RecordingMatch
+	// Evidence carries attributed provider assertions (currently instrumental)
+	// even when the candidate has no playable lyrics.
+	Evidence []Evidence
+}
+
+// Playable reports whether the candidate may be served or selected
+// automatically. Ambiguous suggestions remain manually selectable only.
+func (candidate Candidate) Playable() bool {
+	return candidate.Present() && candidate.Match.Playable()
+}
+
+// AutomaticSaveEligible reports whether this candidate may feed the future
+// automatic-save path. Only a validated identity qualifies.
+func (candidate Candidate) AutomaticSaveEligible() bool {
+	return candidate.Present() && candidate.Match.Status == MatchValidated && candidate.Match.AutoSave
 }
 
 // NewCandidate grades one source payload; contentless or malformed payloads
@@ -69,6 +91,7 @@ func NewCandidate(text lyrics.LyricsText, provider, format string) Candidate {
 		Response: sourcedResponse(text, provider, format),
 		Quality:  quality,
 		Language: strings.TrimSpace(text.Lang),
+		Match:    RecordingMatch{Status: MatchUnassessed},
 	}
 }
 
@@ -82,6 +105,7 @@ func (candidate Candidate) WithOriginal(format string, provenance OriginalProven
 		} else if strings.EqualFold(strings.TrimSpace(format), "ttml") && len(document) > 0 {
 			reason = OriginalReasonInvalidDocument
 		}
+		candidate.Original = nil
 		candidate.OriginalSummary = UnavailableOriginalInfo(reason)
 		return candidate
 	}
@@ -99,6 +123,13 @@ func (candidate Candidate) WithOriginalUnavailable(reason string) Candidate {
 // WithRecording records the provider record id used for identity addressing.
 func (candidate Candidate) WithRecording(recording string) Candidate {
 	candidate.Recording = strings.TrimSpace(recording)
+	return candidate
+}
+
+// WithRecordingInfo attaches the returned recording metadata used for identity
+// assessment.
+func (candidate Candidate) WithRecordingInfo(info RecordingInfo) Candidate {
+	candidate.RecordingInfo = info
 	return candidate
 }
 
@@ -181,9 +212,52 @@ func (candidate Candidate) Present() bool {
 	return len(candidate.Response.Lyrics) > 0
 }
 
-// Prefer keeps the better of two candidates; ties keep the current one so the
-// earlier source in configured order wins.
+// Prefer keeps the better of two candidates for playback: recording validity
+// ranks before timing richness, and ties keep the current one so the earlier
+// source in configured order wins. Ambiguous candidates never displace a
+// playable one; they remain separately listable suggestions.
 func Prefer(current, next Candidate) Candidate {
+	if MorePreferred(current, next) {
+		return next
+	}
+	return current
+}
+
+// AtLeastAsPreferred reports whether next should replace current on a cache
+// refresh: validity first, timing richness second, equal timing allowed.
+func AtLeastAsPreferred(current, next Candidate) bool {
+	if !next.Present() || !next.Playable() {
+		return false
+	}
+	if !current.Present() {
+		return true
+	}
+	currentRank, nextRank := playbackRank(current), playbackRank(next)
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	return next.Quality >= current.Quality
+}
+
+// MorePreferred reports whether next strictly outranks current for playback:
+// validity first, timing richness second, earlier position on ties.
+func MorePreferred(current, next Candidate) bool {
+	if !next.Present() || !next.Playable() {
+		return false
+	}
+	if !current.Present() {
+		return true
+	}
+	currentRank, nextRank := playbackRank(current), playbackRank(next)
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	return next.Quality > current.Quality
+}
+
+// PreferSuggestion orders ambiguous suggestions for the listing only. It never
+// makes a suggestion playable.
+func PreferSuggestion(current, next Candidate) Candidate {
 	if !next.Present() {
 		return current
 	}
@@ -191,6 +265,16 @@ func Prefer(current, next Candidate) Candidate {
 		return next
 	}
 	return current
+}
+
+func playbackRank(candidate Candidate) int {
+	if candidate.Match.Status == MatchValidated {
+		return 2
+	}
+	if candidate.Match.Playable() {
+		return 1
+	}
+	return 0
 }
 
 func sourcedResponse(text lyrics.LyricsText, provider, format string) lyrics.GetLyricsResponse {

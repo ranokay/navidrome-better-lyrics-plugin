@@ -86,6 +86,14 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	}
 
 	recording := strconv.FormatInt(song.ID, 10)
+	info := lyric.RecordingInfo{Title: song.Name, Duration: float64(song.Duration) / 1000}
+	artists := make([]string, 0, len(song.Artists))
+	for _, artist := range song.Artists {
+		if name := strings.TrimSpace(artist.Name); name != "" {
+			artists = append(artists, name)
+		}
+	}
+	info.Artist = strings.Join(artists, ", ")
 	var candidates []lyric.Candidate
 	var yrcParseErr error
 	rawYRC := lyricEnvelope.YRC.Lyric
@@ -94,7 +102,7 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 		if parseErr == nil && len(lines) > 0 {
 			candidate := lyric.NewCandidate(lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}, "NetEase", "elrc").
 				WithOriginal("yrc", lyric.OriginalSupplied, []byte(rawYRC)).
-				WithRecording(recording)
+				WithRecording(recording).WithRecordingInfo(info)
 			if candidate.Present() {
 				candidates = append(candidates, candidate)
 			}
@@ -105,7 +113,7 @@ func fetchNetEase(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	if lrc := strings.TrimSpace(rawLRC); lrc != "" {
 		candidate := lyric.NewCandidate(lyrics.LyricsText{Text: stripNetEaseCreditLines(lrc)}, "NetEase", "lrc").
 			WithOriginal("lrc", lyric.OriginalSupplied, []byte(rawLRC)).
-			WithRecording(recording)
+			WithRecording(recording).WithRecordingInfo(info)
 		if candidate.Present() {
 			candidates = append(candidates, candidate)
 		}
@@ -171,6 +179,8 @@ func neteaseEnvelopeStatusFailure(rt Runtime, code int) (Health, error) {
 func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
 	title := lyric.NormalizedTokens(track.Title)
+	var fallback neteaseSong
+	fallbackFound := false
 	for _, song := range songs {
 		if song.ID <= 0 {
 			continue
@@ -192,9 +202,25 @@ func pickNetEaseSong(songs []neteaseSong, track lyrics.TrackInfo) (neteaseSong, 
 				continue
 			}
 		}
-		return song, true
+		artists := make([]string, 0, len(song.Artists))
+		for _, artist := range song.Artists {
+			if name := strings.TrimSpace(artist.Name); name != "" {
+				artists = append(artists, name)
+			}
+		}
+		match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), lyric.RecordingInfo{
+			Title: song.Name, Artist: strings.Join(artists, ", "), Duration: float64(song.Duration) / 1000,
+		})
+		switch match.Status {
+		case lyric.MatchValidated:
+			return song, true
+		case lyric.MatchAmbiguous:
+			if !fallbackFound {
+				fallback, fallbackFound = song, true
+			}
+		}
 	}
-	return neteaseSong{}, false
+	return fallback, fallbackFound
 }
 
 // neteaseArtistsMatch reports whether any returned artist name matches the

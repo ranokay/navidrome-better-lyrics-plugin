@@ -50,6 +50,7 @@ type sweepTaskPayload struct {
 // sweep queue. Failing here is non-fatal: lyrics keep working and the queue
 // lifecycle can be repaired by reloading the plugin.
 func (p *Provider) OnInit() error {
+	p.purgeLegacyMatchingCache()
 	p.purgeRemovedSourceCache()
 	if p.createQueue != nil {
 		if err := p.createQueue(sweepQueueName, 1); err != nil {
@@ -282,28 +283,50 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 		}
 		storedAny := false
 		hadCandidates := false
+		hadPlayable := false
+		assessed := make([]lyric.Candidate, 0, len(candidates))
 		for index := range candidates {
-			if !candidates[index].Present() {
+			candidate := &candidates[index]
+			p.assessCandidate(track, candidate)
+			if candidate.Present() && candidate.Match.Status == lyric.MatchMismatch {
 				continue
 			}
-			hadCandidates = true
-			p.prepareCandidate(track, src.ID, &candidates[index])
+			if candidate.Present() {
+				hadCandidates = true
+				if candidate.Playable() {
+					hadPlayable = true
+				}
+				p.prepareCandidate(track, src.ID, candidate)
+			}
+			assessed = append(assessed, *candidate)
 		}
-		if hadCandidates {
-			storedAny = p.cacheSourceCandidates(track, src.ID, candidates)
+		if len(assessed) > 0 {
+			storedAny = p.cacheSourceCandidates(track, src.ID, assessed)
 		}
 		switch {
 		case storedAny:
 			cached++
-			for _, candidate := range candidates {
+			for _, candidate := range assessed {
 				if covered := cacheTTLForCoveredCandidate(candidate); covered > 0 && covered < coverageTTL {
 					coverageTTL = covered
 				}
 			}
-		case hadCandidates:
-			// Every write was refused (oversized/quota): this pass cannot
-			// honestly claim the source is covered.
+		case hadPlayable:
+			// A playable positive was refused by the size/quota guard. That is
+			// not a miss and must stay retryable; never freeze the sweep on a
+			// false negative.
 			notCovered++
+		case hadCandidates:
+			// Ambiguous suggestions are cached but are not playable coverage:
+			// persist a miss so the source is not re-walked every pass.
+			if !p.cacheSourceMiss(track, src.ID) {
+				notCovered++
+				continue
+			}
+			missed++
+			if negativeLyricsCacheTTLSeconds < coverageTTL {
+				coverageTTL = negativeLyricsCacheTTLSeconds
+			}
 		default:
 			// A clean miss is covered work too: the source was fetched and
 			// genuinely has nothing (misses must terminate the sweep).

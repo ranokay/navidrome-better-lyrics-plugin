@@ -47,8 +47,8 @@ func TestPreviousGenerationMarkersCannotSuppressLegacyRefresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if text, _ := winnerText(t, result); text != "[00:01.00]legacy" || queued != 1 {
-				t.Fatalf("legacy content=%q queued=%d, want readable content with fresh coverage scheduled", text, queued)
+			if text, _ := winnerText(t, result); text != "[00:01.00]fresh" || queued != 0 {
+				t.Fatalf("content=%q queued=%d, want the old generation invalidated and a fresh result served", text, queued)
 			}
 		})
 	}
@@ -144,15 +144,12 @@ func TestLegacyPositiveRemainsReadableButCannotBlockFreshGrading(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, ok, _ := p.readCachedWinner(track, []source.Source{src}); ok {
+	if _, _, ok, _ := p.readCachedWinner(track, []source.Source{src}); ok {
 		t.Fatal("legacy winner must not authorize current coverage")
 	}
 	response, err := p.GetLyrics(lyrics.GetLyricsRequest{Track: track})
-	if err != nil || len(response.Lyrics) == 0 || !strings.Contains(response.Lyrics[0].Text, "old untimed") || enqueued != 1 {
-		t.Fatalf("legacy positive should display and refresh: response=%v error=%v queued=%d", response, err, enqueued)
-	}
-	if candidate, _ := p.readCachedSourceCandidate(track, src.ID); candidate.Quality != lyric.TimingUnsynced {
-		t.Fatal("legacy declaration must be regraded before becoming a winner")
+	if err != nil || len(response.Lyrics) == 0 || !strings.Contains(response.Lyrics[0].Text, "fresh synchronized") || enqueued != 0 {
+		t.Fatalf("old generation should be invalidated: response=%v error=%v queued=%d", response, err, enqueued)
 	}
 	p.runSweep(track)
 	response, err = p.GetLyrics(lyrics.GetLyricsRequest{Track: track})

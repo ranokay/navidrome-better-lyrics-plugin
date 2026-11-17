@@ -1024,3 +1024,34 @@ func TestGetLyrics_SweepEnqueueFailureReleasesSlot(t *testing.T) {
 		t.Fatalf("release marker TTL=%d expiry=%d, want 1 second and %d", ttl, marker.ExpiresAt, now.Unix()+1)
 	}
 }
+
+type refusePlayableWritesCache struct {
+	*fakeLyricsCache
+}
+
+func (c refusePlayableWritesCache) SetWithTTL(key string, value []byte, ttl int64) error {
+	if strings.Contains(key, ":variants:") || (strings.Contains(key, ":source:") && !strings.Contains(key, ":missing:")) {
+		return errors.New("refused playable write")
+	}
+	return c.fakeLyricsCache.SetWithTTL(key, value, ttl)
+}
+
+func TestSweep_RefusedValidatedWriteDoesNotBecomeAMiss(t *testing.T) {
+	t.Parallel()
+	cache := refusePlayableWritesCache{newFakeLyricsCache()}
+	provider := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+		sweepSource("only", new(int), true, nil),
+	}, func(lyrics.TrackInfo) error { return nil })
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	provider.runSweep(track)
+	if _, exists, _ := cache.Get(provider.doneMarkerKey(track, provider.activeSources())); exists {
+		t.Fatal("a refused validated write must not mark the sweep complete")
+	}
+	missKey, ok := provider.sourceMissKey(track, "only")
+	if !ok {
+		t.Fatal("miss key")
+	}
+	if _, exists, _ := cache.Get(missKey); exists {
+		t.Fatal("a refused validated positive must not be cached as a miss")
+	}
+}

@@ -30,10 +30,13 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		return nil, Healthy, nil
 	}
 
+	evidence := make([]lyric.Candidate, 0)
 	response, health, err := fetchLRCLibEndpoint(rt, "LRCLib get", getURL, deadline)
 	if err != nil {
 		return nil, health, err
 	}
+	var exactFallback []lyric.Candidate
+	var exactErr error
 	if len(response) > 0 {
 		// The exact endpoint uses fuzzy metadata too: its reply is not
 		// guaranteed to describe the requested recording, so the returned
@@ -47,11 +50,30 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		}
 		if matched {
 			candidates, candErr := lrclibCandidates(rt, response)
-			if candErr != nil && !errors.Is(candErr, errNoLRCLibPayload) {
-				return nil, Degraded, candErr
+			if candErr != nil {
+				if len(candidates) > 0 {
+					evidence = append(evidence, candidates...)
+					exactErr = candErr
+				} else if !errors.Is(candErr, errNoLRCLibPayload) {
+					return nil, Degraded, candErr
+				}
 			}
-			if candErr == nil && len(candidates) > 0 {
-				return candidates, health, nil
+			if candErr == nil {
+				var present []lyric.Candidate
+				for _, candidate := range candidates {
+					if candidate.Present() {
+						present = append(present, candidate)
+					} else {
+						evidence = append(evidence, candidate)
+					}
+				}
+				if len(present) > 0 {
+					match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), candidates[0].RecordingInfo)
+					if match.Status == lyric.MatchValidated {
+						return append(present, evidence...), health, nil
+					}
+					exactFallback = present
+				}
 			}
 		}
 	}
@@ -63,20 +85,21 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 	searchURL := lrclibEndpoint + "/api/search?" + searchQuery.Encode()
 	searchBody, health, err := fetchLRCLibEndpoint(rt, "LRCLib search", searchURL, deadline)
 	if err != nil {
-		return nil, health, err
+		return lrclibFallback(exactFallback, evidence, health, err, exactErr)
 	}
 	if len(searchBody) == 0 {
 		// The search endpoint answered a miss (404) with no body: decoding nil
 		// would degrade a clean miss (spotted while wiring the metadata gate).
-		return nil, health, nil
+		return lrclibFallback(exactFallback, evidence, health, nil, exactErr)
 	}
 
 	var results []lrclibRecord
 	if err := json.Unmarshal(searchBody, &results); err != nil {
-		return nil, Degraded, fmt.Errorf("decode LRCLib search response: %w", err)
+		return lrclibFallback(exactFallback, evidence, Degraded, fmt.Errorf("decode LRCLib search response: %w", err), exactErr)
 	}
 	target := int64(math.Round(float64(track.Duration)))
 	var best []lyric.Candidate
+	var fallback []lyric.Candidate
 	bestDelta := int64(math.MaxInt64)
 	var candidateErrors []error
 	for _, result := range results {
@@ -89,12 +112,6 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		delta := int64(0)
 		if track.Duration > 0 {
 			delta = int64(math.Abs(float64(int64(math.Round(result.Duration)) - target)))
-			if delta > 2 {
-				continue
-			}
-		}
-		if len(best) > 0 && delta >= bestDelta {
-			continue
 		}
 		rowJSON, err := json.Marshal(result)
 		if err != nil {
@@ -103,22 +120,77 @@ func fetchLRCLib(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyri
 		}
 		candidates, err := lrclibCandidates(rt, rowJSON)
 		if err != nil {
+			if len(candidates) > 0 {
+				evidence = append(evidence, candidates...)
+			}
 			if !errors.Is(err, errNoLRCLibPayload) {
 				candidateErrors = append(candidateErrors, err)
 			}
 			continue
 		}
-		if len(candidates) > 0 {
-			best, bestDelta = candidates, delta
+		var present []lyric.Candidate
+		for _, candidate := range candidates {
+			if candidate.Present() {
+				present = append(present, candidate)
+			} else {
+				evidence = append(evidence, candidate)
+			}
+		}
+		if len(present) > 0 {
+			match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), present[0].RecordingInfo)
+			switch match.Status {
+			case lyric.MatchValidated:
+				if len(best) == 0 || delta < bestDelta {
+					best, bestDelta = present, delta
+				}
+			case lyric.MatchAmbiguous:
+				if len(fallback) == 0 {
+					fallback = present
+				}
+			}
 		}
 	}
 	if len(best) > 0 {
-		return best, Healthy, nil
+		return append(best, evidence...), Healthy, nil
+	}
+	if len(fallback) == 0 {
+		fallback = exactFallback
+	}
+	if len(fallback) > 0 {
+		return append(fallback, evidence...), Healthy, nil
+	}
+	if exactErr != nil && len(evidence) > 0 {
+		return evidence, Degraded, exactErr
 	}
 	if err := errors.Join(candidateErrors...); err != nil {
+		if len(evidence) > 0 {
+			return evidence, Degraded, err
+		}
 		return nil, Degraded, err
 	}
+	if len(evidence) > 0 {
+		return evidence, Healthy, nil
+	}
 	return nil, Healthy, nil
+}
+
+// lrclibFallback preserves already-decoded exact suggestions and assertions
+// when the broader search misses or fails. The assertion is never derived from
+// the failed attempt.
+func lrclibFallback(fallback, evidence []lyric.Candidate, health Health, err, retainedErr error) ([]lyric.Candidate, Health, error) {
+	out := make([]lyric.Candidate, 0, len(fallback)+len(evidence))
+	out = append(out, fallback...)
+	out = append(out, evidence...)
+	if len(out) == 0 {
+		return nil, health, err
+	}
+	if retainedErr != nil {
+		health = Degraded
+		if err == nil {
+			err = retainedErr
+		}
+	}
+	return out, health, err
 }
 
 // fetchLRCLibEndpoint performs one LRCLib HTTP call with the shared status and
@@ -150,24 +222,29 @@ func fetchLRCLibEndpoint(rt Runtime, source, requestURL string, deadline time.Ti
 // lyricsfile.
 func lrclibCandidates(rt Runtime, record []byte) ([]lyric.Candidate, error) {
 	var payload struct {
-		ID           int64  `json:"id"`
-		Instrumental bool   `json:"instrumental"`
-		HasWordSync  bool   `json:"hasWordSync"`
-		PlainLyrics  string `json:"plainLyrics"`
-		SyncedLyrics string `json:"syncedLyrics"`
-		LyricsFile   string `json:"lyricsfile"`
+		ID           int64   `json:"id"`
+		TrackName    string  `json:"trackName"`
+		ArtistName   string  `json:"artistName"`
+		AlbumName    string  `json:"albumName"`
+		Duration     float64 `json:"duration"`
+		Instrumental bool    `json:"instrumental"`
+		HasWordSync  bool    `json:"hasWordSync"`
+		PlainLyrics  string  `json:"plainLyrics"`
+		SyncedLyrics string  `json:"syncedLyrics"`
+		LyricsFile   string  `json:"lyricsfile"`
 	}
 	if err := json.Unmarshal(record, &payload); err != nil {
 		return nil, fmt.Errorf("decode LRCLib record: %w", err)
-	}
-	if payload.Instrumental {
-		return nil, errNoLRCLibPayload
 	}
 	recording := ""
 	if payload.ID > 0 {
 		recording = strconv.FormatInt(payload.ID, 10)
 	}
-
+	info := lyric.RecordingInfo{
+		Title: payload.TrackName, Artist: payload.ArtistName, Album: payload.AlbumName,
+		Duration: payload.Duration,
+	}
+	instrumentalEvidence := payload.Instrumental
 	candidates := make([]lyric.Candidate, 0, 3)
 	var lyricsFileErr error
 	if payload.HasWordSync && strings.TrimSpace(payload.LyricsFile) != "" {
@@ -176,7 +253,7 @@ func lrclibCandidates(rt Runtime, record []byte) ([]lyric.Candidate, error) {
 			text := lyrics.LyricsText{Text: lyric.EnhancedLRC(lines)}
 			if candidate := lyric.NewCandidate(text, "LRCLib", "elrc").
 				WithOriginal("lyricsfile", lyric.OriginalSupplied, []byte(payload.LyricsFile)).
-				WithRecording(recording); candidate.Present() {
+				WithRecording(recording).WithRecordingInfo(info); candidate.Present() {
 				candidates = append(candidates, candidate)
 			}
 		} else {
@@ -188,7 +265,7 @@ func lrclibCandidates(rt Runtime, record []byte) ([]lyric.Candidate, error) {
 		text := lyrics.LyricsText{Text: payload.SyncedLyrics}
 		if candidate := lyric.NewCandidate(text, "LRCLib", "lrc").
 			WithOriginal("lrc", lyric.OriginalSupplied, []byte(payload.SyncedLyrics)).
-			WithRecording(recording); candidate.Present() {
+			WithRecording(recording).WithRecordingInfo(info); candidate.Present() {
 			candidates = append(candidates, candidate)
 		}
 	}
@@ -196,11 +273,29 @@ func lrclibCandidates(rt Runtime, record []byte) ([]lyric.Candidate, error) {
 		text := lyrics.LyricsText{Text: payload.PlainLyrics}
 		if candidate := lyric.NewCandidate(text, "LRCLib", "plain").
 			WithOriginal("plain", lyric.OriginalSupplied, []byte(payload.PlainLyrics)).
-			WithRecording(recording); candidate.Present() {
+			WithRecording(recording).WithRecordingInfo(info); candidate.Present() {
 			candidates = append(candidates, candidate)
 		}
 	}
+	if instrumentalEvidence {
+		candidates = append(candidates, lyric.Candidate{
+			RecordingInfo: info,
+			Evidence: []lyric.Evidence{{
+				Kind: lyric.EvidenceInstrumental, Provider: "LRCLib", Recording: recording,
+			}},
+		})
+	}
 	if len(candidates) > 0 {
+		hasPlayable := false
+		for _, candidate := range candidates {
+			if candidate.Present() {
+				hasPlayable = true
+				break
+			}
+		}
+		if lyricsFileErr != nil && !hasPlayable {
+			return candidates, fmt.Errorf("parse LRCLib lyricsfile: %w", lyricsFileErr)
+		}
 		return candidates, nil
 	}
 	if lyricsFileErr != nil {
@@ -233,6 +328,7 @@ type lrclibRecord struct {
 	ID           int64   `json:"id"`
 	TrackName    string  `json:"trackName"`
 	ArtistName   string  `json:"artistName"`
+	AlbumName    string  `json:"albumName"`
 	Duration     float64 `json:"duration"`
 	Instrumental bool    `json:"instrumental"`
 	HasWordSync  bool    `json:"hasWordSync"`

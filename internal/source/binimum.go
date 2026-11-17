@@ -86,7 +86,11 @@ func fetchBinimum(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 	}
 	text := string(lyricsResponse.Body)
 	candidate := lyric.NewCandidate(lyrics.LyricsText{Text: text}, "BiniLyrics", "ttml").
-		WithOriginal("ttml", lyric.OriginalSupplied, lyricsResponse.Body)
+		WithOriginal("ttml", lyric.OriginalSupplied, lyricsResponse.Body).
+		WithRecordingInfo(lyric.RecordingInfo{
+			Title: best.TrackName, Artist: best.ArtistName, Album: best.AlbumName,
+			Duration: best.Duration,
+		})
 	if !candidate.Present() {
 		if lyric.EmptyDocument(text, "ttml") {
 			return nil, Healthy, nil
@@ -99,9 +103,9 @@ func fetchBinimum(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyr
 func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimumResult, bool) {
 	target := int64(math.Round(float64(track.Duration)))
 	title := lyric.NormalizedTokens(track.Title)
-	var best binimumResult
+	var best, fallback binimumResult
 	bestDelta := int64(math.MaxInt64)
-	found := false
+	found, fallbackFound := false, false
 	for _, candidateResult := range results {
 		if !lyric.TokensMatch(lyric.NormalizedTokens(candidateResult.TrackName), title) ||
 			!lyric.ArtistMatch(candidateResult.ArtistName, lyric.TrackArtist(track)) {
@@ -112,23 +116,32 @@ func pickBinimumResult(results []binimumResult, track lyrics.TrackInfo) (binimum
 		if !binimumLyricsURLAllowed(candidateResult.LyricsURL) {
 			continue
 		}
+		delta := int64(0)
 		if track.Duration > 0 {
-			// The duration gate applies only when the request carries one:
-			// durationless library entries still match on identity.
-			delta := int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
+			delta = int64(math.Abs(float64(int64(math.Round(candidateResult.Duration)) - target)))
+		}
+		match := lyric.AssessRecording(lyric.RequestRecordingInfo(track), lyric.RecordingInfo{
+			Title: candidateResult.TrackName, Artist: candidateResult.ArtistName,
+			Album: candidateResult.AlbumName, Duration: candidateResult.Duration,
+		})
+		switch match.Status {
+		case lyric.MatchValidated:
+			if !found || delta < bestDelta {
+				best, bestDelta, found = candidateResult, delta, true
+			}
+		case lyric.MatchAmbiguous:
 			if delta > 2 {
 				continue
 			}
-			if delta < bestDelta {
-				best, bestDelta, found = candidateResult, delta, true
+			if !fallbackFound {
+				fallback, fallbackFound = candidateResult, true
 			}
-			continue
-		}
-		if !found {
-			best, bestDelta, found = candidateResult, 0, true
 		}
 	}
-	return best, found
+	if found {
+		return best, true
+	}
+	return fallback, fallbackFound
 }
 
 // binimumLyricsURLAllowed gates provider-supplied lyrics URLs to the two

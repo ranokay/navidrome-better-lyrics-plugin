@@ -36,11 +36,28 @@ type lyricsSourceWire struct {
 	Format   string `json:"format,omitempty"`
 }
 
+type matchWire struct {
+	Status        string   `json:"status"`
+	Reasons       []string `json:"reasons,omitempty"`
+	DurationDelta float64  `json:"durationDelta,omitempty"`
+	Recording     string   `json:"recording,omitempty"`
+	AutoSave      bool     `json:"autoSaveEligible"`
+}
+
+type evidenceWire struct {
+	Kind      string     `json:"kind"`
+	Provider  string     `json:"provider,omitempty"`
+	Recording string     `json:"recording,omitempty"`
+	Match     *matchWire `json:"match,omitempty"`
+	Reason    string     `json:"reason,omitempty"`
+}
+
 type lyricsTextWire struct {
 	Lang    string            `json:"lang,omitempty"`
 	Text    string            `json:"text"`
 	Source  *lyricsSourceWire `json:"source,omitempty"`
 	Variant *variantWire      `json:"variant,omitempty"`
+	Match   *matchWire        `json:"match,omitempty"`
 }
 
 type getLyricsV2RequestWire struct {
@@ -48,8 +65,9 @@ type getLyricsV2RequestWire struct {
 }
 
 type getLyricsV2ResponseWire struct {
-	Lyrics []lyricsTextWire  `json:"lyrics"`
-	Source *lyricsSourceWire `json:"source,omitempty"`
+	Lyrics   []lyricsTextWire  `json:"lyrics"`
+	Source   *lyricsSourceWire `json:"source,omitempty"`
+	Evidence []evidenceWire    `json:"evidence,omitempty"`
 }
 
 type getVariantsRequestWire struct {
@@ -64,10 +82,12 @@ type variantSummaryWire struct {
 	Format        string       `json:"format,omitempty"`
 	PlaybackIndex int          `json:"playbackIndex"`
 	Original      originalWire `json:"original"`
+	Match         *matchWire   `json:"match,omitempty"`
 }
 
 type getVariantsResponseWire struct {
 	Variants []variantSummaryWire `json:"variants"`
+	Evidence []evidenceWire       `json:"evidence,omitempty"`
 }
 
 type getOriginalRequestWire struct {
@@ -94,6 +114,24 @@ func variantToWire(identity lyric.VariantIdentity) variantWire {
 		Language:  identity.Language,
 		Role:      identity.Role,
 		Format:    identity.Format,
+	}
+}
+
+func matchToWire(match lyric.RecordingMatch) *matchWire {
+	if match.Status == "" {
+		return nil
+	}
+	return &matchWire{
+		Status: string(match.Status), Reasons: match.Reasons,
+		DurationDelta: match.DurationDelta, Recording: match.Recording,
+		AutoSave: match.AutoSave,
+	}
+}
+
+func evidenceToWire(evidence lyric.Evidence) evidenceWire {
+	return evidenceWire{
+		Kind: string(evidence.Kind), Provider: evidence.Provider, Recording: evidence.Recording,
+		Match: matchToWire(evidence.Match), Reason: evidence.Reason,
 	}
 }
 
@@ -143,7 +181,11 @@ func handleLyricsV2(input getLyricsV2RequestWire) (getLyricsV2ResponseWire, erro
 			identity := variantToWire(*entry.Identity)
 			text.Variant = &identity
 		}
+		text.Match = matchToWire(entry.Match)
 		output.Lyrics = append(output.Lyrics, text)
+	}
+	for _, evidence := range response.Evidence {
+		output.Evidence = append(output.Evidence, evidenceToWire(evidence))
 	}
 	return output, nil
 }
@@ -163,7 +205,11 @@ func handleVariants(input getVariantsRequestWire) (getVariantsResponseWire, erro
 			Format:        summary.Format,
 			PlaybackIndex: summary.PlaybackIndex,
 			Original:      originalToWire(summary.Original),
+			Match:         matchToWire(summary.Match),
 		})
+	}
+	for _, evidence := range providerInstance.GetLyricsEvidence(input.Track) {
+		output.Evidence = append(output.Evidence, evidenceToWire(evidence))
 	}
 	return output, nil
 }

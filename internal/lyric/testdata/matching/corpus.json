@@ -1,0 +1,403 @@
+{
+  "version": 1,
+  "captured": "2026-11-16",
+  "notes": "Metadata-only extracts from bounded public LRCLib searches. Raw responses are not committed because they contain lyric bodies; provenance and raw-response SHA-256 are in README.md. The label field is an implementer-assigned reference label derived from captured provider metadata, not a human-reviewed annotation or external ground truth.",
+  "cases": [
+    {
+      "id": "live-forever-studio-exact",
+      "category": "live/studio",
+      "provenance": "LRCLib search, q=Live Forever Oasis, record 38276098, captured 2026-11-16",
+      "request": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "returned": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "expect": {
+        "status": "validated",
+        "autoSave": true
+      },
+      "label": "same",
+      "timing": "line"
+    },
+    {
+      "id": "hallelujah-compilation-drift",
+      "category": "correct metadata drift",
+      "provenance": "LRCLib search, q=Hallelujah Jeff Buckley, records 5514912 and 8314729, captured 2026-11-16",
+      "request": {
+        "title": "Hallelujah",
+        "artist": "Jeff Buckley",
+        "album": "Grace",
+        "duration": 409
+      },
+      "returned": {
+        "title": "Hallelujah",
+        "artist": "Jeff Buckley",
+        "album": "So Real: Songs From Jeff Buckley",
+        "duration": 413
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "same",
+      "timing": "line"
+    },
+    {
+      "id": "bad-guy-compilation-exact",
+      "category": "correct metadata drift",
+      "provenance": "LRCLib search, q=Bad Guy Billie Eilish, records 7882570 and 5513444, captured 2026-11-16",
+      "request": {
+        "title": "Bad Guy",
+        "artist": "Billie Eilish",
+        "album": "WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?",
+        "duration": 194
+      },
+      "returned": {
+        "title": "bad guy",
+        "artist": "Billie Eilish",
+        "album": "Playlist for Gamers",
+        "duration": 194
+      },
+      "expect": {
+        "status": "validated",
+        "autoSave": true
+      },
+      "label": "same",
+      "timing": "line"
+    },
+    {
+      "id": "bad-guy-short-version",
+      "category": "different duration",
+      "provenance": "LRCLib search, q=Bad Guy Billie Eilish, records 7882570 and 5513444, captured 2026-11-16",
+      "request": {
+        "title": "Bad Guy",
+        "artist": "Billie Eilish",
+        "album": "WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?",
+        "duration": 194
+      },
+      "returned": {
+        "title": "bad guy",
+        "artist": "Billie Eilish",
+        "album": "WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?",
+        "duration": 149
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "different",
+      "timing": "line"
+    },
+    {
+      "id": "bad-guy-live-close-duration",
+      "category": "live/studio close",
+      "provenance": "LRCLib search, q=Bad Guy (Live) Billie Eilish, records 31102754 and 7882570, captured 2026-11-16",
+      "request": {
+        "title": "Bad Guy",
+        "artist": "Billie Eilish",
+        "album": "WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?",
+        "duration": 194
+      },
+      "returned": {
+        "title": "Bad Guy (Live)",
+        "artist": "Billie Eilish",
+        "album": "Billie Eilish Unreleased",
+        "duration": 196
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "different",
+      "timing": "word"
+    },
+    {
+      "id": "live-forever-live",
+      "category": "live/studio",
+      "provenance": "LRCLib search, q=Live Forever (Live) Oasis, records 38276098 and 22445866, captured 2026-11-16",
+      "request": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "returned": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "Oasis - Live at BBC Radio 1997 (Live)",
+        "duration": 324.649796
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "different",
+      "timing": "word"
+    },
+    {
+      "id": "mr-brightside-radio-edit-close-duration",
+      "category": "edit/remix close",
+      "provenance": "LRCLib search, q=Mr. Brightside radio edit The Killers, records 5117172 and 14076083, captured 2026-11-16",
+      "request": {
+        "title": "Mr. Brightside",
+        "artist": "The Killers",
+        "album": "Hot Fuss",
+        "duration": 222
+      },
+      "returned": {
+        "title": "Mr Brightside (radio edit)",
+        "artist": "The Killers",
+        "album": "Mr Brightside",
+        "duration": 223
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "different",
+      "timing": "line"
+    },
+    {
+      "id": "hallelujah-cover-artist",
+      "category": "cover",
+      "provenance": "LRCLib searches q=Hallelujah Jeff Buckley and q=Hallelujah Leonard Cohen, captured 2026-11-16",
+      "request": {
+        "title": "Hallelujah",
+        "artist": "Jeff Buckley",
+        "album": "Grace",
+        "duration": 409
+      },
+      "returned": {
+        "title": "Hallelujah",
+        "artist": "Leonard Cohen",
+        "album": "Essential Leonard Cohen",
+        "duration": 278.622041
+      },
+      "expect": {
+        "status": "mismatch",
+        "autoSave": false
+      },
+      "label": "different",
+      "timing": "line"
+    },
+    {
+      "id": "hallelujah-ambiguous-title",
+      "category": "ambiguous title",
+      "provenance": "LRCLib search, q=Hallelujah Jeff Buckley, records 5514912 and 4816140, captured 2026-11-16",
+      "request": {
+        "title": "Hallelujah",
+        "artist": "Jeff Buckley",
+        "album": "Grace",
+        "duration": 409
+      },
+      "returned": {
+        "title": "Hallelujah",
+        "artist": "Jeff Buckley",
+        "album": "Q-Music Top 500 Van 90's",
+        "duration": 256
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "uncertain",
+      "timing": "line"
+    },
+    {
+      "id": "stronger-explicit-edition",
+      "category": "clean/explicit",
+      "provenance": "LRCLib search, q=explicit version, record 29299370, captured 2026-11-16",
+      "request": {
+        "title": "Stronger",
+        "artist": "Kanye West",
+        "album": "Graduation",
+        "duration": 312
+      },
+      "returned": {
+        "title": "Stronger [Album Version (Explicit)]/Album Version (Explicit)",
+        "artist": "Kanye West",
+        "album": "Graduation [Explicit Version]/Explicit Version",
+        "duration": 312
+      },
+      "expect": {
+        "status": "validated",
+        "autoSave": true
+      },
+      "label": "same",
+      "timing": "line"
+    },
+    {
+      "id": "stronger-clean-edition",
+      "category": "clean/explicit",
+      "provenance": "Synthetic clean marker over the captured Stronger record 29299370; marked synthetic so it is excluded from threshold calibration.",
+      "synthetic": true,
+      "request": {
+        "title": "Stronger",
+        "artist": "Kanye West",
+        "album": "Graduation",
+        "duration": 312
+      },
+      "returned": {
+        "title": "Stronger [Clean]",
+        "artist": "Kanye West",
+        "album": "Graduation [Clean]",
+        "duration": 312
+      },
+      "expect": {
+        "status": "validated",
+        "autoSave": true
+      },
+      "label": "same",
+      "timing": "line"
+    },
+    {
+      "id": "missing-artist",
+      "category": "missing metadata",
+      "provenance": "Synthetic missing field over record 38276098; marked synthetic and excluded from threshold calibration.",
+      "synthetic": true,
+      "request": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "returned": {
+        "title": "Live Forever",
+        "artist": "",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "uncertain",
+      "timing": "line"
+    },
+    {
+      "id": "missing-duration-and-album",
+      "category": "missing metadata",
+      "provenance": "Synthetic missing fields over record 38276098; marked synthetic and excluded from threshold calibration.",
+      "synthetic": true,
+      "request": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "returned": {
+        "title": "Live Forever",
+        "artist": "Oasis",
+        "album": "",
+        "duration": 0
+      },
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      },
+      "label": "uncertain",
+      "timing": "line"
+    },
+    {
+      "id": "explicit-marker-conflict",
+      "category": "live/studio",
+      "provenance": "Synthetic contradictory marker over record 38276098; marked synthetic and excluded from threshold calibration.",
+      "synthetic": true,
+      "request": {
+        "title": "Live Forever (Live)",
+        "artist": "Oasis",
+        "album": "Live at Knebworth",
+        "duration": 277
+      },
+      "returned": {
+        "title": "Live Forever (Studio)",
+        "artist": "Oasis",
+        "album": "Definitely Maybe",
+        "duration": 277
+      },
+      "expect": {
+        "status": "mismatch",
+        "autoSave": false
+      },
+      "label": "different",
+      "timing": "line"
+    },
+    {
+      "id": "live-marker-agreement",
+      "category": "live/studio",
+      "provenance": "LRCLib search, q=Bad Guy (Live) Billie Eilish, record 31102754, captured 2026-11-16",
+      "request": {
+        "title": "Bad Guy (Live)",
+        "artist": "Billie Eilish",
+        "album": "Billie Eilish Unreleased",
+        "duration": 196
+      },
+      "returned": {
+        "title": "Bad Guy (Live)",
+        "artist": "Billie Eilish",
+        "album": "Billie Eilish Unreleased",
+        "duration": 196
+      },
+      "expect": {
+        "status": "validated",
+        "autoSave": true
+      },
+      "label": "same",
+      "timing": "word"
+    },
+    {
+      "id": "instrumental-assertion-identity",
+      "category": "instrumental",
+      "provenance": "LRCLib search, q=instrumental, record 30409765, captured 2026-11-16",
+      "request": {
+        "title": "Mitwa (Instrumental)",
+        "artist": "Instrumental",
+        "album": "Instrumental",
+        "duration": 380
+      },
+      "returned": {
+        "title": "Mitwa (Instrumental)",
+        "artist": "Instrumental",
+        "album": "Instrumental",
+        "duration": 380
+      },
+      "expect": {
+        "status": "validated",
+        "autoSave": true
+      },
+      "label": "same",
+      "timing": "line",
+      "evidence": true
+    },
+    {
+      "id": "mr-brightside-lindbergh-remix",
+      "category": "edit/remix",
+      "provenance": "LRCLib search, q=Mr. Brightside radio edit The Killers, record 1609198, captured 2026-11-16",
+      "request": {
+        "title": "Mr. Brightside",
+        "artist": "The Killers",
+        "album": "Hot Fuss",
+        "duration": 222
+      },
+      "returned": {
+        "title": "Mr. Brightside (The Lindbergh Palace radio edit)",
+        "artist": "The Killers",
+        "album": "Mr. Brightside",
+        "duration": 249
+      },
+      "label": "different",
+      "timing": "word",
+      "expect": {
+        "status": "ambiguous",
+        "autoSave": false
+      }
+    }
+  ]
+}

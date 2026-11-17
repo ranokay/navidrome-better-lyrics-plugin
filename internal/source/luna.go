@@ -45,10 +45,19 @@ func fetchLuna(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 	if err := json.Unmarshal(response.Body, &search); err != nil {
 		return nil, Degraded, fmt.Errorf("decode Luna search response: %w", err)
 	}
-	trackID, found := pickLunaTrack(search.ResultGroups, track)
+	selected, found := pickLunaTrackInfo(search.ResultGroups, track)
 	if !found {
 		return nil, Healthy, nil
 	}
+	trackID := string(selected.ID)
+	info := lyric.RecordingInfo{Title: selected.Name, Duration: float64(selected.Duration) / 1000}
+	artists := make([]string, 0, len(selected.Artists))
+	for _, artist := range selected.Artists {
+		if name := strings.TrimSpace(artist.Name); name != "" {
+			artists = append(artists, name)
+		}
+	}
+	info.Artist = strings.Join(artists, ", ")
 
 	query := url.Values{"track_id": {trackID}, "device_platform": {"web"}}
 	response, err = get(rt, "Luna track", lunaDetailEndpoint+"?"+query.Encode(), lunaDetailHeaders(), deadline)
@@ -79,7 +88,7 @@ func fetchLuna(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]lyric.
 	withDocument := func(candidate lyric.Candidate, format string) lyric.Candidate {
 		return candidate.
 			WithOriginal(format, lyric.OriginalSupplied, []byte(rawContent)).
-			WithRecording(trackID)
+			WithRecording(trackID).WithRecordingInfo(info)
 	}
 	switch strings.ToLower(strings.TrimSpace(detail.Lyric.Type)) {
 	case "krc":
@@ -156,8 +165,15 @@ func (id *lunaTrackID) UnmarshalJSON(data []byte) error {
 }
 
 func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bool) {
+	selected, ok := pickLunaTrackInfo(groups, track)
+	return string(selected.ID), ok
+}
+
+func pickLunaTrackInfo(groups []lunaResultGroup, track lyrics.TrackInfo) (lunaSearchTrack, bool) {
 	target := int64(float64(track.Duration)*1000.0 + 0.5)
 	titleNorm := strings.ToLower(lyric.OnlyLettersAndDigits(track.Title))
+	var fallback lunaSearchTrack
+	fallbackFound := false
 	for _, group := range groups {
 		for _, datum := range group.Data {
 			trackInfo := datum.Entity.Track
@@ -183,10 +199,15 @@ func pickLunaTrack(groups []lunaResultGroup, track lyrics.TrackInfo) (string, bo
 					continue
 				}
 			}
-			return string(trackInfo.ID), true
+			if strings.ToLower(lyric.OnlyLettersAndDigits(trackInfo.Name)) == titleNorm {
+				return trackInfo, true
+			}
+			if !fallbackFound {
+				fallback, fallbackFound = trackInfo, true
+			}
 		}
 	}
-	return "", false
+	return fallback, fallbackFound
 }
 
 type lunaSearchTrack struct {

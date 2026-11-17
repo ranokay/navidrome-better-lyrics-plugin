@@ -2,6 +2,7 @@ package source
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -45,11 +46,17 @@ func TestLRCLibSearchContinuesPastUnusableQualifiedRows(t *testing.T) {
 				return &host.HTTPResponse{StatusCode: 200, Body: search}, nil
 			})
 			candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
-			if err != nil || health != Healthy || len(candidates) != 1 {
+			if err != nil || health != Healthy {
 				t.Fatalf("result = %#v/%v/%v, want the usable later match", candidates, health, err)
 			}
-			if got := candidates[0].Response.Lyrics[0].Text; got != "[00:01.00]usable line" {
-				t.Fatalf("lyrics = %q, want usable later match", got)
+			found := false
+			for _, candidate := range candidates {
+				if candidate.Present() && candidate.Response.Lyrics[0].Text == "[00:01.00]usable line" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("lyrics = %#v, want usable later match", candidates)
 			}
 		})
 	}
@@ -140,7 +147,7 @@ func TestLRCLibCandidates_FallsBackToSearchOnExactMiss(t *testing.T) {
 	}
 }
 
-func TestLRCLibCandidates_SearchMissWhenNoNearDuration(t *testing.T) {
+func TestLRCLibCandidates_DistantSearchRowBecomesAmbiguousNotMiss(t *testing.T) {
 	t.Parallel()
 
 	searchFixture, err := os.ReadFile("testdata/lrclib/search.json")
@@ -157,8 +164,15 @@ func TestLRCLibCandidates_SearchMissWhenNoNearDuration(t *testing.T) {
 	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{
 		Title: "Live Forever", Artist: "Oasis", Duration: 9999,
 	}, time.Now().Add(testLookupBudget))
-	if err != nil || len(candidates) != 0 || health != Healthy {
-		t.Fatalf("result = %#v/%v/%v; want clean miss", candidates, health, err)
+	if err != nil || health != Healthy || len(candidates) == 0 {
+		t.Fatalf("result = %#v/%v/%v; want a classifier-reachable candidate", candidates, health, err)
+	}
+	match := lyric.AssessRecording(
+		lyric.RequestRecordingInfo(lyrics.TrackInfo{Title: "Live Forever", Artist: "Oasis", Duration: 9999}),
+		candidates[0].RecordingInfo,
+	)
+	if match.Status != lyric.MatchAmbiguous {
+		t.Fatalf("match = %#v, want ambiguous suggestion", match)
 	}
 }
 
@@ -194,10 +208,10 @@ func TestLRCLibCandidates_PlainFallback(t *testing.T) {
 	t.Parallel()
 
 	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","plainLyrics":"just plain lyrics","syncedLyrics":""}`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"trackName":"Song","artistName":"Artist","duration":200,"plainLyrics":"just plain lyrics","syncedLyrics":""}`)}, nil
 	})
 
-	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, time.Now().Add(testLookupBudget))
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
 	if err != nil {
 		t.Fatalf("fetchLRCLib() error = %v, want nil", err)
 	}
@@ -345,8 +359,8 @@ func TestLRCLibCandidates_ExactInstrumentalFallsBackToSearch(t *testing.T) {
 	if health != Healthy {
 		t.Fatalf("health = %v, want healthy", health)
 	}
-	if len(candidates) != 2 || candidates[0].Quality != lyric.TimingLine {
-		t.Fatalf("candidates = %#v, want the search fallback line then plain", candidates)
+	if len(candidates) != 3 || candidates[0].Quality != lyric.TimingLine || len(candidates[2].Evidence) == 0 {
+		t.Fatalf("candidates = %#v, want the search fallback line, plain, and exact instrumental evidence", candidates)
 	}
 	assertLyricsSource(t, candidates[0].Response.Source, "LRCLib", "lrc")
 	if requests != 2 {
@@ -354,21 +368,33 @@ func TestLRCLibCandidates_ExactInstrumentalFallsBackToSearch(t *testing.T) {
 	}
 }
 
-func TestLRCLibCandidates_InstrumentalSearchMatchIsCleanMiss(t *testing.T) {
+func TestLRCLibCandidates_InstrumentalSearchMatchIsAttributedEvidence(t *testing.T) {
 	t.Parallel()
 
 	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
 		if strings.Contains(request.URL, "/api/get") {
 			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":10209922,"instrumental":true}`)}, nil
 		}
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"instrumental":true,"duration":280}]`)}, nil
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":5,"trackName":"Live Forever","artistName":"Oasis","instrumental":true,"duration":280}]`)}, nil
 	})
 
 	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{
 		Title: "Live Forever", Artist: "Oasis", Duration: 280,
 	}, time.Now().Add(testLookupBudget))
-	if err != nil || len(candidates) != 0 || health != Healthy {
-		t.Fatalf("result = %#v/%v/%v; want clean miss when the only search match is instrumental", candidates, health, err)
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %#v/%v/%v; want healthy attributed evidence", candidates, health, err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if len(candidate.Evidence) > 0 && candidate.Evidence[0].Provider == "LRCLib" {
+			found = true
+		}
+		if candidate.Present() {
+			t.Fatalf("instrumental-only response produced lyrics: %#v", candidate)
+		}
+	}
+	if !found {
+		t.Fatalf("candidates = %#v, want attributed instrumental evidence", candidates)
 	}
 }
 
@@ -407,5 +433,199 @@ func TestLRCLibCandidates_KeepsEveryRepresentation(t *testing.T) {
 		if candidate.Recording != "7" {
 			t.Fatalf("recording = %q, want the wire record id", candidate.Recording)
 		}
+	}
+}
+
+func TestLRCLibExactAmbiguousFallsThroughToValidatedSearchResult(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song (Live)","artistName":"Artist","albumName":"Live","duration":201,"syncedLyrics":"[00:01.00]live"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"syncedLyrics":"[00:01.00]studio"}]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %#v/%v/%v", candidates, health, err)
+	}
+	for _, candidate := range candidates {
+		if candidate.Present() && strings.Contains(candidate.Response.Lyrics[0].Text, "studio") {
+			return
+		}
+	}
+	t.Fatalf("candidates = %#v, want the validated studio search result before the ambiguous live exact result", candidates)
+}
+
+func TestLRCLibInstrumentalFlagKeepsUsableLyricsAndEvidence(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"syncedLyrics":"[00:01.00]line"}`)}, nil
+	})
+	candidates, _, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lyricsFound, evidenceFound := false, false
+	for _, candidate := range candidates {
+		lyricsFound = lyricsFound || candidate.Present()
+		evidenceFound = evidenceFound || len(candidate.Evidence) > 0
+	}
+	if !lyricsFound || !evidenceFound {
+		t.Fatalf("candidates = %#v, want both lyrics and the attributed assertion", candidates)
+	}
+}
+
+func TestLRCLibExactAssertionAndFallbackSurviveSearchFailures(t *testing.T) {
+	cases := []struct {
+		name       string
+		instrument bool
+		status     int32
+		body       string
+		error      bool
+		health     Health
+	}{
+		{name: "404", status: 404, health: Healthy},
+		{name: "500", status: 500, health: Degraded},
+		{name: "malformed", status: 200, body: "{not-json", health: Degraded},
+		{name: "transport error", status: 0, error: true, health: Degraded},
+	}
+	for _, test := range cases {
+		for _, instrumental := range []bool{false, true} {
+			name := test.name + "-instrumental"
+			if !instrumental {
+				name = test.name + "-ambiguous"
+			}
+			t.Run(name, func(t *testing.T) {
+				rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+					if strings.Contains(request.URL, "/api/get") {
+						body := `{"id":1,"trackName":"Song (Live)","artistName":"Artist","albumName":"Live","duration":201,"syncedLyrics":"[00:01.00]live"}`
+						if instrumental {
+							body = `{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true}`
+						}
+						return &host.HTTPResponse{StatusCode: 200, Body: []byte(body)}, nil
+					}
+					if test.error {
+						return nil, errors.New("search outage")
+					}
+					return &host.HTTPResponse{StatusCode: test.status, Body: []byte(test.body)}, nil
+				})
+				candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+				if test.error && err == nil {
+					t.Fatal("want the search outage requested")
+				}
+				if !test.error && test.status == 200 && test.body != "" && err == nil {
+					t.Fatal("want malformed search to remain degraded")
+				}
+				if health != test.health {
+					t.Fatalf("health = %v, want %v", health, test.health)
+				}
+				foundEvidence, foundFallback := false, false
+				for _, candidate := range candidates {
+					foundEvidence = foundEvidence || len(candidate.Evidence) > 0
+					foundFallback = foundFallback || (candidate.Present() && strings.Contains(candidate.Response.Lyrics[0].Text, "live"))
+					if !instrumental && candidate.Present() && candidate.Evidence != nil {
+						foundEvidence = foundEvidence || len(candidate.Evidence) > 0
+					}
+				}
+				if instrumental && !foundEvidence {
+					t.Fatalf("candidates = %#v, want the exact instrumental assertion preserved", candidates)
+				}
+				if !instrumental && !foundFallback {
+					t.Fatalf("candidates = %#v, want the exact ambiguous suggestion preserved", candidates)
+				}
+			})
+		}
+	}
+}
+
+func TestLRCLibInstrumentalMalformedLyricsFileReturnsEvidenceAndDegraded(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"hasWordSync":true,"lyricsfile":"not: [valid"}`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err == nil || health != Degraded {
+		t.Fatalf("result = %v/%v, want degraded malformed lyricsfile", health, err)
+	}
+	if len(candidates) != 1 || len(candidates[0].Evidence) == 0 || candidates[0].Present() {
+		t.Fatalf("candidates = %#v, want evidence-only assertion", candidates)
+	}
+}
+
+func TestLRCLibSearchRowParseFailureRetainsExactEvidence(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"hasWordSync":true,"lyricsfile":"not: [valid"}]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err == nil || health != Degraded {
+		t.Fatalf("result = %v/%v, want degraded parse failure", health, err)
+	}
+	if len(candidates) != 1 || len(candidates[0].Evidence) == 0 {
+		t.Fatalf("candidates = %#v, want exact evidence retained", candidates)
+	}
+}
+
+func TestLRCLibExactEvidenceParseFailureContinuesToSearch(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"hasWordSync":true,"lyricsfile":"not: [valid"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"syncedLyrics":"[00:01.00]studio"}]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %v/%v", health, err)
+	}
+	lyricsFound, evidenceFound := false, false
+	for _, candidate := range candidates {
+		lyricsFound = lyricsFound || candidate.Present()
+		evidenceFound = evidenceFound || len(candidate.Evidence) > 0
+	}
+	if !lyricsFound || !evidenceFound {
+		t.Fatalf("candidates = %#v, want search lyrics and exact assertion", candidates)
+	}
+}
+
+func TestLRCLibExactEvidenceParseFailureWithoutSearchLyricsKeepsError(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true,"hasWordSync":true,"lyricsfile":"not: [valid"}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 404}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err == nil || health != Degraded || len(candidates) != 1 || len(candidates[0].Evidence) == 0 {
+		t.Fatalf("result = %#v/%v/%v, want retained assertion and parse error", candidates, health, err)
+	}
+}
+
+func TestLRCLibSearchCollectsEvidenceAfterValidatedWinner(t *testing.T) {
+	t.Parallel()
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "/api/get") {
+			return &host.HTTPResponse{StatusCode: 404}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`[
+			{"id":1,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"syncedLyrics":"[00:01.00]studio"},
+			{"id":2,"trackName":"Song","artistName":"Artist","albumName":"Album","duration":200,"instrumental":true}
+		]`)}, nil
+	})
+	candidates, health, err := fetchLRCLib(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Album: "Album", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %v/%v", health, err)
+	}
+	lyricsFound, evidenceFound := false, false
+	for _, candidate := range candidates {
+		lyricsFound = lyricsFound || candidate.Present()
+		evidenceFound = evidenceFound || len(candidate.Evidence) > 0
+	}
+	if !lyricsFound || !evidenceFound {
+		t.Fatalf("candidates = %#v, want winner and later assertion", candidates)
 	}
 }

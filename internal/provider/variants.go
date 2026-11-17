@@ -10,11 +10,8 @@ import (
 
 // responsesWithVariants augments the winner's response with every other cached
 // source-tagged variant, winner first and the rest in configured source order.
-// Serving them from the per-source cache (rather than from the winner's cached
-// response) keeps the list fresh: sources the sweep has filled since the winner
-// was written still show up, and per-source TTLs are never shorter than the
-// winner's. The contract treats the first entry as the winner; the response
-// level source still names it for hosts that only read that.
+// The required v1 response never exposes ambiguous suggestions: only validated
+// and true legacy-unassessed playback entries are listed.
 func (p *Provider) responsesWithVariants(track lyrics.TrackInfo, sources []source.Source, winner lyric.Candidate) lyrics.GetLyricsResponse {
 	response := winner.Response
 	if !winner.Present() || len(response.Lyrics) == 0 {
@@ -35,7 +32,7 @@ func (p *Provider) responsesWithVariants(track lyrics.TrackInfo, sources []sourc
 
 	for _, src := range sources {
 		candidate, ok := p.readCachedSourceCandidate(track, src.ID)
-		if !ok || !candidate.Present() {
+		if !ok || !candidate.Playable() {
 			continue
 		}
 		// Some fetchers return a dynamic upstream label rather than the
@@ -80,13 +77,15 @@ type VariantEntry struct {
 	Text     lyrics.LyricsText
 	Identity *lyric.VariantIdentity
 	Original lyric.OriginalInfo
+	Match    lyric.RecordingMatch
 }
 
 // V2Response is the optional playback response: every representation from every
 // source, winner first, each carrying its exact identity.
 type V2Response struct {
-	Entries []VariantEntry
-	Source  *lyrics.LyricsSource
+	Entries  []VariantEntry
+	Source   *lyrics.LyricsSource
+	Evidence []lyric.Evidence
 }
 
 // VariantSummary is one listing row. PlaybackIndex is advisory: identity is the
@@ -100,6 +99,7 @@ type VariantSummary struct {
 	Format        string
 	PlaybackIndex int
 	Original      lyric.OriginalInfo
+	Match         lyric.RecordingMatch
 }
 
 // buildV2Response emits the winner's entries first, then every cached
@@ -133,6 +133,7 @@ func (p *Provider) buildV2Response(track lyrics.TrackInfo, sources []source.Sour
 				Text:     text,
 				Identity: candidate.Identity,
 				Original: candidate.OriginalDetails(),
+				Match:    candidate.Match,
 			})
 		}
 	}
@@ -185,13 +186,10 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 	if len(sources) == 0 {
 		return nil
 	}
-	playbackKnown := false
-	candidate, ok, sweepComplete := p.readCachedWinner(track, sources)
-	if ok {
-		playbackKnown = true
-	}
+	candidate, _, ok, sweepComplete := p.readCachedWinner(track, sources)
+	playbackKnown := ok && candidate.Present()
 	if ok && candidate.Present() && !sweepComplete {
-		if best, _ := p.readBestFromSourceCache(track, sources); best.Present() && best.Quality >= candidate.Quality {
+		if best, _ := p.readBestFromSourceCache(track, sources); lyric.AtLeastAsPreferred(candidate, best) {
 			candidate = best
 		}
 	}
@@ -205,7 +203,7 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 			// smaller bundled representation fit; list that instead.
 			for _, src := range sources {
 				for _, bundled := range p.readCachedSourceCandidates(track, src.ID) {
-					best = lyric.Prefer(best, bundled)
+					best = lyric.PreferSuggestion(best, bundled)
 				}
 			}
 		}
@@ -237,10 +235,25 @@ func (p *Provider) GetLyricsVariants(track lyrics.TrackInfo) []VariantSummary {
 			Format:        entry.Identity.Format,
 			PlaybackIndex: playbackIndex,
 			Original:      entry.Original,
+			Match:         entry.Match,
 		})
 		if len(summaries) >= MaxListedVariants {
 			break
 		}
 	}
 	return summaries
+}
+
+// GetLyricsEvidence lists cached attribution without fetching, for clients that
+// expose provider conflicts separately from playable entries.
+func (p *Provider) GetLyricsEvidence(track lyrics.TrackInfo) []lyric.Evidence {
+	if len(strings.TrimSpace(track.Title)) == 0 || lyric.TrackArtist(track) == "" {
+		return nil
+	}
+	sources := p.activeSources()
+	if len(sources) == 0 {
+		return nil
+	}
+	_, evidence, _, _ := p.readCachedWinner(track, sources)
+	return p.sourceEvidence(track, sources, evidence)
 }

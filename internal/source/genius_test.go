@@ -158,3 +158,31 @@ func TestGeniusFixtureExcludesSidebar(t *testing.T) {
 		t.Fatalf("text = %q, want the real lyrics kept", text[:160])
 	}
 }
+
+func TestGeniusInstrumentalFlagKeepsUsablePageLyrics(t *testing.T) {
+	t.Parallel()
+	searchFixture, err := os.ReadFile("testdata/genius/search.json")
+	if err != nil {
+		t.Skipf("fixture unavailable: %v", err)
+	}
+	pageFixture, err := os.ReadFile("testdata/genius/page.html")
+	if err != nil {
+		t.Skipf("fixture unavailable: %v", err)
+	}
+	// The fixture's first hit is a matching song; mark it instrumental while
+	// leaving the page body available.
+	search := strings.Replace(string(searchFixture), `"instrumental":false`, `"instrumental":true`, 1)
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "api/search") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(search)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: pageFixture}, nil
+	})
+	candidates, health, err := fetchGenius(rt, lyrics.TrackInfo{Title: "Shape of You", Artist: "Ed Sheeran"}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy {
+		t.Fatalf("result = %v/%v", health, err)
+	}
+	if len(candidates) != 1 || !candidates[0].Present() || len(candidates[0].Evidence) == 0 {
+		t.Fatalf("candidates = %#v, want lyrics and the retained assertion", candidates)
+	}
+}

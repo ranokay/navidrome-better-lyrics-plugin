@@ -91,11 +91,17 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 	if err := json.Unmarshal(response.Body, &payloadEnvelope); err != nil {
 		return nil, Degraded, fmt.Errorf("decode Lyricify lyrics response: %w", err)
 	}
-	if payloadEnvelope.IsInstrumental {
-		return nil, Healthy, nil
+	evidence := lyric.Candidate{
+		Evidence: []lyric.Evidence{{
+			Kind: lyric.EvidenceInstrumental, Provider: "Lyricify", Recording: isrc,
+		}},
+		Match: lyric.RecordingMatch{Status: lyric.MatchUnassessed},
 	}
 	text := strings.TrimSpace(payloadEnvelope.Text)
 	if text == "" {
+		if payloadEnvelope.IsInstrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	}
 
@@ -103,9 +109,15 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 	if parseErr != nil {
 		// The endpoint returned payload that is not parseable LYL: a provider
 		// failure must stay retryable instead of becoming cached coverage.
+		if payloadEnvelope.IsInstrumental {
+			return []lyric.Candidate{evidence}, Degraded, fmt.Errorf("decode Lyricify lyrics: %w", parseErr)
+		}
 		return nil, Degraded, fmt.Errorf("decode Lyricify lyrics: %w", parseErr)
 	}
 	if len(lines) == 0 {
+		if payloadEnvelope.IsInstrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
 	}
 	lines = applyLyricsOffset(lines, payloadEnvelope.Offset)
@@ -113,7 +125,13 @@ func fetchLyricify(rt Runtime, track lyrics.TrackInfo, deadline time.Time) ([]ly
 		WithOriginal("lyl", lyric.OriginalSupplied, []byte(payloadEnvelope.Text)).
 		WithRecording(isrc)
 	if !candidate.Present() {
+		if payloadEnvelope.IsInstrumental {
+			return []lyric.Candidate{evidence}, Healthy, nil
+		}
 		return nil, Healthy, nil
+	}
+	if payloadEnvelope.IsInstrumental {
+		candidate.Evidence = evidence.Evidence
 	}
 	return []lyric.Candidate{candidate}, Healthy, nil
 }

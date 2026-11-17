@@ -77,3 +77,24 @@ func TestVariantExportsGoldenJSON(t *testing.T) {
 		t.Fatalf("original JSON = %s, want the exact document bytes as base64", encoded)
 	}
 }
+
+func TestMatchAndEvidenceWireKeys(t *testing.T) {
+	t.Parallel()
+	match := &matchWire{Status: "ambiguous", Reasons: []string{"version-unconfirmed"}, DurationDelta: 2, AutoSave: false}
+	response := getLyricsV2ResponseWire{
+		Lyrics: []lyricsTextWire{{Text: "[00:01.00]line", Match: match}},
+		Evidence: []evidenceWire{{
+			Kind: "instrumental", Provider: "LRCLib", Recording: "1",
+			Match: &matchWire{Status: "validated", AutoSave: true}, Reason: "provider declared instrumental",
+		}},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"match":{"status":"ambiguous"`, `"autoSaveEligible":false`, `"evidence":[{"kind":"instrumental"`, `"provider":"LRCLib"`, `"autoSaveEligible":true`} {
+		if !strings.Contains(string(encoded), key) {
+			t.Fatalf("JSON %s lacks %s", encoded, key)
+		}
+	}
+}

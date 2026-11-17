@@ -109,16 +109,44 @@ func TestLyricallyCandidates_TTMLFallbackWhenNoELRC(t *testing.T) {
 	}
 }
 
-func TestLyricallyCandidates_DurationMissIsClean(t *testing.T) {
+func TestLyricallyCandidates_DistantDurationBecomesAmbiguous(t *testing.T) {
 	t.Parallel()
 
-	rt := newFakeRuntime(func(host.HTTPRequest) (*host.HTTPResponse, error) {
-		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"resultCount":1,"results":[{"trackId":3,"trackName":"Song","artistName":"Artist","trackTimeMillis":250000}]}`)}, nil
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "itunes.apple.com/search") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"resultCount":1,"results":[{"trackId":3,"trackName":"Song","artistName":"Artist","trackTimeMillis":250000}]}`)}, nil
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"plain":"distant lyric"}`)}, nil
 	})
 
 	candidates, health, err := fetchLyrically(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 99}, time.Now().Add(testLookupBudget))
-	if err != nil || len(candidates) != 0 || health != Healthy {
-		t.Fatalf("result = %#v/%v/%v; want clean miss", candidates, health, err)
+	if err != nil || len(candidates) != 1 || health != Healthy {
+		t.Fatalf("result = %#v/%v/%v; want classifier-reachable suggestion", candidates, health, err)
+	}
+	if match := lyric.AssessRecording(lyric.RequestRecordingInfo(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 99}), candidates[0].RecordingInfo); match.Status != lyric.MatchAmbiguous {
+		t.Fatalf("match = %#v, want ambiguous", match)
+	}
+}
+
+func TestLyricallyCandidates_ValidatedResultBeatsCloserAmbiguous(t *testing.T) {
+	t.Parallel()
+
+	searchBody := `{"resultCount":2,"results":[{"trackId":4,"trackName":"Song (Live)","artistName":"Artist","trackTimeMillis":200000},{"trackId":5,"trackName":"Song","artistName":"Artist","trackTimeMillis":201000}]}`
+	rt := newFakeRuntime(func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if strings.Contains(request.URL, "itunes.apple.com/search") {
+			return &host.HTTPResponse{StatusCode: 200, Body: []byte(searchBody)}, nil
+		}
+		if !strings.Contains(request.URL, "id=5") {
+			t.Fatalf("mirror request = %s, want the validated id", request.URL)
+		}
+		return &host.HTTPResponse{StatusCode: 200, Body: []byte(`{"plain":"validated lyric"}`)}, nil
+	})
+	candidates, health, err := fetchLyrically(rt, lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}, time.Now().Add(testLookupBudget))
+	if err != nil || health != Healthy || len(candidates) != 1 {
+		t.Fatalf("result = %#v/%v/%v", candidates, health, err)
+	}
+	if match := lyric.AssessRecording(lyric.RequestRecordingInfo(lyrics.TrackInfo{Title: "Song", Artist: "Artist", Duration: 200}), candidates[0].RecordingInfo); match.Status != lyric.MatchValidated {
+		t.Fatalf("match = %#v, want validated", match)
 	}
 }
 
