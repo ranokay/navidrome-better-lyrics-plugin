@@ -109,7 +109,8 @@ type pendingPublication struct {
 	active     bool
 	failed     bool
 	// denied marks a scope-less publication that must not write directly;
-	// its host-minted token is still released at terminal completion.
+	// its host-minted token is released at terminal completion when the track
+	// key is known.
 	denied bool
 }
 
@@ -381,9 +382,14 @@ func (p *Provider) snapshotExpiry(track lyrics.TrackInfo, sources []source.Sourc
 			}
 		}
 		if key, ok := lyricsVariantCacheKey(track, src.ID); ok {
-			if raw, found, _ := p.cache.Get(key); found {
+			raw, found, err := p.cache.Get(key)
+			if err != nil {
+				p.logf(fmt.Sprintf("lyrics variant cache read failed: %v", p.safeDiagnosticError(err)))
+			} else if found {
 				var bundle cachedSourceBundle
-				if json.Unmarshal(raw, &bundle) == nil {
+				if err := json.Unmarshal(raw, &bundle); err != nil {
+					p.logf(fmt.Sprintf("lyrics variant cache decode failed: %v", p.safeDiagnosticError(err)))
+				} else {
 					consider(bundle.ExpiresAt)
 				}
 			}

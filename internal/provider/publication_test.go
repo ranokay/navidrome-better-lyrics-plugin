@@ -26,10 +26,10 @@ type fakePublisher struct {
 	admits       int
 	releases     int
 	probe        *bool
+	probeError   error
 	rejectTokens map[string]bool
 	onAdmit      func(admissionWire)
 	onCommit     func(commitWire)
-	events       *[]string
 	cache        Store
 }
 
@@ -119,6 +119,9 @@ func (f *fakePublisher) Active() (string, bool, error) {
 }
 
 func (f *fakePublisher) Probe() (bool, error) {
+	if f.probeError != nil {
+		return false, f.probeError
+	}
 	if f.probe != nil {
 		return *f.probe, nil
 	}
@@ -241,6 +244,7 @@ func TestRefreshTailCarriesDeferredSources(t *testing.T) {
 	t.Parallel()
 	var payload sweepTaskPayload
 	enqueued := false
+	fullSweeps := 0
 	sources := make([]source.Source, 0, 5)
 	for _, id := range []string{"one", "two", "three", "four", "five"} {
 		sources = append(sources, source.Source{
@@ -250,7 +254,10 @@ func TestRefreshTailCarriesDeferredSources(t *testing.T) {
 			},
 		})
 	}
-	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, sources, func(lyrics.TrackInfo) error {
+		fullSweeps++
+		return nil
+	})
 	p.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string, stalled int) error {
 		enqueued = true
 		payload = sweepTaskPayload{Track: track, Sources: ids, Publication: p.enqueueMeta, Refresh: p.enqueueRefresh}
@@ -269,6 +276,9 @@ func TestRefreshTailCarriesDeferredSources(t *testing.T) {
 	}
 	if len(payload.Sources) != 2 || payload.Publication.Token != "token" {
 		t.Fatalf("tail payload = %#v, want the two deferred sources and the refresh token", payload)
+	}
+	if fullSweeps != 0 {
+		t.Fatalf("full sweeps = %d, want the refresh tail to own the deferred coverage", fullSweeps)
 	}
 }
 

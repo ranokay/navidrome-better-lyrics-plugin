@@ -72,11 +72,10 @@ type Provider struct {
 	pubKind     string
 	// enqueueMeta is captured before a sweep task is enqueued and carried in
 	// the payload; execution never adopts a newer generation by re-reading.
-	enqueueMeta         Publication
-	enqueueRefresh      bool
-	refreshTailEnqueued bool
-	tailSources         []string
-	tailOp              Publication
+	enqueueMeta    Publication
+	enqueueRefresh bool
+	tailSources    []string
+	tailOp         Publication
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
 	sources []source.Source
@@ -152,7 +151,6 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.pubKind = kind
 	p.enqueueMeta = Publication{}
 	p.enqueueRefresh = false
-	p.refreshTailEnqueued = false
 	p.tailSources = nil
 	p.tailOp = Publication{}
 }
@@ -187,6 +185,13 @@ func (p *Provider) GetLyricsPublished(input lyrics.GetLyricsRequest, meta Public
 	if _, commitErr := p.commitPublication(sweepComplete, false, 0); commitErr != nil {
 		// The classic host cache must not retain a rejected publication.
 		return lyrics.GetLyricsResponse{}, commitErr
+	}
+	if p.publication != nil && p.publication.active && p.enqueueMeta.Token == "" {
+		// A zero-write classic lookup without a queued sweep has no deferred
+		// owner for its admission; release the slot instead of waiting out
+		// the host TTL.
+		p.releasePublication()
+		p.publication = nil
 	}
 	if current, ok := p.currentV1Response(input.Track); ok {
 		return current, err
@@ -236,6 +241,7 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 	if refresh && commitErr == nil {
 		if len(tailSources) > 0 {
 			if err := p.enqueueRefreshTailWithOp(input.Track, tailSources, tailOp); err != nil {
+				p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
 				p.releaseOperation(input.Track, tailOp)
 			}
 		} else {
@@ -245,6 +251,11 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 			p.releasePublication()
 			p.publication = nil
 		}
+	} else if commitErr == nil && p.publication != nil && p.publication.active && p.enqueueMeta.Token == "" {
+		// A normal zero-write lookup without a queued sweep has no deferred
+		// owner for its admission.
+		p.releasePublication()
+		p.publication = nil
 	}
 	discovery := committedDiscovery
 	if commitErr != nil {
@@ -314,6 +325,7 @@ func (p *Provider) currentV2Response(track lyrics.TrackInfo) (V2Response, Discov
 	// state whose revision and dependencies both survived the build may label
 	// this response; otherwise the claim is omitted rather than mismatched.
 	if beforeOK && afterOK && before == after && afterCached &&
+		before.Complete == beforeComplete && after.Complete == afterComplete &&
 		beforeComplete == afterComplete &&
 		sameCachedView(beforeCandidate, beforeEvidence, afterCandidate, afterEvidence) {
 		return response, before, true
@@ -396,19 +408,20 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 						return candidate, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 					}
 					fresh, freshEvidence, freshComplete, hasFresh := p.readCachedView(track, sources)
-					if hasFresh && fresh.Present() {
+					if !hasFresh {
+						// The cache changed under the read; never publish the
+						// pre-admission candidate as fresh state.
+						return lyric.Candidate{}, sources, nil, false, nil
+					}
+					if fresh.Present() {
 						if freshBest, freshExpiry := p.readBestFromSourceCache(track, sources); freshBest.Present() && lyric.AtLeastAsPreferred(candidate, freshBest) {
 							if freshExpiry > 0 {
 								expiry = freshExpiry
 							}
 							p.cacheWinnerUntil(track, sources, fresh, freshComplete, expiry, freshEvidence)
 						}
-						candidate, evidence, completion = fresh, freshEvidence, freshComplete
-					} else {
-						p.cacheWinnerUntil(track, sources, best, freshComplete, expiry, evidence)
-						candidate = best
-						completion = freshComplete
 					}
+					candidate, evidence, completion = fresh, freshEvidence, freshComplete
 				}
 				p.maybeEnqueueSweep(track)
 			}
@@ -421,15 +434,16 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 				return best, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 			}
 			fresh, freshEvidence, freshComplete, hasFresh := p.readCachedView(track, sources)
-			if hasFresh && fresh.Present() {
+			if !hasFresh {
+				return lyric.Candidate{}, sources, nil, false, nil
+			}
+			if fresh.Present() {
 				if _, freshExpiry := p.readBestFromSourceCache(track, sources); freshExpiry > 0 {
 					expiry = freshExpiry
 				}
 				p.cacheWinnerUntil(track, sources, fresh, freshComplete, expiry, freshEvidence)
-				return fresh, sources, p.sourceEvidence(track, sources, freshEvidence), freshComplete, nil
 			}
-			p.cacheWinnerUntil(track, sources, best, freshComplete, expiry, evidence)
-			return best, sources, p.sourceEvidence(track, sources, evidence), freshComplete, nil
+			return fresh, sources, p.sourceEvidence(track, sources, freshEvidence), freshComplete, nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -502,7 +516,8 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 }
 
 // readCachedView re-reads the winner and best source after lazy admission so
-// a classic caller cannot publish data captured before a refresh committed.
+// callers rank the current cache. The no-fresh fallback still serves the
+// pre-admission candidate, but that path does not write it as fresh state.
 func (p *Provider) readCachedView(track lyrics.TrackInfo, sources []source.Source) (lyric.Candidate, []lyric.Evidence, bool, bool) {
 	winner, evidence, ok, sweepComplete := p.readCachedWinner(track, sources)
 	complete := sweepComplete || p.sweepMarkerActive(p.doneMarkerKey(track, sources))
@@ -510,10 +525,7 @@ func (p *Provider) readCachedView(track lyrics.TrackInfo, sources []source.Sourc
 	if best.Present() && (!winner.Present() || lyric.AtLeastAsPreferred(winner, best)) {
 		return best, nil, complete, true
 	}
-	if winner.Present() {
-		return winner, evidence, complete, true
-	}
-	if ok {
+	if winner.Present() || ok {
 		return winner, evidence, complete, true
 	}
 	return lyric.Candidate{}, nil, false, false

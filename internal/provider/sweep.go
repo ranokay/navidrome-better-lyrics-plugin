@@ -82,6 +82,9 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		if p.publisher != nil {
 			capable, err := p.publisher.Probe()
 			if err != nil || capable {
+				if err != nil {
+					p.logf(fmt.Sprintf("publication probe failed: %v", p.safeDiagnosticError(err)))
+				}
 				// A retained pre-upgrade task has no live generation. On a
 				// capable host it must not fall back to unadmitted writes.
 				return "unadmitted task", nil
@@ -461,6 +464,12 @@ func sharesBetterLyricsHost(src source.Source) bool {
 // sources behind those cooldowns benefit from the same deviating skip logic in the
 // sweep, so enqueuing without a marker check could cause duplicate work.
 func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
+	if len(p.tailSources) > 0 {
+		// The explicit refresh tail owns the deferred coverage and the
+		// foreground admission; a competing full sweep would duplicate work
+		// and could release the token the tail needs.
+		return false
+	}
 	if p.sweepMarkerActive(p.doneMarkerKey(track, p.activeSources())) {
 		return false
 	}
@@ -589,9 +598,7 @@ func (p *Provider) enqueueRefreshTailWithOp(track lyrics.TrackInfo, sources []st
 	}
 	p.enqueueMeta = op
 	p.enqueueRefresh = true
-	p.refreshTailEnqueued = true
 	if err := p.enqueueSweepSources(track, sources, 0); err != nil {
-		p.refreshTailEnqueued = false
 		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
 			_ = p.storeSweepMarker(markerKey, 1)
 		}

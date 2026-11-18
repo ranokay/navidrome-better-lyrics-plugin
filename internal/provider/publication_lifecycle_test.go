@@ -28,10 +28,24 @@ func emptySources(ids ...string) []source.Source {
 
 func TestRefreshTailStartsAfterForegroundCommit(t *testing.T) {
 	t.Parallel()
+	now := time.Unix(50_000, 0)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 	var events []string
 	var tail sweepTaskPayload
 	enqueued := false
-	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, emptySources("one", "two", "three", "four", "five"), nil)
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, emptySources("one", "two", "three", "four", "five"), nil)
+	missKey, ok := p.sourceMissKey(track, "four")
+	if !ok {
+		t.Fatal("source miss key unavailable")
+	}
+	miss, err := json.Marshal(cachedLyricsEnvelope{ExpiresAt: now.Add(120 * time.Second).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(missKey, miss, 120); err != nil {
+		t.Fatal(err)
+	}
 	p.enqueueSweepSources = func(track lyrics.TrackInfo, ids []string, stalled int) error {
 		enqueued = true
 		events = append(events, "enqueue")
@@ -40,11 +54,19 @@ func TestRefreshTailStartsAfterForegroundCommit(t *testing.T) {
 	}
 	publisher := &fakePublisher{
 		handled: true, accepted: true, token: "token",
-		onCommit: func(commitWire) { events = append(events, "commit") },
+		onCommit: func(commit commitWire) {
+			events = append(events, "commit")
+			if !commit.AwaitTail {
+				t.Error("foreground commit did not await the refresh tail")
+			}
+			if commit.SnapshotExpiresAt != now.Add(120*time.Second).Unix() {
+				t.Errorf("snapshot expiry = %d, want the reused dependency deadline", commit.SnapshotExpiresAt)
+			}
+		},
 	}
 	p.publisher = publisher
-	_, err := p.GetLyricsV2Published(
-		lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}},
+	_, err = p.GetLyricsV2Published(
+		lyrics.GetLyricsRequest{Track: track},
 		Publication{Generation: "generation", CallID: "refresh", Token: "token", Kind: "refresh"}, true,
 	)
 	if err != nil {
@@ -181,6 +203,66 @@ func TestDeferredTailKeepsAdmissionUntilContinuationFinishes(t *testing.T) {
 	}
 	if publisher.releases != 1 {
 		t.Fatalf("releases = %d, want the terminal continuation released", publisher.releases)
+	}
+}
+
+func TestRefreshTailEnqueueFailureLogsAndReleases(t *testing.T) {
+	t.Parallel()
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, emptySources("one", "two", "three", "four", "five"), nil)
+	var logs []string
+	p.logf = func(message string) { logs = append(logs, message) }
+	p.enqueueSweepSources = func(lyrics.TrackInfo, []string, int) error {
+		return errors.New("queue unavailable")
+	}
+	publisher := &fakePublisher{handled: true, accepted: true, token: "token"}
+	p.publisher = publisher
+	if _, err := p.GetLyricsV2Published(
+		lyrics.GetLyricsRequest{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}},
+		Publication{Generation: "generation", CallID: "refresh", Token: "token", Kind: "refresh"}, true,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the failed tail admission released", publisher.releases)
+	}
+	found := false
+	for _, message := range logs {
+		if strings.Contains(message, "refresh tail enqueue failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("logs = %v, want the tail enqueue failure diagnosed", logs)
+	}
+}
+
+func TestRetainedTaskProbeFailureFencesAndLogs(t *testing.T) {
+	t.Parallel()
+	payload, err := json.Marshal(sweepTaskPayload{Track: lyrics.TrackInfo{Title: "Song", Artist: "Artist"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+		variantSource("one", "[00:01.00]one", "lrc"),
+	}, nil)
+	var logs []string
+	p.logf = func(message string) { logs = append(logs, message) }
+	p.publisher = &fakePublisher{handled: true, probeError: errors.New("kv unavailable")}
+	status, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, TaskID: "old", Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "unadmitted task" {
+		t.Fatalf("status = %q, want the probe failure fenced", status)
+	}
+	if len(logs) == 0 || !strings.Contains(logs[0], "publication probe failed") {
+		t.Fatalf("logs = %v, want the probe failure diagnosed", logs)
+	}
+	if key, ok := lyricsCacheKeyForSource(lyrics.TrackInfo{Title: "Song", Artist: "Artist"}, "one"); ok {
+		if _, exists, err := cache.Get(key); err != nil || exists {
+			t.Fatalf("probe failure wrote source data: %v, %v", exists, err)
+		}
 	}
 }
 
@@ -429,5 +511,59 @@ func TestFailedBufferedMissCannotClaimCompletion(t *testing.T) {
 				t.Fatalf("done marker after rejected publication = %v, %v", exists, err)
 			}
 		})
+	}
+}
+
+func TestClassicLookupDoesNotPublishDataClearedAfterAdmission(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+		variantSource("one", "[00:01.00]unused", "lrc"),
+	}, nil)
+	p.cacheSourceCandidate(track, "one", lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]obsolete"}, "one", "lrc"))
+	sourceKey, ok := lyricsCacheKeyForSource(track, "one")
+	if !ok {
+		t.Fatal("source key unavailable")
+	}
+
+	publisher := &fakePublisher{handled: true, accepted: true, token: "token", cache: cache}
+	publisher.onAdmit = func(admission admissionWire) {
+		if admission.Action != "admit" {
+			return
+		}
+		// The refresh committed a clean miss while this classic lookup was
+		// paused between its cached read and admission.
+		miss, err := json.Marshal(cachedLyricsEnvelope{
+			Generation: lyricsCacheGeneration,
+			ExpiresAt:  time.Now().Add(time.Minute).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.SetWithTTL(sourceKey, miss, 60); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.publisher = publisher
+	response, err := p.GetLyricsPublished(
+		lyrics.GetLyricsRequest{Track: track},
+		Publication{Generation: "generation", CallID: "classic"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range response.Lyrics {
+		if strings.Contains(text.Text, "obsolete") {
+			t.Fatal("the classic lookup served data cleared by the refresh")
+		}
+	}
+	for _, commit := range publisher.commits {
+		if strings.Contains(string(commit), "obsolete") {
+			t.Fatal("the classic lookup published data cleared by the refresh")
+		}
+	}
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the ownerless classic admission released", publisher.releases)
 	}
 }

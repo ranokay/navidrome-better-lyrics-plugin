@@ -174,7 +174,13 @@ func TestPublishedSnapshotExpiryFollowsReusedDependencies(t *testing.T) {
 	}
 	writeEnvelope(winnerKey, now.Add(300*time.Second).Unix())
 	writeEnvelope(sourceKey, now.Add(120*time.Second).Unix())
-	writeEnvelope(variantKey, now.Add(240*time.Second).Unix())
+	bundle, err := json.Marshal(cachedSourceBundle{ExpiresAt: now.Add(240 * time.Second).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(variantKey, bundle, 240); err != nil {
+		t.Fatal(err)
+	}
 
 	if got, want := p.snapshotExpiry(track, sources), now.Add(120*time.Second).Unix(); got != want {
 		t.Fatalf("snapshot expiry = %d, want the shortest reused dependency %d", got, want)
@@ -193,5 +199,34 @@ func TestPublishedSnapshotExpiryFollowsReusedDependencies(t *testing.T) {
 	}
 	if got := p.snapshotExpiry(track, sources); got != now.Unix() {
 		t.Fatalf("unbounded dependency expiry = %d, want %d", got, now.Unix())
+	}
+}
+
+func TestPublishedCompletionOmittedWhenCoverageExpired(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	src := source.Source{
+		ID: "one", Display: "One", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return nil, source.Healthy, nil
+		},
+	}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, nil)
+	// The winner remembers full coverage, but the per-source coverage row is
+	// gone, so the cached view is genuinely incomplete.
+	p.cacheWinner(track, []source.Source{src}, lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]line"}, "one", "lrc"), true)
+	p.publisher = &fakePublisher{
+		handled: true, accepted: true, token: "token", cache: cache,
+		current: publicationStateFor(t, p, track, "generation", "revision", true),
+	}
+	p.pubMeta = Publication{Generation: "generation"}
+
+	_, discovery, ok := p.currentV2Response(track)
+	if !ok {
+		t.Fatal("cached response was not built")
+	}
+	if discovery.Revision != "" || discovery.Complete {
+		t.Fatalf("discovery = %#v, want no claim when coverage expired", discovery)
 	}
 }

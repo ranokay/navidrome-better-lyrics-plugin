@@ -38,14 +38,14 @@ func TestStaleCooldownObservationCannotShortenNewerWindow(t *testing.T) {
 	now = now.Add(5 * time.Minute)
 	// An older observation still finishing cannot replace the newer deadline.
 	p.RememberCooldown(key, time.Minute)
-	if got := p.Cooldown(key); got < 54*time.Minute || got > 56*time.Minute {
-		t.Fatalf("cooldown = %s, want the newer hour-long window preserved", got)
+	if got := p.Cooldown(key); got != 55*time.Minute {
+		t.Fatalf("cooldown = %s, want exactly the newer 55m window", got)
 	}
 
 	// A genuinely newer Retry-After still extends past every observation.
 	p.RememberCooldown(key, 2*time.Hour)
-	if got := p.Cooldown(key); got < 119*time.Minute || got > 121*time.Minute {
-		t.Fatalf("extended cooldown = %s, want two hours", got)
+	if got := p.Cooldown(key); got != 2*time.Hour {
+		t.Fatalf("extended cooldown = %s, want exactly two hours", got)
 	}
 }
 
