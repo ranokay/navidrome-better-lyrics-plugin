@@ -27,6 +27,16 @@ HOOK = "\tsvc.client = &http.Client{Transport: httpclient.NewTransport(svc.trans
 KV_FILTER = "const notExpiredFilter = \"(expires_at IS NULL OR expires_at >= datetime('now'))\""
 KV_TTL = "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', ?))"
 CLOCK_OFFSET_PATTERN = re.compile(r"^[+-][0-9]{1,4} (seconds?|minutes?|hours?|days?)$")
+
+
+def clock_offset_argument(value: str) -> str:
+    if not CLOCK_OFFSET_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "expected an offset like '+25 hours' or '-90 minutes'"
+        )
+    return value
+
+
 FIXTURE_HELPER = """
 
 // Qualification-only fixture transport. It is injected into the overlay build
@@ -219,19 +229,20 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host_checkout", type=Path)
     parser.add_argument("package", type=Path)
     parser.add_argument("fixtures", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--tags", default="netgo,sqlite_fts5")
-    parser.add_argument("--clock-offset", default="")
-    return parser.parse_args()
+    parser.add_argument("--clock-offset", type=clock_offset_argument)
+    return parser.parse_args(argv)
 
 
 def main() -> int:
     args = parse_args()
+    clock_offset = args.clock_offset or ""
     checkout = args.host_checkout.resolve(strict=True)
     package = args.package.resolve(strict=True)
     fixtures = args.fixtures.resolve(strict=True)
@@ -243,7 +254,7 @@ def main() -> int:
     overlay_dir = args.output / "qualification"
     overlay_dir.mkdir(parents=True, exist_ok=True)
     replacements, hashes = prepare_overlays(
-        checkout, overlay_dir, args.clock_offset
+        checkout, overlay_dir, clock_offset
     )
     fixtures_copy = overlay_dir / "fixtures.json"
     shutil.copyfile(fixtures, fixtures_copy)
@@ -278,7 +289,7 @@ def main() -> int:
         "packageSHA256": sha256(package_copy),
         "fixturesSHA256": sha256(fixtures_copy),
         **hashes,
-        "qualificationClockOffset": args.clock_offset,
+        "qualificationClockOffset": clock_offset,
         "binarySHA256": sha256(binary),
         "fixturePath": str(fixtures_copy),
         "packagePath": str(package_copy),

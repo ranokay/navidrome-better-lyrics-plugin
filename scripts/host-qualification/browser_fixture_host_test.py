@@ -1,3 +1,5 @@
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +56,25 @@ class RewriteKVStoreTest(unittest.TestCase):
             host.rewrite_kvstore(kv_source() + host.KV_TTL, "+25 hours")
 
 
+class ParseArgsTest(unittest.TestCase):
+    def parse(self, *extra):
+        return host.parse_args(
+            ["host", "package", "fixtures", "output", *extra]
+        )
+
+    def test_default_requests_no_clock_overlay(self):
+        self.assertIsNone(self.parse().clock_offset)
+
+    def test_accepts_a_valid_clock_offset(self):
+        self.assertEqual(self.parse("--clock-offset", "+25 hours").clock_offset, "+25 hours")
+
+    def test_rejects_an_invalid_clock_offset_with_a_cli_error(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                self.parse("--clock-offset", "+25 hours\n")
+        self.assertEqual(raised.exception.code, 2)
+
+
 class PrepareOverlaysTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -66,8 +87,11 @@ class PrepareOverlaysTest(unittest.TestCase):
         self.overlay_dir.mkdir()
 
     def test_default_build_is_http_only_without_a_kvstore(self):
+        default_offset = host.parse_args(
+            ["host", "package", "fixtures", "output"]
+        ).clock_offset
         replacements, hashes = host.prepare_overlays(
-            self.checkout, self.overlay_dir, ""
+            self.checkout, self.overlay_dir, default_offset
         )
         self.assertEqual(list(replacements), [str(self.checkout / host.HTTPCLIENT)])
         self.assertIn("overlaySHA256", hashes)
