@@ -167,6 +167,11 @@ func (p *Provider) resetSourceFailure(sourceID string) {
 // operation that observed the success. A stale success cannot erase a newer
 // failure backoff.
 func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) {
+	if p.readSourceFailure(sourceID).Failures == 0 {
+		// A healthy source with no recorded failure needs no reset marker;
+		// writing one per success would grow unbounded control records.
+		return
+	}
 	resetAt := p.now().UnixMilli()
 	if !started.IsZero() {
 		resetAt = started.UnixMilli()

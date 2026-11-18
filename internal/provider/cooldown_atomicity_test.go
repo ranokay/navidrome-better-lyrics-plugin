@@ -127,3 +127,24 @@ func TestFailureObservationsSurviveLostUpdate(t *testing.T) {
 		t.Fatalf("backoff after a lost-update observation = %s, want B's 2s remaining window", got)
 	}
 }
+
+func TestHealthyResetWritesNoFailureObservation(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(20_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+
+	p.resetSourceFailureBefore("one", now)
+	if keys, err := cache.List(sourceFailureResetObservationPrefix + "one:"); err != nil || len(keys) != 0 {
+		t.Fatalf("healthy reset observations = %v, %v; want none", keys, err)
+	}
+	if _, exists, err := cache.Get(sourceFailureResetKey("one")); err != nil || exists {
+		t.Fatalf("healthy legacy reset = %v, %v; want none", exists, err)
+	}
+
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	p.resetSourceFailureBefore("one", now.Add(time.Second))
+	if keys, err := cache.List(sourceFailureResetObservationPrefix + "one:"); err != nil || len(keys) != 1 {
+		t.Fatalf("recovery reset observations = %v, %v; want one", keys, err)
+	}
+}
