@@ -92,6 +92,8 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 			p.rememberSourceFailure(src.ID, err)
 		}
 		p.logSourceFailure(src.ID, started, err)
+		p.releasePublication()
+		p.publication = nil
 		return lyric.Original{}, "selection unavailable"
 	}
 	if health <= source.Uncertain {
