@@ -89,3 +89,11 @@ BETTER_LYRICS_FIXTURES=/path/to/runtime-output/qualification/fixtures.json \
 
 This is a qualification build for deterministic browser downloads, not a
 released-host or live-provider claim.
+
+`--clock-offset "+25 hours"` additionally overlays the host's plugin KV store
+with a qualification-only TTL clock. It forces real cache expiry in a
+disposable run without deleting rows: the same database file and the
+10-year instance-salt row are retained. The modifier is strictly validated and
+recorded in `qualification/receipt.json` as `qualificationClockOffset`; the
+overlay hash is recorded too. Build a second binary without the option when a
+phase must observe the cache before expiry.
