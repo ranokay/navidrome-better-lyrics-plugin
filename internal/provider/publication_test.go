@@ -221,3 +221,26 @@ func TestRefreshTailCarriesDeferredSources(t *testing.T) {
 		t.Fatalf("tail payload = %#v, want the two deferred sources and the refresh token", payload)
 	}
 }
+
+func TestCompletedMarkerOverridesStaleWinnerFlag(t *testing.T) {
+	t.Parallel()
+	cache := newFakeLyricsCache()
+	sources := []source.Source{{
+		ID: "only", Display: "Only", Hosts: []string{"only.example.test"}, DefaultEnabled: true,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return []lyric.Candidate{ttmlCandidate("Word")}, source.Healthy, nil
+		},
+	}}
+	p := newTestProviderWithSources(nil, cache, time.Now, sources, func(lyrics.TrackInfo) error { return nil })
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	candidate := ttmlCandidate("Line")
+	p.cacheWinnerUntil(track, sources, candidate, false, time.Now().Add(time.Hour).Unix(), nil)
+	_ = p.storeSweepMarker(p.doneMarkerKey(track, sources), 3600)
+	_, _, _, completion, err := p.resolveLyrics(lyrics.GetLyricsRequest{Track: track}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completion {
+		t.Fatal("active completion marker did not override a stale winner flag")
+	}
+}
