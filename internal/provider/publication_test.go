@@ -21,6 +21,7 @@ type fakePublisher struct {
 	commitErr error
 	commits   [][]byte
 	admits    int
+	releases  int
 	cache     Store
 }
 
@@ -32,6 +33,9 @@ func (f *fakePublisher) Admit(trackKey string, request []byte) ([]byte, error) {
 	var admission admissionWire
 	if err := json.Unmarshal(request, &admission); err != nil {
 		return nil, err
+	}
+	if admission.Action == "release" {
+		f.releases++
 	}
 	token := f.token
 	if token == "" {
@@ -242,5 +246,27 @@ func TestCompletedMarkerOverridesStaleWinnerFlag(t *testing.T) {
 	}
 	if !completion {
 		t.Fatal("active completion marker did not override a stale winner flag")
+	}
+}
+
+func TestOriginalRefetchFailureReleasesAdmission(t *testing.T) {
+	t.Parallel()
+	src := source.Source{
+		ID: "only", Display: "Only", Hosts: []string{"only.example.test"}, DefaultEnabled: true,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return nil, source.Degraded, errors.New("upstream down")
+		},
+	}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, func(lyrics.TrackInfo) error { return nil })
+	publisher := &fakePublisher{handled: true, accepted: true, token: "token", cache: cache}
+	p.publisher = publisher
+	identity := lyric.NewVariantIdentity(p.sourceInstanceID("only"), "recording", "", "main", "elrc")
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	if _, reason := p.GetLyricsOriginalPublished(track, identity, Publication{Generation: "generation", CallID: "call"}); reason != "selection unavailable" {
+		t.Fatalf("reason = %q", reason)
+	}
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the failed refetch admission released", publisher.releases)
 	}
 }
