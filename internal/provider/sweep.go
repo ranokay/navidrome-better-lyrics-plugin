@@ -147,10 +147,14 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 			_ = p.storeSweepMarker(markerKey, 1)
 		}
 	}
-	if payload.Refresh && !continuationQueued {
-		if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
-			_ = p.storeSweepMarker(key, 1)
+	if !continuationQueued {
+		if payload.Refresh {
+			if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
+				_ = p.storeSweepMarker(key, 1)
+			}
 		}
+		// Every terminal task releases its slot, including ordinary sweeps
+		// that produced no commit.
 		p.releaseOperation(payload.Track, payload.Publication)
 	}
 	return status, nil
@@ -421,10 +425,12 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 			}
 		}
 	}
-	if _, err := p.commitPublication(complete, refresh, 0); err != nil {
+	if _, err := p.commitPublication(complete, refresh, p.pendingSnapshotExpiry(track, fullOrder)); err != nil {
 		p.releasePublication()
 		p.publication = nil
-		return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d stale-publication", cached, skipped, failed, deferred), deferredIDs, fullOrder
+		// The admission is gone; a continuation carrying this token cannot
+		// resume and would only leave the markers suppressed for their TTL.
+		return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d stale-publication", cached, skipped, failed, deferred), nil, fullOrder
 	}
 	p.publication = nil
 	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, fullOrder
@@ -578,6 +584,11 @@ func (p *Provider) prepareRefreshTail(track lyrics.TrackInfo, sources []source.S
 		remaining = append(remaining, src.ID)
 	}
 	if len(remaining) == 0 {
+		// A newer refresh that needs no tail retires any stale queued-tail
+		// marker, otherwise it would suppress new sweeps for the marker TTL.
+		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
+			_ = p.storeSweepMarker(markerKey, 1)
+		}
 		return
 	}
 	p.tailSources = remaining

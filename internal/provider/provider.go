@@ -182,7 +182,7 @@ func (p *Provider) GetLyricsPublished(input lyrics.GetLyricsRequest, meta Public
 	if errors.Is(err, errPublicationSuperseded) {
 		return lyrics.GetLyricsResponse{}, err
 	}
-	if _, commitErr := p.commitPublication(sweepComplete, false, 0); commitErr != nil {
+	if _, commitErr := p.commitPublication(sweepComplete, false, p.pendingSnapshotExpiry(input.Track, sources)); commitErr != nil {
 		// The classic host cache must not retain a rejected publication.
 		return lyrics.GetLyricsResponse{}, commitErr
 	}
@@ -231,12 +231,8 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 	}
 	tailSources := p.tailSources
 	tailOp := p.tailOp
-	snapshotExpiresAt := int64(0)
-	if p.publication != nil && len(p.publication.writes) > 0 {
-		snapshotExpiresAt = p.snapshotExpiry(input.Track, sources)
-	}
 	committedDiscovery, commitErr := p.commitPublication(
-		sweepComplete, refresh && len(tailSources) > 0, snapshotExpiresAt,
+		sweepComplete, refresh && len(tailSources) > 0, p.pendingSnapshotExpiry(input.Track, sources),
 	)
 	if refresh && commitErr == nil {
 		if len(tailSources) > 0 {
@@ -244,10 +240,11 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 				p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
 				p.releaseOperation(input.Track, tailOp)
 			}
-		} else {
+		} else if p.enqueueMeta.Token == "" {
 			// A refresh that resolved entirely from cache has no commit to
 			// release its admission; release it here so foreground work is
-			// not blocked for the host TTL.
+			// not blocked for the host TTL. A queued full sweep keeps the
+			// token so it can finish the uncovered sources.
 			p.releasePublication()
 			p.publication = nil
 		}
@@ -383,6 +380,13 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		if best, expiry := p.readBestFromSourceCache(track, sources); best.Present() {
 			if err := p.ensurePublication(track); err != nil {
 				return lyric.Candidate{}, nil, nil, false, err
+			}
+			// Re-read after admission: another refresh may have replaced the
+			// positive while this lookup was waiting for its admission.
+			if fresh, freshExpiry := p.readBestFromSourceCache(track, sources); fresh.Present() {
+				best, expiry = fresh, freshExpiry
+			} else {
+				return lyric.Candidate{}, sources, nil, false, nil
 			}
 			complete := p.discoveryComplete(track, sources)
 			p.cacheWinnerUntil(track, sources, best, complete, expiry, nil)
@@ -523,7 +527,7 @@ func (p *Provider) readCachedView(track lyrics.TrackInfo, sources []source.Sourc
 	complete := sweepComplete || p.sweepMarkerActive(p.doneMarkerKey(track, sources))
 	best, _ := p.readBestFromSourceCache(track, sources)
 	if best.Present() && (!winner.Present() || lyric.AtLeastAsPreferred(winner, best)) {
-		return best, nil, complete, true
+		return best, evidence, complete, true
 	}
 	if winner.Present() || ok {
 		return winner, evidence, complete, true
@@ -654,10 +658,11 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest, refresh bool) (lyr
 				best = lyric.Prefer(best, *candidate)
 			}
 		}
+		storedAny := true
 		if len(assessed) > 0 {
-			p.cacheSourceCandidates(track, src.ID, assessed)
+			storedAny = p.cacheSourceCandidates(track, src.ID, assessed)
 		}
-		coveredThisSource := !sourceFailed
+		coveredThisSource := !sourceFailed && storedAny
 		if !foundCandidate && !sourceFailed {
 			switch sourceHealth {
 			case source.Healthy, source.Uncertain:
@@ -669,7 +674,9 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest, refresh bool) (lyr
 				// lookups skip the refetch. The miss keys
 				// carry the credential fingerprint, so a configured key or
 				// token re-authorizes them immediately.
-				p.cacheSourceMiss(track, src.ID)
+				if !p.cacheSourceMiss(track, src.ID) {
+					coveredThisSource = false
+				}
 			case source.TemporarilySkipped:
 				// Token rejects are not covered work: the next lookup remints
 				// and retries, and the pass must not report complete

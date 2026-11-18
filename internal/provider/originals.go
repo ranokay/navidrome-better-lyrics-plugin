@@ -103,7 +103,7 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 		p.prepareCandidate(track, sourceID, &candidates[index])
 	}
 	p.cacheSourceCandidates(track, sourceID, candidates)
-	if _, err := p.commitPublication(p.discoveryComplete(track, p.activeSources()), false, 0); err != nil {
+	if _, err := p.commitPublication(p.discoveryComplete(track, p.activeSources()), false, p.pendingSnapshotExpiry(track, p.activeSources())); err != nil {
 		return lyric.Original{}, "selection unavailable"
 	}
 	if p.publication != nil && p.publication.active {

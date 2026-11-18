@@ -346,6 +346,16 @@ func (p *Provider) currentState(track lyrics.TrackInfo) (Discovery, bool) {
 	return Discovery{Revision: state.Revision, Complete: state.Complete}, true
 }
 
+// pendingSnapshotExpiry returns the dependency deadline for a commit that
+// actually has buffered writes. Read-only responses have no state claim to
+// bound.
+func (p *Provider) pendingSnapshotExpiry(track lyrics.TrackInfo, sources []source.Source) int64 {
+	if p.publication == nil || len(p.publication.writes) == 0 {
+		return 0
+	}
+	return p.snapshotExpiry(track, sources)
+}
+
 // snapshotExpiry bounds a published revision by every cached dependency that
 // fed the response, not only the writes in this batch.
 func (p *Provider) snapshotExpiry(track lyrics.TrackInfo, sources []source.Source) int64 {
