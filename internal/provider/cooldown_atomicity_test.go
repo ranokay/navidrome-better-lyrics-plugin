@@ -217,70 +217,146 @@ func TestControlMergeFailureIsMonotonic(t *testing.T) {
 	}
 }
 
-func TestMergedForegroundReadsAreBounded(t *testing.T) {
+func TestCapableReadsAreBoundedWithRetainedObservations(t *testing.T) {
 	t.Parallel()
-	now := time.UnixMilli(130_000)
-	cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
-	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache.fakeLyricsCache}
-	for i := 0; i < 1000; i++ {
-		key := sourceFailureObservationPrefix + "one:" + strconv.Itoa(i)
-		if err := cache.SetWithTTL(key, []byte(`{"failures":1,"until":9999999999999}`), 600); err != nil {
-			t.Fatal(err)
+	for _, missingRow := range []bool{false, true} {
+		name := "with-row"
+		if missingRow {
+			name = "missing-row"
 		}
-	}
-	reducer, err := json.Marshal(sourceFailureState{Failures: 1, Until: 140000, UpdatedAt: 130000})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cache.SetWithTTL(sourceFailureKey("one"), reducer, 600); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 1000; i++ {
-		key := source.GlobalCooldownKey("one") + cooldownObservationSuffix + strconv.Itoa(i)
-		if err := cache.SetWithTTL(key, []byte("999999"), 3600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cache.gets, cache.lists = 0, 0
-	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
-		t.Fatalf("backoff = %s, want 10s", got)
-	}
-	if cache.lists != 0 || cache.gets > 3 {
-		t.Fatalf("failure read work = %d gets, %d lists; want at most 3 gets and no list", cache.gets, cache.lists)
-	}
-	cache.gets, cache.lists = 0, 0
-	if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
-		t.Fatalf("cooldown = %s, want none", got)
-	}
-	if cache.lists != 0 || cache.gets != 2 {
-		t.Fatalf("cooldown read work = %d gets, %d lists; want base+marker gets and no list", cache.gets, cache.lists)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			now := time.UnixMilli(130_000)
+			cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
+			p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+			p.publisher = &fakePublisher{
+				handled: true, active: "generation", control: true,
+				reduceErr: errors.New("reducer unavailable"), cache: cache.fakeLyricsCache,
+			}
+			for i := 0; i < 1000; i++ {
+				key := sourceFailureObservationPrefix + "one:" + strconv.Itoa(i)
+				if err := cache.SetWithTTL(key, []byte(`{"failures":1,"until":9999999999999}`), 600); err != nil {
+					t.Fatal(err)
+				}
+				key = source.GlobalCooldownKey("one") + cooldownObservationSuffix + strconv.Itoa(i)
+				if err := cache.SetWithTTL(key, []byte("999999"), 3600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !missingRow {
+				reducer, err := json.Marshal(sourceFailureState{Failures: 1, Until: 140000, UpdatedAt: 130000})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := cache.SetWithTTL(sourceFailureKey("one"), reducer, 600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Repeated reducer errors must not create observations or a
+			// marker that forces a scan.
+			p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+			p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+			cache.gets, cache.lists = 0, 0
+			if got := p.sourceFailureBackoff("one"); (missingRow && got != 0) || (!missingRow && got != 10*time.Second) {
+				t.Fatalf("backoff = %s, missingRow=%v", got, missingRow)
+			}
+			if cache.lists != 0 || cache.gets > 2 {
+				t.Fatalf("failure read work = %d gets, %d lists; want at most 2 gets and no list", cache.gets, cache.lists)
+			}
+			cache.gets, cache.lists = 0, 0
+			if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
+				t.Fatalf("cooldown = %s, want none", got)
+			}
+			if cache.lists != 0 || cache.gets != 1 {
+				t.Fatalf("cooldown read work = %d gets, %d lists; want one get and no list", cache.gets, cache.lists)
+			}
+		})
 	}
 }
 
-func TestControlMergeFailureFallsBackToLegacy(t *testing.T) {
+func TestIndeterminateCapabilityDoesNotWriteLegacy(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(140_000, 0)
 	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	publisher := &fakePublisher{
+		handled: true, active: "generation", control: true,
+		controlErr: errors.New("kv unavailable"), cache: cache,
+	}
+	p.publisher = publisher
+	key := source.GlobalCooldownKey("one")
+	if err := cache.SetWithTTL(key, []byte(strconv.FormatInt(now.Add(time.Hour).Unix(), 10)), 3600); err != nil {
+		t.Fatal(err)
+	}
+	row, err := json.Marshal(sourceFailureState{Failures: 1, Until: now.Add(30 * time.Second).UnixMilli(), UpdatedAt: now.UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureKey("one"), row, 600); err != nil {
+		t.Fatal(err)
+	}
+
+	p.RememberCooldown(key, time.Minute)
+	if got := p.Cooldown(key); got != time.Hour {
+		t.Fatalf("cooldown with an indeterminate capability = %s, want the canonical hour", got)
+	}
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	if got := p.sourceFailureBackoff("one"); got != 30*time.Second {
+		t.Fatalf("backoff with an indeterminate capability = %s, want the canonical window", got)
+	}
+
+	// A later successful probe must not have been cached as unsupported.
+	publisher.controlErr = nil
+	p.RememberCooldown(key, 2*time.Hour)
+	if got := p.Cooldown(key); got != 2*time.Hour {
+		t.Fatalf("cooldown after the probe recovered = %s, want two hours", got)
+	}
+}
+
+func TestControlMergeFailurePreservesCanonicalState(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(140_000, 0)
+	cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
 	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
 	p.publisher = &fakePublisher{
 		handled: true, active: "generation", control: true,
 		mergeErr: errors.New("control unavailable"), reduceErr: errors.New("control unavailable"), cache: cache,
 	}
 	key := source.GlobalCooldownKey("one")
-	p.RememberCooldown(key, time.Hour)
-	now = now.Add(5 * time.Minute)
-	if got := p.Cooldown(key); got < 54*time.Minute || got > 56*time.Minute {
-		t.Fatalf("fallback cooldown = %s, want the legacy observation window", got)
+	if err := cache.SetWithTTL(key, []byte(strconv.FormatInt(now.Add(time.Hour).Unix(), 10)), 3600); err != nil {
+		t.Fatal(err)
+	}
+	row, err := json.Marshal(sourceFailureState{Failures: 1, Until: now.Add(30 * time.Second).UnixMilli(), UpdatedAt: now.UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureKey("one"), row, 600); err != nil {
+		t.Fatal(err)
 	}
 
+	// A failed merge must not replace the longer canonical deadline with the
+	// shorter one. It must not even read-modify-write the canonical key.
+	cache.gets, cache.lists = 0, 0
+	p.RememberCooldown(key, time.Minute)
+	if cache.gets != 0 || cache.lists != 0 {
+		t.Fatalf("failed merge work = %d gets, %d lists; want no canonical access", cache.gets, cache.lists)
+	}
+	if got := p.Cooldown(key); got != time.Hour {
+		t.Fatalf("cooldown after a failed merge = %s, want the canonical hour", got)
+	}
 	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
-	if got := p.sourceFailureBackoff("one"); got <= 0 {
-		t.Fatal("fallback failure state was not persisted")
+	if got := p.sourceFailureBackoff("one"); got != 30*time.Second {
+		t.Fatalf("backoff after a failed reduce = %s, want the canonical 30s window", got)
 	}
 	p.resetSourceFailureBefore("one", now.Add(time.Second))
-	if got := p.sourceFailureBackoff("one"); got != 0 {
-		t.Fatalf("fallback reset left backoff = %s, want clear", got)
+	if got := p.sourceFailureBackoff("one"); got != 30*time.Second {
+		t.Fatalf("backoff after a failed reset = %s, want the canonical window", got)
+	}
+	if keys, err := cache.List(sourceFailureObservationPrefix + "one:"); err != nil || len(keys) != 0 {
+		t.Fatalf("fallback observations = %v, %v; want none", keys, err)
+	}
+	if raw, exists, err := cache.Get(sourceFailureKey("one")); err != nil || !exists || string(raw) != string(row) {
+		t.Fatalf("canonical failure row = %q, %v; want it unchanged", raw, err)
 	}
 }
 
@@ -348,7 +424,7 @@ func TestCooldownMergeFailureSurvivesNextInvocation(t *testing.T) {
 	cache := listableCache{newFakeLyricsCache()}
 	key := source.GlobalCooldownKey("one")
 	first := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	first.publisher = &fakePublisher{handled: true, active: "generation", control: true, mergeErr: errors.New("merge failed"), cache: cache}
+	first.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
 	first.RememberCooldown(key, time.Hour)
 	now = now.Add(5 * time.Minute)
 	second := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
@@ -359,7 +435,7 @@ func TestCooldownMergeFailureSurvivesNextInvocation(t *testing.T) {
 	}
 }
 
-func TestReducerFallbackObservationWinsOverStaleRow(t *testing.T) {
+func TestReducerFailureLeavesCanonicalRowUnchanged(t *testing.T) {
 	t.Parallel()
 	now := time.UnixMilli(130_000)
 	cache := listableCache{newFakeLyricsCache()}
@@ -377,9 +453,11 @@ func TestReducerFallbackObservationWinsOverStaleRow(t *testing.T) {
 	}
 	now = time.UnixMilli(140_000)
 	p.rememberSourceFailure("one", now, errors.New("new failure"))
-	now = time.UnixMilli(145_000)
-	if got := p.sourceFailureBackoff("one"); got != 5*time.Second {
-		t.Fatalf("backoff from fallback observation = %s, want the newer 5s window", got)
+	if keys, err := cache.List(sourceFailureObservationPrefix + "one:"); err != nil || len(keys) != 0 {
+		t.Fatalf("fallback observations = %v, %v; want none", keys, err)
+	}
+	if raw, exists, err := cache.Get(sourceFailureKey("one")); err != nil || !exists || string(raw) != string(row) {
+		t.Fatalf("canonical row = %q, %v; want it unchanged", raw, err)
 	}
 }
 
@@ -403,7 +481,7 @@ func TestFallbackFailurePreservesCommittedReset(t *testing.T) {
 
 func TestOutOfOrderFailureObservationsKeepEscalatedWindow(t *testing.T) {
 	t.Parallel()
-	for name, control := range map[string]bool{"legacy": false, "control-fallback": true} {
+	for name, control := range map[string]bool{"legacy": false, "control": true} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			now := time.UnixMilli(100_000)
@@ -411,8 +489,7 @@ func TestOutOfOrderFailureObservationsKeepEscalatedWindow(t *testing.T) {
 			p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
 			if control {
 				p.publisher = &fakePublisher{
-					handled: true, active: "generation", control: true,
-					reduceErr: errors.New("reducer unavailable"), cache: cache.fakeLyricsCache,
+					handled: true, active: "generation", control: true, cache: cache.fakeLyricsCache,
 				}
 			}
 			p.rememberSourceFailure("one", now, errors.New("first"))
@@ -444,9 +521,6 @@ func TestOlderRecoveryAdvancesResetEpoch(t *testing.T) {
 	if keys, err := cache.List(sourceFailureObservationPrefix + "one:"); err != nil || len(keys) != 0 {
 		t.Fatalf("observations after a retained reset = %v, %v; want none", keys, err)
 	}
-	if _, exists, err := cache.Get(failureFallbackMarkerKey("one")); err != nil || exists {
-		t.Fatalf("fallback marker after a retained reset = %v, %v; want none", exists, err)
-	}
 	now = time.UnixMilli(310_000)
 	p.rememberSourceFailure("one", time.UnixMilli(205_000), errors.New("late pre-recovery failure"))
 	if got := p.sourceFailureBackoff("one"); got != 0 {
@@ -454,7 +528,7 @@ func TestOlderRecoveryAdvancesResetEpoch(t *testing.T) {
 	}
 }
 
-func TestFallbackObservationCannotBypassCommittedReset(t *testing.T) {
+func TestReducerFailureCannotBypassCommittedReset(t *testing.T) {
 	t.Parallel()
 	now := time.UnixMilli(150_000)
 	cache := listableCache{newFakeLyricsCache()}
@@ -464,33 +538,12 @@ func TestFallbackObservationCannotBypassCommittedReset(t *testing.T) {
 	p.rememberSourceFailure("one", now, errors.New("pre-reset failure"))
 	now = time.UnixMilli(200_000)
 	p.resetSourceFailureBefore("one", now)
-	publisher.reduceErr = errors.New("reducer unavailable")
 	now = time.UnixMilli(300_000)
 	p.rememberSourceFailure("one", now, errors.New("post-reset failure"))
+	publisher.reduceErr = errors.New("reducer unavailable")
 	now = time.UnixMilli(301_000)
 	p.rememberSourceFailure("one", time.UnixMilli(150_000), errors.New("late pre-reset failure"))
 	if got := p.sourceFailureBackoff("one"); got != 4*time.Second {
-		t.Fatalf("backoff after a pre-reset fallback observation = %s, want the post-reset 4s window", got)
-	}
-}
-
-func TestResetVerifiesNewerFailureSurvives(t *testing.T) {
-	t.Parallel()
-	now := time.UnixMilli(90_000)
-	cache := listableCache{newFakeLyricsCache()}
-	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	p.publisher = &fakePublisher{
-		handled: true, active: "generation", control: true,
-		clearOnReset: true, cache: cache,
-	}
-	p.rememberSourceFailure("one", now, errors.New("first failure"))
-	now = time.UnixMilli(120_000)
-	p.rememberSourceFailure("one", now, errors.New("newer failure"))
-	// This recovery started before the newer failure. A host that clears it
-	// anyway must not lose the surviving window.
-	p.resetSourceFailureBefore("one", time.UnixMilli(110_000))
-	now = time.UnixMilli(126_000)
-	if got := p.sourceFailureBackoff("one"); got != 4*time.Second {
-		t.Fatalf("backoff after an over-eager host reset = %s, want the newer 4s window", got)
+		t.Fatalf("backoff during a reducer outage = %s, want the post-reset 4s window", got)
 	}
 }

@@ -83,7 +83,7 @@ type Provider struct {
 	pubMeta      Publication
 	pubKind      string
 	mergeMu      sync.Mutex
-	mergeChecked bool
+	controlState controlCapability
 	merger       maxMerger
 	// enqueueMeta is captured before a sweep task is enqueued and carried in
 	// the payload; execution never adopts a newer generation by re-reading.

@@ -53,67 +53,34 @@ func (p *Provider) validSourceFailure(state sourceFailureState) bool {
 }
 
 func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
-	if _, ok := p.controlMerge(); ok {
-		if state, found := p.readReducerSourceFailure(sourceID); found {
-			return state
-		}
-		if lister, ok := p.cache.(storeLister); ok {
-			if state, found := p.readObservedSourceFailure(sourceID, lister, 0); found {
-				resetAt := max(state.ResetAt, p.readLegacyReset(sourceID))
-				if sourceFailureObservedAt(state) < resetAt {
-					return sourceFailureState{}
-				}
-				state.ResetAt = resetAt
-				return state
-			}
-		}
-		return p.readLegacySourceFailure(sourceID)
+	if _, capability := p.controlMode(); capability != controlUnsupported {
+		// Capable and indeterminate hosts read only the canonical tuple.
+		return p.readReducerSourceFailure(sourceID)
 	}
 	if lister, ok := p.cache.(storeLister); ok {
-		if state, found := p.readObservedSourceFailure(sourceID, lister, 0); found {
+		if state, found := p.readObservedSourceFailure(sourceID, lister); found {
 			return state
 		}
 	}
 	return p.readLegacySourceFailure(sourceID)
 }
 
-func (p *Provider) readReducerSourceFailure(sourceID string) (sourceFailureState, bool) {
+func (p *Provider) readReducerSourceFailure(sourceID string) sourceFailureState {
+	resetAt := p.readLegacyReset(sourceID)
 	value, exists, err := p.cache.Get(sourceFailureKey(sourceID))
-	rowState := sourceFailureState{}
-	rowValid := false
-	if err == nil && exists {
-		if json.Unmarshal(value, &rowState) == nil && p.validSourceFailure(rowState) {
-			rowValid = true
-		}
+	if err != nil || !exists {
+		return sourceFailureState{ResetAt: resetAt}
 	}
-	var observedState sourceFailureState
-	observedValid := false
-	if _, marked, markerErr := p.cache.Get(failureFallbackMarkerKey(sourceID)); markerErr == nil && marked {
-		if lister, ok := p.cache.(storeLister); ok {
-			rowReset := max(rowState.ResetAt, p.readLegacyReset(sourceID))
-			if observed, found := p.readObservedSourceFailure(sourceID, lister, rowReset); found {
-				observedState, observedValid = observed, true
-			}
-		}
+	var state sourceFailureState
+	if json.Unmarshal(value, &state) != nil || !p.validSourceFailure(state) {
+		return sourceFailureState{ResetAt: resetAt}
 	}
-	state := rowState
-	valid := rowValid
-	if observedValid && (!valid || observedState.UpdatedAt > state.UpdatedAt ||
-		(observedState.UpdatedAt == state.UpdatedAt && observedState.Until > state.Until)) {
-		state, valid = observedState, true
-	}
-	if !valid {
-		if !exists && !observedValid {
-			return sourceFailureState{}, false
-		}
-		return sourceFailureState{ResetAt: rowState.ResetAt}, true
-	}
-	resetAt := max(max(state.ResetAt, rowState.ResetAt), p.readLegacyReset(sourceID))
-	if sourceFailureObservedAt(state) < resetAt {
-		return sourceFailureState{ResetAt: resetAt}, true
+	resetAt = max(state.ResetAt, resetAt)
+	if state.UpdatedAt < resetAt {
+		return sourceFailureState{ResetAt: resetAt}
 	}
 	state.ResetAt = resetAt
-	return state, true
+	return state
 }
 
 func (p *Provider) readLegacyReset(sourceID string) int64 {
@@ -128,12 +95,12 @@ func (p *Provider) readLegacyReset(sourceID string) int64 {
 	return parsed
 }
 
-func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister, resetFloor int64) (sourceFailureState, bool) {
+func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister) (sourceFailureState, bool) {
 	keys, err := lister.List(sourceFailureObservationPrefix + sourceID + ":")
 	if err != nil {
 		return sourceFailureState{}, false
 	}
-	resetAt := max(p.readSourceFailureReset(sourceID, lister), resetFloor)
+	resetAt := p.readSourceFailureReset(sourceID, lister)
 	var best sourceFailureState
 	found := false
 	for _, key := range keys {
@@ -146,7 +113,7 @@ func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister
 			continue
 		}
 		// Sort by the merged timestamp but judge staleness by the failure's
-		// own start, including any reset that only the reducer row knows.
+		// own start, including a recovery timestamp carried by the record.
 		if sourceFailureObservedAt(state) < max(resetAt, state.ResetAt) {
 			continue
 		}
@@ -230,45 +197,30 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	// regress newer failure state past a recovery reset.
 	state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
 	state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
-	if merger, ok := p.controlMerge(); ok {
-		// The reducer must judge staleness by this failure's own start time,
-		// not by a newer row timestamp it merely merged.
-		if err := merger.ReduceFailure(sourceID, "failure", int64(state.Failures), state.Until, observedAt.UnixMilli(), 0, sourceFailureStateTTL); err == nil {
-			return
+	if merger, capability := p.controlMode(); capability != controlUnsupported {
+		// Capable or indeterminate hosts must not overwrite the canonical
+		// guard. A failed reduce leaves the existing tuple untouched.
+		if merger != nil {
+			// The reducer must judge staleness by this failure's own start
+			// time, not by a newer row timestamp it merely merged.
+			if err := merger.ReduceFailure(sourceID, "failure", int64(state.Failures), state.Until, observedAt.UnixMilli(), 0, sourceFailureStateTTL); err == nil {
+				return
+			}
+			p.logf("source failure reduce failed")
 		}
-		// Fall through to the append-only observation/legacy path on a
-		// transient reducer failure; the next call retries the reducer.
+		return
 	}
+	// Verified older hosts keep the append-only observation path.
 	observedState := state
 	observedState.ObservedAt = observedAt.UnixMilli()
 	// Append-only observations avoid the read-modify-write lost update:
 	// concurrent failures never overwrite each other, and readers pick the
 	// newest observation with the longest deadline.
 	p.storeFailureObservation(sourceID, observedState)
-	// Keep the legacy key for older plugin readers and non-list stores,
-	// where the merged timestamp/window is the best available guard. In
-	// control mode leave the reducer row (and its ResetAt) untouched.
-	if _, control := p.controlMerge(); !control {
-		legacyValue, legacyErr := json.Marshal(state)
-		if legacyErr == nil {
-			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
-		}
+	legacyValue, legacyErr := json.Marshal(state)
+	if legacyErr == nil {
+		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
 	}
-}
-
-// resetRetainedFailure reports whether the post-reset row still carries the
-// newer failure that the reset was not allowed to clear.
-func (p *Provider) resetRetainedFailure(sourceID string, prior sourceFailureState) bool {
-	raw, exists, err := p.cache.Get(sourceFailureKey(sourceID))
-	if err != nil || !exists {
-		return false
-	}
-	var after sourceFailureState
-	if json.Unmarshal(raw, &after) != nil {
-		return false
-	}
-	return after.Failures >= prior.Failures && after.Until >= prior.Until &&
-		after.UpdatedAt >= prior.UpdatedAt
 }
 
 func (p *Provider) storeFailureObservation(sourceID string, state sourceFailureState) {
@@ -280,7 +232,6 @@ func (p *Provider) storeFailureObservation(sourceID string, state sourceFailureS
 		key := fmt.Sprintf("%s%s:%d:%s", sourceFailureObservationPrefix, sourceID, state.UpdatedAt, newMarkerID())
 		_ = p.cache.SetWithTTL(key, value, sourceFailureStateTTL)
 	}
-	_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 }
 
 func (p *Provider) resetSourceFailure(sourceID string) {
@@ -301,19 +252,16 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	if !started.IsZero() {
 		resetAt = started.UnixMilli()
 	}
-	if merger, ok := p.controlMerge(); ok {
+	if merger, capability := p.controlMode(); capability != controlUnsupported {
 		// Always submit the conditional reset: the host keeps any failure
-		// newer than resetAt but still advances the recovery epoch. Verify
-		// that a newer failure survived before trusting the host.
-		if err := merger.ReduceFailure(sourceID, "reset", 0, 0, 0, resetAt, sourceFailureStateTTL); err == nil {
-			if state.UpdatedAt < resetAt || p.resetRetainedFailure(sourceID, state) {
-				return
+		// newer than resetAt but still advances the recovery epoch. A failed
+		// reduce leaves the canonical tuple untouched.
+		if merger != nil {
+			if err := merger.ReduceFailure(sourceID, "reset", 0, 0, 0, resetAt, sourceFailureStateTTL); err != nil {
+				p.logf("source failure reset reduce failed")
 			}
-			p.storeFailureObservation(sourceID, state)
-			return
 		}
-		// Fall through to the observation/legacy reset path on a transient
-		// reducer failure.
+		return
 	}
 	if lister, canList := p.cache.(storeLister); canList {
 		if p.readSourceFailureReset(sourceID, lister) >= resetAt {
@@ -330,25 +278,18 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	}
 	// Keep the legacy reset key for older plugin readers.
 	_ = p.cache.SetWithTTL(sourceFailureResetKey(sourceID), []byte(strconv.FormatInt(resetAt, 10)), sourceFailureStateTTL)
-	if _, control := p.controlMerge(); !control {
-		if state.UpdatedAt < resetAt {
-			// This success actually covers the recorded failure; an empty
-			// legacy record prevents a downgraded reader from retaining the old
-			// backoff. In control mode the reducer row keeps its ResetAt.
-			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
-		}
+	if state.UpdatedAt < resetAt {
+		// This success actually covers the recorded failure; an empty legacy
+		// record prevents a downgraded reader from retaining the old backoff.
+		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
 	}
-	_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 }
 
 // Cooldown reports the remaining provider-wide cooldown for a key; a cache
 // failure or corrupt value fails open.
 func (p *Provider) Cooldown(key string) time.Duration {
 	untilUnix := p.cooldownDeadline(key)
-	if _, ok := p.controlMerge(); ok {
-		if _, marked, err := p.cache.Get(cooldownMergeMarkerKey(key)); err == nil && marked {
-			untilUnix = p.maxCooldownObservation(key, untilUnix)
-		}
+	if _, capability := p.controlMode(); capability != controlUnsupported {
 		return cooldownRemaining(untilUnix, p.now())
 	}
 	untilUnix = p.maxCooldownObservation(key, untilUnix)
@@ -381,14 +322,6 @@ func cooldownRemaining(untilUnix int64, now time.Time) time.Duration {
 
 const cooldownObservationSuffix = ":observation:"
 
-func cooldownMergeMarkerKey(key string) string {
-	return "cooldown-merge-fallback:v1:" + key
-}
-
-func failureFallbackMarkerKey(sourceID string) string {
-	return "source-failure-fallback:v1:" + sourceID
-}
-
 func (p *Provider) cooldownDeadline(key string) int64 {
 	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
@@ -416,27 +349,15 @@ func (p *Provider) RememberCooldown(key string, retryAfter time.Duration) {
 	}
 	ttlSeconds := durationSecondsCeil(time.Unix(untilUnix, 0).Sub(now))
 	deadlineValue := []byte(strconv.FormatInt(untilUnix, 10))
-	if merger, ok := p.controlMerge(); ok {
-		if err := merger.MergeMax(key, untilUnix, ttlSeconds); err == nil {
-			return
-		} else {
-			p.logf(fmt.Sprintf("rate-limit cooldown merge failed: %v", p.safeDiagnosticError(err)))
-			if _, canList := p.cache.(storeLister); canList {
-				observation := key + cooldownObservationSuffix + strconv.FormatInt(untilUnix, 10)
-				if obsErr := p.cache.SetWithTTL(observation, deadlineValue, ttlSeconds); obsErr == nil {
-					observedUntil := p.maxCooldownObservation(key, untilUnix)
-					markerTTL := max(ttlSeconds, observedUntil-p.now().Unix())
-					if markerErr := p.cache.SetWithTTL(cooldownMergeMarkerKey(key), []byte("1"), markerTTL); markerErr == nil {
-						return
-					}
-				}
+	if merger, capability := p.controlMode(); capability != controlUnsupported {
+		// A failed or indeterminate merge leaves the canonical scalar alone;
+		// this invocation simply does not record its window.
+		if merger != nil {
+			if err := merger.MergeMax(key, untilUnix, ttlSeconds); err != nil {
+				p.logf(fmt.Sprintf("rate-limit cooldown merge failed: %v", p.safeDiagnosticError(err)))
 			}
-			// Do not replace a longer stored deadline with this shorter one.
-			if p.cooldownDeadline(key) < untilUnix {
-				_ = p.cache.SetWithTTL(key, deadlineValue, ttlSeconds)
-			}
-			return
 		}
+		return
 	}
 	if _, canList := p.cache.(storeLister); canList {
 		// Write the deadline-keyed observation first: if it cannot persist,

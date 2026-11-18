@@ -447,32 +447,44 @@ func (p *Provider) considerBundleExpiry(raw []byte, consider func(int64)) {
 	}
 }
 
-// controlMerge caches whether the live host advertises the controlMerge
-// capability for @navidrome/publication/control:<key>. The host merges the
-// cooldown scalar and reduces failure rows; a transient reducer failure
-// writes an append-only observation fallback that the reader consults while
-// its marker is live.
-func (p *Provider) controlMerge() (maxMerger, bool) {
+type controlCapability int
+
+const (
+	controlUnknown controlCapability = iota
+	controlUnsupported
+	controlCapable
+)
+
+// controlMode reports the cached host control capability. A probe error or a
+// malformed response stays unknown and is retried on the next call; only a
+// definitive false permits legacy writes. Capable and unknown hosts must
+// never fall back to an unconditional overwrite of canonical guards.
+func (p *Provider) controlMode() (maxMerger, controlCapability) {
 	p.mergeMu.Lock()
 	defer p.mergeMu.Unlock()
-	if p.mergeChecked {
-		return p.merger, p.merger != nil
-	}
-	p.mergeChecked = true
-	merger, ok := p.publisher.(maxMerger)
-	if !ok {
-		return nil, false
+	if p.controlState != controlUnknown {
+		return p.merger, p.controlState
 	}
 	reporter, ok := p.publisher.(capabilityReporter)
 	if !ok {
-		return nil, false
+		p.controlState = controlUnsupported
+		return nil, controlUnsupported
 	}
 	capable, err := reporter.ControlMerge()
-	if err != nil || !capable {
-		return nil, false
+	if err != nil {
+		return nil, controlUnknown
+	}
+	if !capable {
+		p.controlState = controlUnsupported
+		return nil, controlUnsupported
+	}
+	merger, ok := p.publisher.(maxMerger)
+	if !ok {
+		return nil, controlUnknown
 	}
 	p.merger = merger
-	return merger, true
+	p.controlState = controlCapable
+	return merger, controlCapable
 }
 
 // enqueuePublication captures the generation/token that a background task may
