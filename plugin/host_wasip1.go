@@ -92,9 +92,32 @@ func (hostStore) ReduceFailure(sourceID, operation string, failures, until, upda
 	if err := host.KVStoreSetWithTTL(publicationKeyPrefix+"control:"+target, request, ttlSeconds+60); err != nil {
 		return err
 	}
-	if _, exists, err := host.KVStoreGet(target); err != nil {
+	raw, exists, err := host.KVStoreGet(target)
+	if err != nil {
 		return err
-	} else if !exists {
+	}
+	if !exists {
+		return errControlMergeUnsupported
+	}
+	var state struct {
+		Failures  int64 `json:"failures"`
+		Until     int64 `json:"until"`
+		UpdatedAt int64 `json:"updatedAt"`
+		ResetAt   int64 `json:"resetAt"`
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return errControlMergeUnsupported
+	}
+	if operation == "reset" {
+		if state.ResetAt < resetAt {
+			return errControlMergeUnsupported
+		}
+		return nil
+	}
+	if updatedAt < state.ResetAt {
+		return nil
+	}
+	if state.Failures < failures || state.Until < until || state.UpdatedAt < updatedAt {
 		return errControlMergeUnsupported
 	}
 	return nil
