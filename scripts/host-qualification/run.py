@@ -71,8 +71,6 @@ def main() -> int:
     args = parser.parse_args()
     if not args.originals and args.expect != "originals":
         parser.error("--expect requires --originals")
-    if args.discovery and args.expect != "originals":
-        parser.error("--expect requires --originals")
     checkout = existing_path(parser, args.host_checkout, directory=True)
     package = existing_path(parser, args.package, directory=False)
     module_file = checkout / "go.mod"

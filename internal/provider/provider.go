@@ -142,6 +142,8 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.publication = nil
 	p.pubMeta = meta
 	p.pubKind = kind
+	p.enqueueMeta = Publication{}
+	p.enqueueRefresh = false
 }
 
 func (p *Provider) ensurePublication(track lyrics.TrackInfo) error {
@@ -254,7 +256,7 @@ func (p *Provider) currentV1Response(track lyrics.TrackInfo) (lyrics.GetLyricsRe
 	if len(sources) == 0 {
 		return lyrics.GetLyricsResponse{}, false
 	}
-	candidate, evidence, ok, _ := p.readCachedWinner(track, sources)
+	candidate, _, ok, _ := p.readCachedWinner(track, sources)
 	if !ok {
 		best, _ := p.readBestFromSourceCache(track, sources)
 		if !best.Present() {
@@ -262,7 +264,6 @@ func (p *Provider) currentV1Response(track lyrics.TrackInfo) (lyrics.GetLyricsRe
 		}
 		candidate = best
 	}
-	_ = evidence
 	return p.responsesWithVariants(track, sources, candidate), true
 }
 

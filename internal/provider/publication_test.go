@@ -38,10 +38,10 @@ func (f *fakePublisher) Admit(trackKey string, request []byte) ([]byte, error) {
 		token = "token"
 	}
 	response := admissionResponseWire{
-		Handled: true, Accepted: f.accepted || f.accepted == false && admission.Action != "admit",
+		Handled: true, Accepted: true,
 		RequestID: admission.RequestID, Generation: admission.Generation, Token: token, State: "active",
 	}
-	if admission.Action == "admit" && !f.accepted {
+	if admission.Action == "admit" {
 		response.Accepted = f.accepted
 	}
 	return json.Marshal(response)

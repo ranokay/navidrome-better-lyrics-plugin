@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
@@ -32,8 +31,6 @@ type Publisher interface {
 	Current(trackKey string) ([]byte, bool, error)
 	Active() (string, bool, error)
 }
-
-const publicationTTLSeconds = int64(30 * time.Minute / time.Second)
 
 const (
 	maxPublicationWrites = 64
@@ -116,7 +113,7 @@ func (p *Provider) publicationScope(track lyrics.TrackInfo, sources []source.Sou
 	if !ok || len(sources) == 0 {
 		return "", false
 	}
-	digest := sha256.Sum256([]byte(strings.Join(source.IDs(sources), "|") + "\x00" + p.lyricsCredentialsFingerprint()))
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s", lyricsCacheGeneration, strings.Join(source.IDs(sources), "|"), p.lyricsCredentialsFingerprint())))
 	return fmt.Sprintf("%x:%s", digest[:16], trackKey), true
 }
 
@@ -253,10 +250,6 @@ func (p *Provider) storeDiscoveryBytes(key string, value []byte, ttl int64) bool
 	return true
 }
 
-func (p *Provider) hasBufferedWrites() bool {
-	return p.publication != nil && p.publication.active && len(p.publication.writes) > 0
-}
-
 func publicationDigest(writes []publicationWriteWire, snapshot []byte, complete bool) string {
 	hash := sha256.New()
 	for _, write := range writes {
@@ -297,6 +290,8 @@ func (p *Provider) commitPublication(snapshot []byte, complete bool) (Discovery,
 		return Discovery{}, err
 	}
 	if err := p.publisher.Commit(pub.trackKey, request); err != nil {
+		p.releasePublication()
+		p.publication = nil
 		return Discovery{}, err
 	}
 	p.publication = nil

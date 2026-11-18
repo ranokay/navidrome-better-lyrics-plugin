@@ -241,9 +241,9 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 		if src.Fetch == nil {
 			continue
 		}
-		coveredCandidate, expiresAt, covered := p.readCachedSourceCoverageWithExpiry(track, src.ID)
+		_, expiresAt, covered := p.readCachedSourceCoverageWithExpiry(track, src.ID)
 		if refresh {
-			coveredCandidate, expiresAt, covered = p.readCachedSourcePositiveWithExpiry(track, src.ID)
+			_, expiresAt, covered = p.readCachedSourcePositiveWithExpiry(track, src.ID)
 		}
 		if covered {
 			remaining := expiresAt - p.now().Unix()
@@ -257,7 +257,6 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 			// Entries without a trustworthy remaining lifetime (pre-stamp
 			// writes) refetch so the pass leaves stamped coverage behind
 			// instead of letting a marker outlive them.
-			_ = coveredCandidate
 		}
 		if p.sourceInCooldown(src) || p.sourceFailureBackoff(src.ID) > 0 {
 			// A cooled-down source is not covered by this pass, so the pass
@@ -483,6 +482,7 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 		return false
 	}
 	p.enqueueMeta = p.captureEnqueuePublication()
+	p.enqueueRefresh = false
 	if err := p.enqueueSweep(track); err != nil {
 		// Release the spot early with a 1-second TTL so the next lookup can retry
 		// the sweep rather than waiting out the whole dedupe window.
