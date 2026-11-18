@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,10 @@ type requestSender func(host.HTTPRequest) (*host.HTTPResponse, error)
 type Store interface {
 	Get(key string) ([]byte, bool, error)
 	SetWithTTL(key string, value []byte, ttlSeconds int64) error
+}
+
+type storeLister interface {
+	List(prefix string) ([]string, error)
 }
 
 // Deps is the plugin surface the provider runs against: host HTTP, the KV
@@ -70,6 +75,8 @@ type Provider struct {
 	enqueueMeta         Publication
 	enqueueRefresh      bool
 	refreshTailEnqueued bool
+	tailSources         []string
+	tailOp              Publication
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
 	sources []source.Source
@@ -146,6 +153,8 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.enqueueMeta = Publication{}
 	p.enqueueRefresh = false
 	p.refreshTailEnqueued = false
+	p.tailSources = nil
+	p.tailOp = Publication{}
 }
 
 func (p *Provider) ensurePublication(track lyrics.TrackInfo) error {
@@ -175,7 +184,7 @@ func (p *Provider) GetLyricsPublished(input lyrics.GetLyricsRequest, meta Public
 	if errors.Is(err, errPublicationSuperseded) {
 		return lyrics.GetLyricsResponse{}, err
 	}
-	if _, commitErr := p.commitPublication(sweepComplete); commitErr != nil {
+	if _, commitErr := p.commitPublication(sweepComplete, false, 0); commitErr != nil {
 		// The classic host cache must not retain a rejected publication.
 		return lyrics.GetLyricsResponse{}, commitErr
 	}
@@ -215,10 +224,27 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 		}
 		return V2Response{}, err
 	}
-	committedDiscovery, commitErr := p.commitPublication(sweepComplete)
-	if refresh && commitErr == nil && !p.refreshTailEnqueued && (p.publication == nil || len(p.publication.writes) == 0) {
-		p.releasePublication()
-		p.publication = nil
+	tailSources := p.tailSources
+	tailOp := p.tailOp
+	snapshotExpiresAt := int64(0)
+	if p.publication != nil && len(p.publication.writes) > 0 {
+		snapshotExpiresAt = p.snapshotExpiry(input.Track, sources)
+	}
+	committedDiscovery, commitErr := p.commitPublication(
+		sweepComplete, refresh && len(tailSources) > 0, snapshotExpiresAt,
+	)
+	if refresh && commitErr == nil {
+		if len(tailSources) > 0 {
+			if err := p.enqueueRefreshTailWithOp(input.Track, tailSources, tailOp); err != nil {
+				p.releaseOperation(input.Track, tailOp)
+			}
+		} else {
+			// A refresh that resolved entirely from cache has no commit to
+			// release its admission; release it here so foreground work is
+			// not blocked for the host TTL.
+			p.releasePublication()
+			p.publication = nil
+		}
 	}
 	discovery := committedDiscovery
 	if commitErr != nil {
@@ -230,9 +256,6 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 		discovery = Discovery{}
 	} else if discovery.Revision != "" {
 		if current, currentDiscovery, ok := p.currentV2Response(input.Track); ok {
-			if currentDiscovery.Revision == "" {
-				currentDiscovery = discovery
-			}
 			current.Discovery = currentDiscovery
 			return current, err
 		}
@@ -242,6 +265,14 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 	}
 	response := p.buildV2Response(input.Track, sources, candidate)
 	response.Evidence = dedupeEvidence(append(evidence, response.Evidence...))
+	if discovery.Revision != "" {
+		// The cached view was unavailable; bound the claim to the state this
+		// invocation committed instead of assuming a later snapshot matches.
+		if current, ok := p.currentState(input.Track); !ok ||
+			current.Revision != discovery.Revision || current.Complete != discovery.Complete {
+			discovery = Discovery{}
+		}
+	}
 	response.Discovery = discovery
 	if err != nil && len(response.Entries) == 0 && len(response.Evidence) == 0 {
 		return V2Response{}, err
@@ -270,22 +301,51 @@ func (p *Provider) currentV2Response(track lyrics.TrackInfo) (V2Response, Discov
 	if len(sources) == 0 {
 		return V2Response{}, Discovery{}, false
 	}
-	candidate, evidence, ok, _ := p.readCachedWinner(track, sources)
-	if !ok {
-		best, _ := p.readBestFromSourceCache(track, sources)
-		if !best.Present() {
-			return V2Response{}, Discovery{}, false
-		}
-		candidate = best
+	beforeCandidate, beforeEvidence, beforeComplete, beforeCached := p.readResponseView(track, sources)
+	if !beforeCached {
+		return V2Response{}, Discovery{}, false
 	}
 	before, beforeOK := p.currentState(track)
-	response := p.buildV2Response(track, sources, candidate)
-	response.Evidence = dedupeEvidence(append(evidence, response.Evidence...))
+	response := p.buildV2Response(track, sources, beforeCandidate)
+	response.Evidence = dedupeEvidence(append(beforeEvidence, response.Evidence...))
 	after, afterOK := p.currentState(track)
-	if beforeOK && afterOK && before.Revision == after.Revision {
+	afterCandidate, afterEvidence, afterComplete, afterCached := p.readResponseView(track, sources)
+	// A commit may land between the cached read and the state read. Only a
+	// state whose revision and dependencies both survived the build may label
+	// this response; otherwise the claim is omitted rather than mismatched.
+	if beforeOK && afterOK && before == after && afterCached &&
+		beforeComplete == afterComplete &&
+		sameCachedView(beforeCandidate, beforeEvidence, afterCandidate, afterEvidence) {
 		return response, before, true
 	}
 	return response, Discovery{}, true
+}
+
+// readResponseView is the cached winner/evidence pair a published response is
+// built from. It preserves the winner's evidence even when a per-source entry
+// is preferred.
+func (p *Provider) readResponseView(track lyrics.TrackInfo, sources []source.Source) (lyric.Candidate, []lyric.Evidence, bool, bool) {
+	candidate, evidence, ok, sweepComplete := p.readCachedWinner(track, sources)
+	complete := sweepComplete || p.sweepMarkerActive(p.doneMarkerKey(track, sources))
+	if !ok {
+		best, _ := p.readBestFromSourceCache(track, sources)
+		if !best.Present() {
+			return lyric.Candidate{}, nil, false, false
+		}
+		candidate = best
+	}
+	return candidate, evidence, complete, true
+}
+
+func sameCachedView(a lyric.Candidate, aEvidence []lyric.Evidence, b lyric.Candidate, bEvidence []lyric.Evidence) bool {
+	aValue, aErr := json.Marshal(a)
+	bValue, bErr := json.Marshal(b)
+	if aErr != nil || bErr != nil || !bytes.Equal(aValue, bValue) {
+		return false
+	}
+	aEvidenceValue, aErr := json.Marshal(aEvidence)
+	bEvidenceValue, bErr := json.Marshal(bEvidence)
+	return aErr == nil && bErr == nil && bytes.Equal(aEvidenceValue, bEvidenceValue)
 }
 
 // resolveLyrics selects the servable candidate and keeps the source order for
@@ -314,7 +374,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 			}
 			complete := p.discoveryComplete(track, sources)
 			p.cacheWinnerUntil(track, sources, best, complete, expiry, nil)
-			p.enqueueRefreshTail(track, sources, nil)
+			p.prepareRefreshTail(track, sources, nil)
 			return best, sources, p.sourceEvidence(track, sources, nil), complete, nil
 		}
 	} else if candidate, evidence, ok, sweepComplete := p.readCachedWinner(track, sources); ok {
@@ -335,10 +395,20 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 					if err := p.ensurePublication(track); err != nil {
 						return candidate, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 					}
-					complete := p.discoveryComplete(track, sources)
-					p.cacheWinnerUntil(track, sources, best, complete, expiry, evidence)
-					candidate = best
-					completion = complete
+					fresh, freshEvidence, freshComplete, hasFresh := p.readCachedView(track, sources)
+					if hasFresh && fresh.Present() {
+						if freshBest, freshExpiry := p.readBestFromSourceCache(track, sources); freshBest.Present() && lyric.AtLeastAsPreferred(candidate, freshBest) {
+							if freshExpiry > 0 {
+								expiry = freshExpiry
+							}
+							p.cacheWinnerUntil(track, sources, fresh, freshComplete, expiry, freshEvidence)
+						}
+						candidate, evidence, completion = fresh, freshEvidence, freshComplete
+					} else {
+						p.cacheWinnerUntil(track, sources, best, freshComplete, expiry, evidence)
+						candidate = best
+						completion = freshComplete
+					}
 				}
 				p.maybeEnqueueSweep(track)
 			}
@@ -350,9 +420,16 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 			if err := p.ensurePublication(track); err != nil {
 				return best, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 			}
-			complete := p.discoveryComplete(track, sources)
-			p.cacheWinnerUntil(track, sources, best, complete, expiry, evidence)
-			return best, sources, p.sourceEvidence(track, sources, evidence), complete, nil
+			fresh, freshEvidence, freshComplete, hasFresh := p.readCachedView(track, sources)
+			if hasFresh && fresh.Present() {
+				if _, freshExpiry := p.readBestFromSourceCache(track, sources); freshExpiry > 0 {
+					expiry = freshExpiry
+				}
+				p.cacheWinnerUntil(track, sources, fresh, freshComplete, expiry, freshEvidence)
+				return fresh, sources, p.sourceEvidence(track, sources, freshEvidence), freshComplete, nil
+			}
+			p.cacheWinnerUntil(track, sources, best, freshComplete, expiry, evidence)
+			return best, sources, p.sourceEvidence(track, sources, evidence), freshComplete, nil
 		}
 		// No per-source improvement yet: the negative winner stays authoritative
 		// for its TTL so replays do not re-walk the sources — but an incomplete
@@ -366,10 +443,13 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		if err := p.ensurePublication(track); err != nil {
 			return best, sources, p.sourceEvidence(track, sources, nil), false, nil
 		}
-		complete := p.discoveryComplete(track, sources)
-		p.cacheWinnerUntil(track, sources, best, complete, expiry, nil)
+		fresh, freshEvidence, freshComplete, hasFresh := p.readCachedView(track, sources)
+		if !hasFresh || !fresh.Present() {
+			return lyric.Candidate{}, sources, nil, false, nil
+		}
+		p.cacheWinnerUntil(track, sources, fresh, freshComplete, expiry, nil)
 		p.maybeEnqueueSweep(track)
-		return best, sources, p.sourceEvidence(track, sources, nil), complete, nil
+		return fresh, sources, p.sourceEvidence(track, sources, freshEvidence), freshComplete, nil
 	}
 
 	if err := p.ensurePublication(track); err != nil {
@@ -381,7 +461,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		completion = p.sweepMarkerActive(p.doneMarkerKey(track, sources))
 	}
 	if refresh {
-		p.enqueueRefreshTail(track, sources, attempted)
+		p.prepareRefreshTail(track, sources, attempted)
 	}
 	if candidate.Present() {
 		p.cacheWinnerUntil(track, sources, candidate, completion, p.now().Add(time.Duration(sourceCacheTTLSeconds(candidate.Quality))*time.Second).Unix(), evidence)
@@ -419,6 +499,24 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		err = errors.New("lyrics sources temporarily unavailable")
 	}
 	return candidate, sources, p.sourceEvidence(track, sources, evidence), completion, p.safeDiagnosticError(err)
+}
+
+// readCachedView re-reads the winner and best source after lazy admission so
+// a classic caller cannot publish data captured before a refresh committed.
+func (p *Provider) readCachedView(track lyrics.TrackInfo, sources []source.Source) (lyric.Candidate, []lyric.Evidence, bool, bool) {
+	winner, evidence, ok, sweepComplete := p.readCachedWinner(track, sources)
+	complete := sweepComplete || p.sweepMarkerActive(p.doneMarkerKey(track, sources))
+	best, _ := p.readBestFromSourceCache(track, sources)
+	if best.Present() && (!winner.Present() || lyric.AtLeastAsPreferred(winner, best)) {
+		return best, nil, complete, true
+	}
+	if winner.Present() {
+		return winner, evidence, complete, true
+	}
+	if ok {
+		return winner, evidence, complete, true
+	}
+	return lyric.Candidate{}, nil, false, false
 }
 
 // activeSources resolves the source order for this lookup: the injected test
@@ -511,7 +609,7 @@ func (p *Provider) fetchLyrics(input lyrics.GetLyricsRequest, refresh bool) (lyr
 			// The short foreground slot may expire for a healthy, slower
 			// source. Let its full-budget sweep retry without outage backoff.
 			if p.now().Before(sourceDeadline) {
-				p.rememberSourceFailure(src.ID, err)
+				p.rememberSourceFailure(src.ID, started, err)
 			}
 			p.logSourceFailure(src.ID, started, err)
 			if source.IsGlobalRateLimitError(err) {

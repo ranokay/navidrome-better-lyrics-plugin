@@ -73,21 +73,22 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	if err := json.Unmarshal(req.Payload, &payload); err != nil {
 		return "", fmt.Errorf("decode sweep payload: %w", err)
 	}
-	// The task may have queued behind a backlog; refresh the marker when
-	// execution starts, and release it afterwards unless the sweep completed
-	// — an incomplete finish must stay re-enqueueable, while a completed one
-	// is gated by the done marker instead.
-	markerKey := ""
-	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
-		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
-		_ = p.storeSweepMarker(markerKey, sweepMarkerTTL)
-	}
 	kind := "sweep"
 	if payload.Refresh {
 		kind = "tail"
 	}
 	p.preparePublication(payload.Publication, kind)
-	if payload.Publication.Generation != "" {
+	if payload.Publication.Generation == "" {
+		if p.publisher != nil {
+			capable, err := p.publisher.Probe()
+			if err != nil || capable {
+				// A retained pre-upgrade task has no live generation. On a
+				// capable host it must not fall back to unadmitted writes.
+				return "unadmitted task", nil
+			}
+		}
+		p.publication = &pendingPublication{legacy: true}
+	} else {
 		var err error
 		if payload.Publication.Token != "" {
 			err = p.resumePublication(payload.Track, payload.Publication, kind)
@@ -95,11 +96,16 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 			err = p.beginPublication(payload.Track, payload.Publication, kind)
 		}
 		if err != nil {
-			if markerKey != "" {
-				_ = p.storeSweepMarker(markerKey, 1)
-			}
+			p.releaseOperation(payload.Track, payload.Publication)
 			return "stale publication", nil
 		}
+	}
+	// Only the admitted task may refresh the shared pending marker; a stale
+	// task must not stomp a newer generation's marker.
+	markerKey := ""
+	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
+		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
+		_ = p.storeSweepMarker(markerKey, sweepMarkerTTL)
 	}
 	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources, payload.Refresh)
 	continuationQueued := false
@@ -142,6 +148,7 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
 			_ = p.storeSweepMarker(key, 1)
 		}
+		p.releaseOperation(payload.Track, payload.Publication)
 	}
 	return status, nil
 }
@@ -277,7 +284,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 		candidates, fetchHealth, err := src.Fetch(p, track, deadline)
 		if err != nil {
 			if p.now().Before(deadline) {
-				p.rememberSourceFailure(src.ID, err)
+				p.rememberSourceFailure(src.ID, started, err)
 			}
 			p.logSourceFailure(src.ID, started, err)
 			if errors.Is(err, source.ErrLookupBudgetExhausted) {
@@ -411,7 +418,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 			}
 		}
 	}
-	if _, err := p.commitPublication(complete); err != nil {
+	if _, err := p.commitPublication(complete, refresh, 0); err != nil {
 		p.releasePublication()
 		p.publication = nil
 		return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d stale-publication", cached, skipped, failed, deferred), deferredIDs, fullOrder
@@ -540,10 +547,10 @@ func (p *Provider) refreshTailMarkerKey(track lyrics.TrackInfo) (string, bool) {
 	return fmt.Sprintf("%sg%d:%s:%s", refreshTailMarkerPrefix, lyricsCacheGeneration, p.lyricsCredentialsFingerprint(), trackKey), true
 }
 
-// enqueueRefreshTail retries eligible negative/error sources beyond the
-// foreground bound. It transfers the refresh admission token; a superseded
-// task cannot publish.
-func (p *Provider) enqueueRefreshTail(track lyrics.TrackInfo, sources []source.Source, attempted []string) {
+// prepareRefreshTail records eligible negative/error sources beyond the
+// foreground bound. It is enqueued only after the foreground publication
+// commits, so the tail can never observe pre-commit coverage.
+func (p *Provider) prepareRefreshTail(track lyrics.TrackInfo, sources []source.Source, attempted []string) {
 	if p.publication == nil || !p.publication.active {
 		return
 	}
@@ -564,21 +571,48 @@ func (p *Provider) enqueueRefreshTail(track lyrics.TrackInfo, sources []source.S
 	if len(remaining) == 0 {
 		return
 	}
-	markerKey, ok := p.refreshTailMarkerKey(track)
-	if !ok || p.sweepMarkerActive(markerKey) {
-		return
-	}
-	_ = p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL)
-	p.enqueueMeta = Publication{
+	p.tailSources = remaining
+	p.tailOp = Publication{
 		Generation: p.publication.generation,
 		Token:      p.publication.token,
 		Kind:       "tail",
 	}
+}
+
+func (p *Provider) enqueueRefreshTailWithOp(track lyrics.TrackInfo, sources []string, op Publication) error {
+	if len(sources) == 0 || op.Generation == "" || op.Token == "" {
+		return nil
+	}
+	if markerKey, ok := p.refreshTailMarkerKey(track); ok {
+		// A newer refresh owns this track; replace any stale tail marker.
+		_ = p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL)
+	}
+	p.enqueueMeta = op
 	p.enqueueRefresh = true
 	p.refreshTailEnqueued = true
-	if err := p.enqueueSweepSources(track, remaining, 0); err != nil {
+	if err := p.enqueueSweepSources(track, sources, 0); err != nil {
 		p.refreshTailEnqueued = false
-		_ = p.storeSweepMarker(markerKey, 1)
-		p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
+		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
+			_ = p.storeSweepMarker(markerKey, 1)
+		}
+		return err
+	}
+	return nil
+}
+
+func (p *Provider) releaseOperation(track lyrics.TrackInfo, op Publication) {
+	if p.publisher == nil || op.Generation == "" || op.Token == "" {
+		return
+	}
+	trackKey, ok := publicationTrackKey(track)
+	if !ok {
+		return
+	}
+	request, err := json.Marshal(admissionWire{
+		Version: 1, Action: "release", Generation: op.Generation,
+		Track: trackKey, Kind: op.Kind, Token: op.Token,
+	})
+	if err == nil {
+		_, _ = p.publisher.Admit(trackKey, request)
 	}
 }

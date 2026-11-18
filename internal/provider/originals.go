@@ -89,7 +89,7 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 		// outage backs off so repeated downloads cannot hammer it. A budget
 		// timeout is not an outage and is skipped by rememberSourceFailure.
 		if p.now().Before(deadline) {
-			p.rememberSourceFailure(src.ID, err)
+			p.rememberSourceFailure(src.ID, started, err)
 		}
 		p.logSourceFailure(src.ID, started, err)
 		p.releasePublication()
@@ -103,7 +103,7 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 		p.prepareCandidate(track, sourceID, &candidates[index])
 	}
 	p.cacheSourceCandidates(track, sourceID, candidates)
-	if _, err := p.commitPublication(p.discoveryComplete(track, p.activeSources())); err != nil {
+	if _, err := p.commitPublication(p.discoveryComplete(track, p.activeSources()), false, 0); err != nil {
 		return lyric.Original{}, "selection unavailable"
 	}
 	if p.publication != nil && p.publication.active {

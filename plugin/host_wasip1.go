@@ -20,6 +20,10 @@ func (hostStore) SetWithTTL(key string, value []byte, ttlSeconds int64) error {
 	return host.KVStoreSetWithTTL(key, value, ttlSeconds)
 }
 
+func (hostStore) List(prefix string) ([]string, error) {
+	return host.KVStoreList(prefix)
+}
+
 func (hostStore) StorageUsed() (int64, error) {
 	return host.KVStoreGetStorageUsed()
 }
@@ -51,6 +55,16 @@ func (hostStore) Commit(trackKey string, request []byte) error {
 
 func (hostStore) Current(trackKey string) ([]byte, bool, error) {
 	return host.KVStoreGet(publicationKeyPrefix + "state:" + trackKey)
+}
+
+func (hostStore) Probe() (bool, error) {
+	// A capable host rejects unknown reserved keys; an older host stores the
+	// probe as an ordinary value.
+	err := host.KVStoreSetWithTTL(publicationKeyPrefix+"probe", []byte("1"), 60)
+	if err != nil {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (hostStore) Active() (string, bool, error) {

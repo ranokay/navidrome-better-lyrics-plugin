@@ -30,6 +30,9 @@ type Publisher interface {
 	Commit(trackKey string, request []byte) error
 	Current(trackKey string) ([]byte, bool, error)
 	Active() (string, bool, error)
+	// Probe reports whether the live host handles reserved publication keys.
+	// It never reads persisted generation state.
+	Probe() (bool, error)
 }
 
 const (
@@ -73,21 +76,25 @@ type publicationWriteWire struct {
 }
 
 type commitWire struct {
-	Version        int                    `json:"version"`
-	Generation     string                 `json:"generation"`
-	Token          string                 `json:"token"`
-	Track          string                 `json:"track"`
-	Scope          string                 `json:"scope"`
-	Revision       string                 `json:"revision"`
-	SnapshotDigest string                 `json:"snapshotDigest"`
-	Complete       bool                   `json:"complete"`
-	Writes         []publicationWriteWire `json:"writes"`
+	Version           int                    `json:"version"`
+	Generation        string                 `json:"generation"`
+	Token             string                 `json:"token"`
+	Track             string                 `json:"track"`
+	Scope             string                 `json:"scope"`
+	Revision          string                 `json:"revision"`
+	SnapshotDigest    string                 `json:"snapshotDigest"`
+	SnapshotExpiresAt int64                  `json:"snapshotExpiresAt,omitempty"`
+	Complete          bool                   `json:"complete"`
+	AwaitTail         bool                   `json:"awaitTail,omitempty"`
+	Writes            []publicationWriteWire `json:"writes"`
 }
 
 type discoveryStateWire struct {
-	Handled  bool   `json:"handled"`
-	Revision string `json:"revision,omitempty"`
-	Complete bool   `json:"complete,omitempty"`
+	Handled    bool   `json:"handled"`
+	Generation string `json:"generation,omitempty"`
+	Scope      string `json:"scope,omitempty"`
+	Revision   string `json:"revision,omitempty"`
+	Complete   bool   `json:"complete,omitempty"`
 }
 
 type pendingPublication struct {
@@ -101,6 +108,9 @@ type pendingPublication struct {
 	legacy     bool
 	active     bool
 	failed     bool
+	// denied marks a scope-less publication that must not write directly;
+	// its host-minted token is still released at terminal completion.
+	denied bool
 }
 
 func publicationTrackKey(track lyrics.TrackInfo) (string, bool) {
@@ -127,12 +137,15 @@ func (p *Provider) beginPublication(track lyrics.TrackInfo, meta Publication, ki
 		return nil
 	}
 	sources := p.activeSources()
+	trackKey, _ := publicationTrackKey(track)
 	scope, ok := p.publicationScope(track, sources)
 	if !ok {
-		p.publication = &pendingPublication{legacy: true}
+		p.publication = &pendingPublication{
+			generation: meta.Generation, token: meta.Token, trackKey: trackKey,
+			kind: kind, legacy: true, denied: true,
+		}
 		return nil
 	}
-	trackKey, _ := publicationTrackKey(track)
 	pub := &pendingPublication{
 		generation: meta.Generation,
 		token:      meta.Token,
@@ -183,8 +196,9 @@ func (p *Provider) resumePublication(track lyrics.TrackInfo, meta Publication, k
 	sources := p.activeSources()
 	scope, ok := p.publicationScope(track, sources)
 	if !ok {
-		p.publication = &pendingPublication{legacy: true}
-		return nil
+		// A tagged task whose scope can no longer be computed must not fall
+		// back to unadmitted direct writes.
+		return errPublicationSuperseded
 	}
 	trackKey, _ := publicationTrackKey(track)
 	request, err := json.Marshal(admissionWire{
@@ -217,16 +231,18 @@ func (p *Provider) resumePublication(track lyrics.TrackInfo, meta Publication, k
 }
 
 func (p *Provider) releasePublication() {
-	if p.publication == nil || !p.publication.active || p.publisher == nil {
+	pub := p.publication
+	if pub == nil || p.publisher == nil || pub.trackKey == "" ||
+		(!pub.active && (pub.generation == "" || pub.token == "")) {
 		return
 	}
 	request, err := json.Marshal(admissionWire{
-		Version: 1, Action: "release", Generation: p.publication.generation,
-		Track: p.publication.trackKey, Scope: p.publication.scope,
-		Kind: p.publication.kind, Token: p.publication.token,
+		Version: 1, Action: "release", Generation: pub.generation,
+		Track: pub.trackKey, Scope: pub.scope,
+		Kind: pub.kind, Token: pub.token,
 	})
 	if err == nil {
-		_, _ = p.publisher.Admit(p.publication.trackKey, request)
+		_, _ = p.publisher.Admit(pub.trackKey, request)
 	}
 }
 
@@ -235,8 +251,8 @@ func (p *Provider) releasePublication() {
 // non-discovery control data that never reaches this path.
 func (p *Provider) storeDiscoveryBytes(key string, value []byte, ttl int64) bool {
 	pub := p.publication
-	if pub == nil || pub.legacy || pub.failed {
-		if pub != nil && pub.failed {
+	if pub == nil || pub.legacy || pub.failed || pub.denied {
+		if pub != nil && (pub.failed || pub.denied) {
 			return false
 		}
 		if err := p.cache.SetWithTTL(key, value, ttl); err != nil {
@@ -278,7 +294,7 @@ func publicationRevision(generation, trackKey, digest string) string {
 
 // commitPublication publishes the buffered snapshot. A nil result means there
 // was nothing to publish.
-func (p *Provider) commitPublication(complete bool) (Discovery, error) {
+func (p *Provider) commitPublication(complete, awaitTail bool, snapshotExpiresAt int64) (Discovery, error) {
 	pub := p.publication
 	if pub == nil || !pub.active || len(pub.writes) == 0 {
 		return Discovery{}, nil
@@ -288,7 +304,8 @@ func (p *Provider) commitPublication(complete bool) (Discovery, error) {
 	request, err := json.Marshal(commitWire{
 		Version: 1, Generation: pub.generation, Token: pub.token,
 		Track: pub.trackKey, Scope: pub.scope, Revision: revision,
-		SnapshotDigest: digest, Complete: complete, Writes: pub.writes,
+		SnapshotDigest: digest, SnapshotExpiresAt: snapshotExpiresAt,
+		Complete: complete, AwaitTail: awaitTail, Writes: pub.writes,
 	})
 	if err != nil {
 		return Discovery{}, err
@@ -305,10 +322,14 @@ func (p *Provider) commitPublication(complete bool) (Discovery, error) {
 // currentState reads the host-owned committed snapshot. It is only meaningful
 // on publication-capable hosts.
 func (p *Provider) currentState(track lyrics.TrackInfo) (Discovery, bool) {
-	if p.publisher == nil {
+	if p.publisher == nil || p.pubMeta.Generation == "" {
 		return Discovery{}, false
 	}
 	trackKey, ok := publicationTrackKey(track)
+	if !ok {
+		return Discovery{}, false
+	}
+	scope, ok := p.publicationScope(track, p.activeSources())
 	if !ok {
 		return Discovery{}, false
 	}
@@ -317,10 +338,61 @@ func (p *Provider) currentState(track lyrics.TrackInfo) (Discovery, bool) {
 		return Discovery{}, false
 	}
 	var state discoveryStateWire
-	if json.Unmarshal(raw, &state) != nil || !state.Handled || state.Revision == "" {
+	if json.Unmarshal(raw, &state) != nil || !state.Handled || state.Revision == "" ||
+		state.Generation != p.pubMeta.Generation || state.Scope != scope {
 		return Discovery{}, false
 	}
 	return Discovery{Revision: state.Revision, Complete: state.Complete}, true
+}
+
+// snapshotExpiry bounds a published revision by every cached dependency that
+// fed the response, not only the writes in this batch.
+func (p *Provider) snapshotExpiry(track lyrics.TrackInfo, sources []source.Source) int64 {
+	now := p.now().Unix()
+	expiry := int64(0)
+	consider := func(expiresAt int64) {
+		if expiresAt <= 0 {
+			expiry = now
+			return
+		}
+		if expiry == 0 || expiresAt < expiry {
+			expiry = expiresAt
+		}
+	}
+	if key, ok := lyricsWinnerCacheKey(track, source.IDs(sources)); ok {
+		if envelope, found := p.readCachedEnvelope(key); found {
+			consider(envelope.ExpiresAt)
+		}
+	}
+	if len(sources) > 0 {
+		if envelope, found := p.readCachedEnvelope(p.doneMarkerKey(track, sources)); found {
+			consider(envelope.ExpiresAt)
+		}
+	}
+	for _, src := range sources {
+		if key, ok := lyricsCacheKeyForSource(track, src.ID); ok {
+			if envelope, found := p.readCachedEnvelope(key); found {
+				consider(envelope.ExpiresAt)
+			}
+		}
+		if key, ok := p.sourceMissKey(track, src.ID); ok {
+			if envelope, found := p.readCachedEnvelope(key); found {
+				consider(envelope.ExpiresAt)
+			}
+		}
+		if key, ok := lyricsVariantCacheKey(track, src.ID); ok {
+			if raw, found, _ := p.cache.Get(key); found {
+				var bundle cachedSourceBundle
+				if json.Unmarshal(raw, &bundle) == nil {
+					consider(bundle.ExpiresAt)
+				}
+			}
+		}
+	}
+	if expiry != 0 && expiry < now {
+		return now
+	}
+	return expiry
 }
 
 // enqueuePublication captures the generation/token that a background task may

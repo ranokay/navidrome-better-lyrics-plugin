@@ -13,16 +13,24 @@ import (
 )
 
 type fakePublisher struct {
-	handled   bool
-	accepted  bool
-	token     string
-	active    string
-	current   []byte
-	commitErr error
-	commits   [][]byte
-	admits    int
-	releases  int
-	cache     Store
+	handled      bool
+	accepted     bool
+	token        string
+	active       string
+	current      []byte
+	states       map[string][]byte
+	currentSeq   [][]byte
+	onCurrent    func(trackKey string)
+	commitErr    error
+	commits      [][]byte
+	admits       int
+	releases     int
+	probe        *bool
+	rejectTokens map[string]bool
+	onAdmit      func(admissionWire)
+	onCommit     func(commitWire)
+	events       *[]string
+	cache        Store
 }
 
 func (f *fakePublisher) Admit(trackKey string, request []byte) ([]byte, error) {
@@ -33,6 +41,9 @@ func (f *fakePublisher) Admit(trackKey string, request []byte) ([]byte, error) {
 	var admission admissionWire
 	if err := json.Unmarshal(request, &admission); err != nil {
 		return nil, err
+	}
+	if f.onAdmit != nil {
+		f.onAdmit(admission)
 	}
 	if admission.Action == "release" {
 		f.releases++
@@ -46,6 +57,9 @@ func (f *fakePublisher) Admit(trackKey string, request []byte) ([]byte, error) {
 		RequestID: admission.RequestID, Generation: admission.Generation, Token: token, State: "active",
 	}
 	response.Accepted = f.accepted
+	if f.rejectTokens[admission.Token] {
+		response.Accepted = false
+	}
 	return json.Marshal(response)
 }
 
@@ -58,6 +72,9 @@ func (f *fakePublisher) Commit(trackKey string, request []byte) error {
 	if err := json.Unmarshal(request, &commit); err != nil {
 		return err
 	}
+	if f.onCommit != nil {
+		f.onCommit(commit)
+	}
 	if f.cache != nil {
 		for _, write := range commit.Writes {
 			if err := f.cache.SetWithTTL(write.Key, write.Value, write.TTL); err != nil {
@@ -65,10 +82,32 @@ func (f *fakePublisher) Commit(trackKey string, request []byte) error {
 			}
 		}
 	}
+	state, _ := json.Marshal(discoveryStateWire{
+		Handled: true, Generation: commit.Generation, Scope: commit.Scope,
+		Revision: commit.Revision, Complete: commit.Complete,
+	})
+	f.current = state
+	if f.states == nil {
+		f.states = make(map[string][]byte)
+	}
+	f.states[commit.Track] = state
 	return nil
 }
 
 func (f *fakePublisher) Current(trackKey string) ([]byte, bool, error) {
+	if f.onCurrent != nil {
+		f.onCurrent(trackKey)
+	}
+	if len(f.currentSeq) > 0 {
+		value := f.currentSeq[0]
+		f.currentSeq = f.currentSeq[1:]
+		return value, value != nil, nil
+	}
+	if f.states != nil {
+		if value, exists := f.states[trackKey]; exists {
+			return value, true, nil
+		}
+	}
 	if f.current == nil {
 		return nil, false, nil
 	}
@@ -77,6 +116,13 @@ func (f *fakePublisher) Current(trackKey string) ([]byte, bool, error) {
 
 func (f *fakePublisher) Active() (string, bool, error) {
 	return f.active, f.active != "", nil
+}
+
+func (f *fakePublisher) Probe() (bool, error) {
+	if f.probe != nil {
+		return *f.probe, nil
+	}
+	return true, nil
 }
 
 func TestPublishedLyricsBufferDiscoveryWrites(t *testing.T) {

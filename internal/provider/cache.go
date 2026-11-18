@@ -345,10 +345,19 @@ func (p *Provider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool
 	if err != nil {
 		return false
 	}
+	if p.publication != nil && p.publication.active {
+		if len(value) > MaxCacheEntryBytes {
+			return false
+		}
+		// Buffered writes count as coverage only because the sweep's done
+		// marker commits in the same transaction; a rejected batch publishes
+		// neither the miss nor completion.
+		return p.storeDiscoveryBytes(key, value, negativeLyricsCacheTTLSeconds)
+	}
 	if !p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, negativeLyricsCacheTTLSeconds) {
 		return false
 	}
-	// An oversized/evicted write must not count as coverage.
+	// An oversized/evicted direct write must not count as coverage.
 	_, exists, _ := p.cache.Get(key)
 	return exists
 }
