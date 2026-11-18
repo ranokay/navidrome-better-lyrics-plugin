@@ -100,6 +100,7 @@ type pendingPublication struct {
 	bytes      int
 	legacy     bool
 	active     bool
+	failed     bool
 }
 
 func publicationTrackKey(track lyrics.TrackInfo) (string, bool) {
@@ -234,7 +235,10 @@ func (p *Provider) releasePublication() {
 // non-discovery control data that never reaches this path.
 func (p *Provider) storeDiscoveryBytes(key string, value []byte, ttl int64) bool {
 	pub := p.publication
-	if pub == nil || pub.legacy {
+	if pub == nil || pub.legacy || pub.failed {
+		if pub != nil && pub.failed {
+			return false
+		}
 		if err := p.cache.SetWithTTL(key, value, ttl); err != nil {
 			p.logf(fmt.Sprintf("lyrics cache write failed: %v", p.safeDiagnosticError(err)))
 			return false
@@ -290,8 +294,8 @@ func (p *Provider) commitPublication(snapshot []byte, complete bool) (Discovery,
 		return Discovery{}, err
 	}
 	if err := p.publisher.Commit(pub.trackKey, request); err != nil {
+		pub.failed = true
 		p.releasePublication()
-		p.publication = nil
 		return Discovery{}, err
 	}
 	p.publication = nil

@@ -245,19 +245,15 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 		if refresh {
 			_, expiresAt, covered = p.readCachedSourcePositiveWithExpiry(track, src.ID)
 		}
-		if covered {
-			remaining := expiresAt - p.now().Unix()
-			if expiresAt > 0 && remaining > 0 {
-				skipped++
-				if remaining < coverageTTL {
-					coverageTTL = remaining
-				}
-				continue
+		remaining := expiresAt - p.now().Unix()
+		if covered && expiresAt > 0 && remaining > 0 {
+			skipped++
+			if remaining < coverageTTL {
+				coverageTTL = remaining
 			}
-			// Entries without a trustworthy remaining lifetime (pre-stamp
-			// writes) refetch so the pass leaves stamped coverage behind
-			// instead of letting a marker outlive them.
+			continue
 		}
+		// Unstamped entries refetch so the pass leaves trustworthy coverage.
 		if p.sourceInCooldown(src) || p.sourceFailureBackoff(src.ID) > 0 {
 			// A cooled-down source is not covered by this pass, so the pass
 			// cannot be marked done; retry the sweep after the cooldown lapses.

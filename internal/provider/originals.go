@@ -107,8 +107,6 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 		Identity lyric.VariantIdentity
 	}{Track: track, Identity: identity})
 	if _, err := p.commitPublication(snapshot, p.discoveryComplete(track, p.activeSources())); err != nil {
-		p.releasePublication()
-		p.publication = nil
 		return lyric.Original{}, "selection unavailable"
 	}
 	p.publication = nil

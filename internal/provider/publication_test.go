@@ -41,9 +41,7 @@ func (f *fakePublisher) Admit(trackKey string, request []byte) ([]byte, error) {
 		Handled: true, Accepted: true,
 		RequestID: admission.RequestID, Generation: admission.Generation, Token: token, State: "active",
 	}
-	if admission.Action == "admit" {
-		response.Accepted = f.accepted
-	}
+	response.Accepted = f.accepted
 	return json.Marshal(response)
 }
 
