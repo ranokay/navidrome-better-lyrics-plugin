@@ -39,6 +39,7 @@ const (
 type cannedTransport struct {
 	mu      sync.Mutex
 	handler func(*http.Request) (int, []byte)
+	header  func(*http.Request) http.Header
 	count   int
 }
 
@@ -48,9 +49,15 @@ func (t *cannedTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	handler := t.handler
 	t.mu.Unlock()
 	status, body := handler(request)
+	headers := http.Header{"Content-Type": {"application/json"}}
+	if t.header != nil {
+		for key, values := range t.header(request) {
+			headers[key] = values
+		}
+	}
 	return &http.Response{
 		StatusCode: status,
-		Header:     http.Header{"Content-Type": {"application/json"}},
+		Header:     headers,
 		Body:       io.NopCloser(bytes.NewReader(body)),
 		Request:    request,
 	}, nil

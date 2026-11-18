@@ -3,6 +3,8 @@
 package main
 
 import (
+	"encoding/json"
+
 	pdk "github.com/extism/go-pdk"
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/provider"
@@ -26,7 +28,51 @@ func (hostStore) DeleteByPrefix(prefix string) (int64, error) {
 	return host.KVStoreDeleteByPrefix(prefix)
 }
 
+const publicationKeyPrefix = "@navidrome/publication/"
+
+func (hostStore) Admit(trackKey string, request []byte) ([]byte, error) {
+	key := publicationKeyPrefix + "admission:" + trackKey
+	if err := host.KVStoreSetWithTTL(key, request, 1800); err != nil {
+		return nil, err
+	}
+	response, exists, err := host.KVStoreGet(key)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	return response, nil
+}
+
+func (hostStore) Commit(trackKey string, request []byte) error {
+	return host.KVStoreSetWithTTL(publicationKeyPrefix+"commit:"+trackKey, request, 1800)
+}
+
+func (hostStore) Current(trackKey string) ([]byte, bool, error) {
+	return host.KVStoreGet(publicationKeyPrefix + "state:" + trackKey)
+}
+
+func (hostStore) Active() (string, bool, error) {
+	value, exists, err := host.KVStoreGet(publicationKeyPrefix + "active")
+	if err != nil || !exists {
+		return "", false, err
+	}
+	var active struct {
+		Handled    bool   `json:"handled"`
+		Generation string `json:"generation"`
+	}
+	if err := json.Unmarshal(value, &active); err != nil || !active.Handled || active.Generation == "" {
+		return "", false, nil
+	}
+	return active.Generation, true, nil
+}
+
 func defaultStore() provider.Store {
+	return hostStore{}
+}
+
+func defaultPublisher() provider.Publisher {
 	return hostStore{}
 }
 

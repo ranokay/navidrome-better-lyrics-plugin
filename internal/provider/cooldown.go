@@ -13,8 +13,9 @@ import (
 const sourceFailureStateTTL = int64(10 * time.Minute / time.Second)
 
 type sourceFailureState struct {
-	Failures uint8 `json:"failures"`
-	Until    int64 `json:"until"`
+	Failures  uint8 `json:"failures"`
+	Until     int64 `json:"until"`
+	UpdatedAt int64 `json:"updatedAt,omitempty"`
 }
 
 func sourceFailureKey(sourceID string) string {
@@ -56,6 +57,7 @@ func (p *Provider) rememberSourceFailure(sourceID string, err error) {
 	state.Failures = min(state.Failures+1, 5)
 	delay := min(5*time.Second*time.Duration(1<<(state.Failures-1)), time.Minute)
 	state.Until = p.now().Add(delay).UnixMilli()
+	state.UpdatedAt = p.now().UnixMilli()
 	value, marshalErr := json.Marshal(state)
 	if marshalErr == nil {
 		// A broken store fails open; it must never disable a source.
@@ -64,9 +66,21 @@ func (p *Provider) rememberSourceFailure(sourceID string, err error) {
 }
 
 func (p *Provider) resetSourceFailure(sourceID string) {
-	if state := p.readSourceFailure(sourceID); state.Failures > 0 {
-		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+	p.resetSourceFailureBefore(sourceID, time.Time{})
+}
+
+// resetSourceFailureBefore clears a recorded guard only when it predates the
+// operation that observed the success. A stale success cannot erase a newer
+// failure backoff.
+func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) {
+	state := p.readSourceFailure(sourceID)
+	if state.Failures == 0 {
+		return
 	}
+	if !started.IsZero() && state.UpdatedAt > started.UnixMilli() {
+		return
+	}
+	_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
 }
 
 // Cooldown reports the remaining provider-wide cooldown for a key; a cache

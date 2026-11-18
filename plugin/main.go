@@ -23,8 +23,9 @@ var providerInstance *provider.Provider
 
 func init() {
 	p := provider.New(provider.Deps{
-		Send:  host.HTTPSend,
-		Store: defaultStore(),
+		Send:      host.HTTPSend,
+		Store:     defaultStore(),
+		Publisher: defaultPublisher(),
 		// Hosts may expose a real wall clock without a real monotonic clock.
 		// Discard WASI's synthetic monotonic reading so blocking HTTP calls
 		// consume the source and lookup budgets on those hosts too.

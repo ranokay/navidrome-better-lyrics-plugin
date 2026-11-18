@@ -290,6 +290,21 @@ func (p *Provider) storeCandidateBytes(key string, value []byte, oversized bool,
 		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), MaxCacheEntryBytes))
 		return false
 	}
+	if p.publication != nil && p.publication.active {
+		// The host publication transaction enforces the quota and applies all
+		// writes atomically; buffering here keeps provider I/O outside its lock.
+		return p.storeDiscoveryBytes(key, value, ttl)
+	}
+	return p.storeDirectBytes(key, value, oversized, ttl)
+}
+
+// storeDirectBytes is the legacy/control path: immutable originals and hosts
+// without publication support keep the previous direct write behavior.
+func (p *Provider) storeDirectBytes(key string, value []byte, oversized bool, ttl int64) bool {
+	if oversized {
+		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), MaxCacheEntryBytes))
+		return false
+	}
 	if usageStore, ok := p.cache.(lyricsCacheUsageStore); ok {
 		used, err := usageStore.StorageUsed()
 		if err != nil {
@@ -344,6 +359,27 @@ func (p *Provider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool
 func (p *Provider) readCachedSourceCoverage(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, bool) {
 	candidate, _, ok := p.readCachedSourceCoverageWithExpiry(track, sourceID)
 	return candidate, ok
+}
+
+// readCachedSourcePositive reports a fresh positive fetched under the current
+// credential. Explicit refresh reuses it; it never treats a cached miss as
+// coverage, so eligible negative sources are retried.
+func (p *Provider) readCachedSourcePositive(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, bool) {
+	candidate, _, ok := p.readCachedSourcePositiveWithExpiry(track, sourceID)
+	return candidate, ok
+}
+
+func (p *Provider) readCachedSourcePositiveWithExpiry(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, int64, bool) {
+	key, ok := lyricsCacheKeyForSource(track, sourceID)
+	if !ok {
+		return lyric.Candidate{}, 0, false
+	}
+	envelope, found := p.readCachedEnvelope(key)
+	if !found || envelope.Generation != lyricsCacheGeneration || envelope.Credentials != p.sourceCredentialsFingerprint(sourceID) {
+		return lyric.Candidate{}, 0, false
+	}
+	candidate := cachedCandidate(envelope)
+	return candidate, envelope.ExpiresAt, candidate.Present()
 }
 
 // readCachedSourceCoverageWithExpiry reads whichever per-source entry exists

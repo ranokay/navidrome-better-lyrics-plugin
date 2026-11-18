@@ -9,6 +9,7 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,10 +21,13 @@ import (
 // QualificationPlugin is a real loaded plugin package with its own KV store and
 // task workers, plus test-only expiry helpers.
 type QualificationPlugin struct {
-	Manager  *Manager
-	PluginID string
-	kv       *kvstoreServiceImpl
-	tasks    *taskQueueServiceImpl
+	Manager   *Manager
+	PluginID  string
+	kv        *kvstoreServiceImpl
+	tasks     *taskQueueServiceImpl
+	transport http.RoundTripper
+	catalog   []string
+	path      string
 }
 
 // LoadQualificationPlugin loads a production .ndp into a real Manager with
@@ -34,14 +38,16 @@ func LoadQualificationPlugin(t testing.TB, packagePath string, sourceIDs []strin
 	catalog := manifestSourceIDs(t, packagePath)
 	dir := t.TempDir()
 	t.Cleanup(conf.SnapshotConfig())
-	conf.Server.DataFolder = conf.NewDir(filepath.Join(dir, "data"))
-	conf.Server.CacheFolder = conf.NewDir(filepath.Join(dir, "cache"))
-	conf.Server.Plugins.Folder = conf.NewDir(filepath.Join(dir, "packages"))
-	conf.Server.Plugins.Enabled = true
-	conf.Server.Plugins.AutoReload = false
-	conf.Server.Plugins.LogLevel = "error"
-	// The qualification host resolves exactly this plugin for lyrics.
-	conf.Server.LyricsPriority = "nd-better-lyrics"
+	conf.Update(func(options *conf.Options) {
+		options.DataFolder = conf.NewDir(filepath.Join(dir, "data"))
+		options.CacheFolder = conf.NewDir(filepath.Join(dir, "cache"))
+		options.Plugins.Folder = conf.NewDir(filepath.Join(dir, "packages"))
+		options.Plugins.Enabled = true
+		options.Plugins.AutoReload = false
+		options.Plugins.LogLevel = "error"
+		// The qualification host resolves exactly this plugin for lyrics.
+		options.LyricsPriority = "nd-better-lyrics"
+	})
 	manager := &Manager{
 		plugins:        make(map[string]*plugin),
 		metrics:        noopMetricsRecorder{},
@@ -75,21 +81,61 @@ func LoadQualificationPlugin(t testing.TB, packagePath string, sourceIDs []strin
 		t.Fatal(err)
 	}
 	loaded := manager.plugins[pluginID]
-	result := &QualificationPlugin{Manager: manager, PluginID: pluginID}
-	for _, closer := range loaded.closers {
-		switch service := closer.(type) {
-		case *httpServiceImpl:
-			service.client.Transport = transport
-		case *kvstoreServiceImpl:
-			result.kv = service
-		case *taskQueueServiceImpl:
-			result.tasks = service
-		}
-	}
+	result := &QualificationPlugin{Manager: manager, PluginID: pluginID, transport: transport, catalog: catalog, path: packagePath}
+	result.bind(loaded)
 	if result.kv == nil {
 		t.Fatal("real plugin KV service was not initialized")
 	}
 	return result
+}
+
+func (h *QualificationPlugin) bind(loaded *plugin) {
+	for _, closer := range loaded.closers {
+		switch service := closer.(type) {
+		case *httpServiceImpl:
+			service.client.Transport = h.transport
+		case *kvstoreServiceImpl:
+			h.kv = service
+		case *taskQueueServiceImpl:
+			h.tasks = service
+		}
+	}
+}
+
+// Configure reloads the real plugin with a new source/key configuration while
+// retaining the same KV database, so generation and retained-state behavior are
+// exercised through the production reload path.
+func (h *QualificationPlugin) Configure(t testing.TB, sources []string, apiKey string) {
+	t.Helper()
+	enabled := make(map[string]bool, len(sources))
+	for _, id := range sources {
+		enabled[id] = true
+	}
+	rows := make([]map[string]any, 0, len(h.catalog))
+	for _, id := range h.catalog {
+		rows = append(rows, map[string]any{"id": id, "enabled": enabled[id]})
+	}
+	config := map[string]any{"sources": rows}
+	if apiKey != "" {
+		config["betterLyricsApiKey"] = apiKey
+	}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Manager.unloadPlugin(h.PluginID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Manager.loadPluginWithConfig(&model.Plugin{
+		ID: h.PluginID, Path: h.path, Enabled: true, AllUsers: true, Config: string(raw),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded := h.Manager.plugins[h.PluginID]
+	h.bind(loaded)
+	if h.kv == nil {
+		t.Fatal("real plugin KV service was not initialized after reload")
+	}
 }
 
 // Idle waits for real background tasks to settle, bounded.
@@ -119,6 +165,27 @@ func (h *QualificationPlugin) Keys(t testing.TB, prefix string) []string {
 		t.Fatal(err)
 	}
 	return keys
+}
+
+// KVPath is the real plugin KV database path, for retained-state compatibility
+// tests.
+func (h *QualificationPlugin) KVPath() string {
+	return filepath.Join(conf.Server().DataFolder.String(), "plugins", h.PluginID, "kvstore.db")
+}
+
+// ExportKV checkpoints and copies the real plugin KV database.
+func (h *QualificationPlugin) ExportKV(t testing.TB, destination string) {
+	t.Helper()
+	if _, err := h.kv.db.ExecContext(t.Context(), `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(h.KVPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, data, 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Delete removes test-owned KV keys under a prefix.

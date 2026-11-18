@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	sweepQueueName    = "lyrics-sweep"
-	sweepMarkerPrefix = "sweep:"
-	sweepDonePrefix   = "sweep-done:"
+	sweepQueueName          = "lyrics-sweep"
+	sweepMarkerPrefix       = "sweep:"
+	sweepDonePrefix         = "sweep-done:"
+	refreshTailMarkerPrefix = "refresh-tail:"
 	// sweepDoneTTL is the ceiling for a completed sweep's marker; the write
 	// clamps it to the shortest cached-result TTL the sweep actually covered
 	// so a marker never outlives the results it stands for.
@@ -44,6 +45,8 @@ type sweepTaskPayload struct {
 	Track         lyrics.TrackInfo `json:"track"`
 	Sources       []string         `json:"sources,omitempty"`
 	StalledPasses int              `json:"stalledPasses,omitempty"`
+	Publication   Publication      `json:"publication,omitempty"`
+	Refresh       bool             `json:"refresh,omitempty"`
 }
 
 // OnInit purges cached data from removed sources and creates the permanent
@@ -79,9 +82,30 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
 		_ = p.storeSweepMarker(markerKey, sweepMarkerTTL)
 	}
-	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources)
+	kind := "sweep"
+	if payload.Refresh {
+		kind = "tail"
+	}
+	p.preparePublication(payload.Publication, kind)
+	if payload.Publication.Generation != "" {
+		var err error
+		if payload.Publication.Token != "" {
+			err = p.resumePublication(payload.Track, payload.Publication, kind)
+		} else {
+			err = p.beginPublication(payload.Track, payload.Publication, kind)
+		}
+		if err != nil {
+			if markerKey != "" {
+				_ = p.storeSweepMarker(markerKey, 1)
+			}
+			return "stale publication", nil
+		}
+	}
+	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources, payload.Refresh)
 	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
+		p.enqueueMeta = payload.Publication
+		p.enqueueRefresh = payload.Refresh
 		stalledPasses := 0
 		if slices.Equal(payload.Sources, deferredIDs) {
 			stalledPasses = min(max(payload.StalledPasses, 0), maxSweepStalledPasses) + 1
@@ -114,13 +138,18 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 			_ = p.storeSweepMarker(markerKey, 1)
 		}
 	}
+	if payload.Refresh && !continuationQueued {
+		if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
+			_ = p.storeSweepMarker(key, 1)
+		}
+	}
 	return status, nil
 }
 
 // runSweep walks every enabled source for one track and caches each result, so the
 // per-song source picker (Phase B) can list every source that returned lyrics.
 func (p *Provider) runSweep(track lyrics.TrackInfo) string {
-	status, _, _ := p.runSweepDetailed(track, nil)
+	status, _, _ := p.runSweepDetailed(track, nil, false)
 	return status
 }
 
@@ -154,11 +183,11 @@ func cacheTTLForCoveredCandidate(candidate lyric.Candidate) int64 {
 // ids carried by a continuation task. It returns the status string and the ids of
 // sources deferred because the budget ran out (so the task can resume them).
 func (p *Provider) runSweepSources(track lyrics.TrackInfo, allowed []string) (string, []string) {
-	status, deferredIDs, _ := p.runSweepDetailed(track, allowed)
+	status, deferredIDs, _ := p.runSweepDetailed(track, allowed, false)
 	return status, deferredIDs
 }
 
-func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (string, []string, []source.Source) {
+func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, refresh bool) (string, []string, []source.Source) {
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
 		return "ignored (incomplete track metadata)", nil, nil
 	}
@@ -212,7 +241,11 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 		if src.Fetch == nil {
 			continue
 		}
-		if _, expiresAt, ok := p.readCachedSourceCoverageWithExpiry(track, src.ID); ok {
+		coveredCandidate, expiresAt, covered := p.readCachedSourceCoverageWithExpiry(track, src.ID)
+		if refresh {
+			coveredCandidate, expiresAt, covered = p.readCachedSourcePositiveWithExpiry(track, src.ID)
+		}
+		if covered {
 			remaining := expiresAt - p.now().Unix()
 			if expiresAt > 0 && remaining > 0 {
 				skipped++
@@ -224,6 +257,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			// Entries without a trustworthy remaining lifetime (pre-stamp
 			// writes) refetch so the pass leaves stamped coverage behind
 			// instead of letting a marker outlive them.
+			_ = coveredCandidate
 		}
 		if p.sourceInCooldown(src) || p.sourceFailureBackoff(src.ID) > 0 {
 			// A cooled-down source is not covered by this pass, so the pass
@@ -270,7 +304,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			continue
 		}
 		if fetchHealth <= source.Uncertain {
-			p.resetSourceFailure(src.ID)
+			p.resetSourceFailureBefore(src.ID, started)
 		}
 		if fetchHealth == source.TemporarilySkipped && len(candidates) == 0 {
 			// A temporary skip (token rejection) is neither covered work nor a
@@ -368,16 +402,30 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string) (s
 			coverageTTL = remaining
 		}
 	}
+	complete := false
 	if failed == 0 && deferred == 0 && cooldownSkipped == 0 && notCovered == 0 && coveredOthers && cached+missed+skipped == implemented && implemented > 0 {
 		key := p.doneMarkerKey(track, fullOrder)
-		if p.storeSweepMarker(key, coverageTTL) == nil {
-			// Also verify the write actually stayed (an oversized write is
-			// dropped); re-read to be sure.
-			if _, exists, _ := p.cache.Get(key); !exists {
-				return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, sources
+		if p.storeDoneMarker(key, coverageTTL) == nil {
+			complete = true
+			// Direct legacy writes can be verified immediately; buffered
+			// publication writes only exist after the atomic commit below.
+			if p.publication == nil || !p.publication.active {
+				if _, exists, _ := p.cache.Get(key); !exists {
+					complete = false
+				}
 			}
 		}
 	}
+	snapshot, _ := json.Marshal(struct {
+		Track    lyrics.TrackInfo
+		Complete bool
+	}{Track: track, Complete: complete})
+	if _, err := p.commitPublication(snapshot, complete); err != nil {
+		p.releasePublication()
+		p.publication = nil
+		return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d stale-publication", cached, skipped, failed, deferred), deferredIDs, fullOrder
+	}
+	p.publication = nil
 	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, fullOrder
 }
 
@@ -418,6 +466,10 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if p.sweepMarkerActive(p.doneMarkerKey(track, p.activeSources())) {
 		return false
 	}
+	if key, ok := p.refreshTailMarkerKey(track); ok && p.sweepMarkerActive(key) {
+		// The explicit refresh tail owns deferred negative coverage.
+		return false
+	}
 	trackKey, ok := lyricsTrackKey(track)
 	if !ok {
 		return false
@@ -430,6 +482,7 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 		// A broken cache must not block lyrics: skip the sweep this round.
 		return false
 	}
+	p.enqueueMeta = p.captureEnqueuePublication()
 	if err := p.enqueueSweep(track); err != nil {
 		// Release the spot early with a 1-second TTL so the next lookup can retry
 		// the sweep rather than waiting out the whole dedupe window.
@@ -450,6 +503,19 @@ func (p *Provider) storeSweepMarker(key string, ttl int64) error {
 	return p.cache.SetWithTTL(key, value, ttl)
 }
 
+// storeDoneMarker is discovery-visible coverage and must commit with the
+// source results it describes.
+func (p *Provider) storeDoneMarker(key string, ttl int64) error {
+	value, err := json.Marshal(cachedLyricsEnvelope{ExpiresAt: p.now().Add(time.Duration(ttl) * time.Second).Unix()})
+	if err != nil {
+		return err
+	}
+	if !p.storeDiscoveryBytes(key, value, ttl) {
+		return errors.New("publication refused done marker")
+	}
+	return nil
+}
+
 func (p *Provider) sweepMarkerActive(key string) bool {
 	envelope, found := p.readCachedEnvelope(key)
 	return found && envelope.ExpiresAt > p.now().Unix()
@@ -461,4 +527,64 @@ func (p *Provider) sweepMarkerActive(key string) bool {
 func (p *Provider) sweepPendingMarkerKey(track lyrics.TrackInfo, trackKey string) string {
 	digest := sha256.Sum256([]byte(strings.Join(source.IDs(p.activeSources()), "|")))
 	return fmt.Sprintf("%sg%d:%s:%x:%s", sweepMarkerPrefix, lyricsCacheGeneration, p.lyricsCredentialsFingerprint(), digest[:8], trackKey)
+}
+
+// discoveryComplete combines the active done marker with a winner's recorded
+// coverage. A sweep can complete after the foreground winner was written; the
+// next re-rank must not overwrite that completion with a stale false value.
+func (p *Provider) discoveryComplete(track lyrics.TrackInfo, sources []source.Source) bool {
+	if p.sweepMarkerActive(p.doneMarkerKey(track, sources)) {
+		return true
+	}
+	_, _, ok, sweepComplete := p.readCachedWinner(track, sources)
+	return ok && sweepComplete
+}
+
+func (p *Provider) refreshTailMarkerKey(track lyrics.TrackInfo) (string, bool) {
+	trackKey, ok := lyricsTrackKey(track)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%sg%d:%s:%s", refreshTailMarkerPrefix, lyricsCacheGeneration, p.lyricsCredentialsFingerprint(), trackKey), true
+}
+
+// enqueueRefreshTail retries eligible negative/error sources beyond the
+// foreground bound. It transfers the refresh admission token; a superseded
+// task cannot publish.
+func (p *Provider) enqueueRefreshTail(track lyrics.TrackInfo, sources []source.Source, attempted []string) {
+	if p.publication == nil || !p.publication.active {
+		return
+	}
+	attemptedSet := make(map[string]bool, len(attempted))
+	for _, id := range attempted {
+		attemptedSet[id] = true
+	}
+	remaining := make([]string, 0, len(sources))
+	for _, src := range sources {
+		if src.Fetch == nil || attemptedSet[src.ID] {
+			continue
+		}
+		if _, fresh := p.readCachedSourcePositive(track, src.ID); fresh {
+			continue
+		}
+		remaining = append(remaining, src.ID)
+	}
+	if len(remaining) == 0 {
+		return
+	}
+	markerKey, ok := p.refreshTailMarkerKey(track)
+	if !ok || p.sweepMarkerActive(markerKey) {
+		return
+	}
+	_ = p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL)
+	p.enqueueMeta = Publication{
+		Generation: p.publication.generation,
+		Token:      p.publication.token,
+		Kind:       "tail",
+	}
+	p.enqueueRefresh = true
+	if err := p.enqueueSweepSources(track, remaining, 0); err != nil {
+		_ = p.storeSweepMarker(markerKey, 1)
+		p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
+	}
 }
