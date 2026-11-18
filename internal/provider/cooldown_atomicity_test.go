@@ -80,3 +80,21 @@ func TestNewerFailureSurvivesConcurrentStaleRecovery(t *testing.T) {
 		t.Fatalf("backoff after tied recovery = %s, want the failure preserved", got)
 	}
 }
+
+func TestOverlappingFailureCannotRegressNewerObservation(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(15_000)
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+
+	// Failure B starts at 15s and records a newer observation.
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	// A stale recovery that started at 10s must not erase B.
+	p.resetSourceFailureBefore("one", time.UnixMilli(10_000))
+	// Failure A started at 0s but completes last. Its late write must not
+	// regress UpdatedAt below the recovery marker and erase B.
+	now = time.UnixMilli(18_000)
+	p.rememberSourceFailure("one", time.UnixMilli(0), errors.New("upstream failed"))
+	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
+		t.Fatalf("backoff after late overlapping failure = %s, want the newer 10s window preserved", got)
+	}
+}

@@ -72,8 +72,11 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	state := p.readSourceFailure(sourceID)
 	state.Failures = min(state.Failures+1, 5)
 	delay := min(5*time.Second*time.Duration(1<<(state.Failures-1)), time.Minute)
-	state.Until = p.now().Add(delay).UnixMilli()
-	state.UpdatedAt = observedAt.UnixMilli()
+	// Overlapping failures can complete out of order. Keep the latest
+	// observation timestamp and the longest deadline so a late write cannot
+	// regress newer failure state past a recovery reset.
+	state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
+	state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
 	value, marshalErr := json.Marshal(state)
 	if marshalErr == nil {
 		// A broken store fails open; it must never disable a source.
