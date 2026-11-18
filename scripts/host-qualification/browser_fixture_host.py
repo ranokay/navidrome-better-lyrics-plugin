@@ -39,9 +39,10 @@ CLOCK_OFFSET_UNIT_DAYS = {
     "day": 1,
     "days": 1,
 }
-# The instance salt lives for ten years. A forward offset beyond a few weeks
-# would make it look expired and let qualification replace the salt it is
-# meant to preserve, so keep the accepted window far below that TTL.
+# The instance salt and migration markers live for ten years. Keep the
+# qualification window far below that TTL so a clock jump cannot make durable
+# rows look expired and be replaced; 30 days still covers the short-lived
+# lyric caches this runner exercises.
 MAX_CLOCK_OFFSET_DAYS = 30
 
 
@@ -274,6 +275,10 @@ def main() -> int:
     fixtures = args.fixtures.resolve(strict=True)
     if not (checkout / "go.mod").is_file():
         raise SystemExit("host checkout must contain go.mod")
+    if clock_offset and not (checkout / KVSTORE).is_file():
+        raise SystemExit(
+            "--clock-offset requires a host checkout with plugins/host_kvstore.go"
+        )
     if not (checkout / "ui/build/index.html").is_file():
         raise SystemExit("host UI is not built; run `make buildjs` first")
     args.output.mkdir(parents=True, exist_ok=True)

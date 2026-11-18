@@ -101,5 +101,6 @@ disposable run without deleting rows: the same database file and the
 trailing newline or an unknown unit is rejected) and limited to 30 days, well
 inside the ten-year instance-salt TTL. The selected offset is recorded in
 `qualification/receipt.json` as `qualificationClockOffset`; the overlay hash
-is recorded too. Build a second binary without the option when a
-phase must observe the cache before expiry.
+is recorded too. Rows written by an offset build carry the shifted expiry, so
+run offset builds last in a qualification sequence. Build a second binary
+without the option when a phase must observe the cache before expiry.
