@@ -441,6 +441,12 @@ func TestOlderRecoveryAdvancesResetEpoch(t *testing.T) {
 	// A success that started before the newer failure must still advance the
 	// recovery epoch without hiding that failure.
 	p.resetSourceFailureBefore("one", time.UnixMilli(250_000))
+	if keys, err := cache.List(sourceFailureObservationPrefix + "one:"); err != nil || len(keys) != 0 {
+		t.Fatalf("observations after a retained reset = %v, %v; want none", keys, err)
+	}
+	if _, exists, err := cache.Get(failureFallbackMarkerKey("one")); err != nil || exists {
+		t.Fatalf("fallback marker after a retained reset = %v, %v; want none", exists, err)
+	}
 	now = time.UnixMilli(310_000)
 	p.rememberSourceFailure("one", time.UnixMilli(205_000), errors.New("late pre-recovery failure"))
 	if got := p.sourceFailureBackoff("one"); got != 0 {
