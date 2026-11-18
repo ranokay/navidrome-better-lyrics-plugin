@@ -447,9 +447,7 @@ func (p *Provider) considerBundleExpiry(raw []byte, consider func(int64)) {
 	}
 }
 
-// controlMerge caches whether the live host supports atomic control merges.
-// Active reports the host's seeded publication generation (a capability
-// signal), not a live admission.
+// demoteMerger permanently disables atomic control merges for this invocation.
 func (p *Provider) demoteMerger() {
 	p.mergeMu.Lock()
 	defer p.mergeMu.Unlock()
@@ -457,6 +455,12 @@ func (p *Provider) demoteMerger() {
 	p.mergeChecked = true
 }
 
+// controlMerge caches whether the live host applies the reserved
+// @navidrome/publication/control:<key> merge. Active reports the host's
+// seeded publication generation, a capability signal rather than a live
+// admission. Merge mode deliberately writes no observation keys: the host
+// merges the base scalar, and failure state is scoped by its recovery-epoch
+// timestamp (a failure with UpdatedAt before that epoch is invisible).
 func (p *Provider) controlMerge() (maxMerger, bool) {
 	p.mergeMu.Lock()
 	defer p.mergeMu.Unlock()
