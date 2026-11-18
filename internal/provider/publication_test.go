@@ -309,3 +309,23 @@ func TestNegativeCoveragePreservesCompletion(t *testing.T) {
 		t.Fatal("negative winner stored stale incomplete coverage")
 	}
 }
+
+func TestOriginalRefetchWithoutWritesReleasesAdmission(t *testing.T) {
+	t.Parallel()
+	src := source.Source{
+		ID: "only", Display: "Only", Hosts: []string{"only.example.test"}, DefaultEnabled: true,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return nil, source.Healthy, nil
+		},
+	}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, func(lyrics.TrackInfo) error { return nil })
+	publisher := &fakePublisher{handled: true, accepted: true, token: "token", cache: cache}
+	p.publisher = publisher
+	identity := lyric.NewVariantIdentity(p.sourceInstanceID("only"), "recording", "", "main", "elrc")
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	_, _ = p.GetLyricsOriginalPublished(track, identity, Publication{Generation: "generation", CallID: "call"})
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the zero-write admission released", publisher.releases)
+	}
+}
