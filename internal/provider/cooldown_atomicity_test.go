@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
+	"github.com/navidrome/navidrome/plugins/pdk/go/taskworker"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/source"
 )
 
@@ -253,5 +255,72 @@ func TestMergedForegroundReadsAreBounded(t *testing.T) {
 	}
 	if cache.lists != 0 || cache.gets != 1 {
 		t.Fatalf("cooldown read work = %d gets, %d lists; want one get and no list", cache.gets, cache.lists)
+	}
+}
+
+func TestControlMergeFailureFallsBackToLegacy(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(140_000, 0)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{
+		handled: true, active: "generation", mergeErr: errors.New("control unavailable"), cache: cache,
+	}
+	key := source.GlobalCooldownKey("one")
+	p.RememberCooldown(key, time.Hour)
+	if p.merger != nil {
+		t.Fatal("a failed control merge was not demoted")
+	}
+	now = now.Add(5 * time.Minute)
+	if got := p.Cooldown(key); got < 54*time.Minute || got > 56*time.Minute {
+		t.Fatalf("fallback cooldown = %s, want the legacy observation window", got)
+	}
+
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	if got := p.sourceFailureBackoff("one"); got <= 0 {
+		t.Fatal("fallback failure state was not persisted")
+	}
+	p.resetSourceFailureBefore("one", now.Add(time.Second))
+	if got := p.sourceFailureBackoff("one"); got != 0 {
+		t.Fatalf("fallback reset left backoff = %s, want clear", got)
+	}
+}
+
+func TestLatePreRecoveryFailureIsRejected(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(150_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache}
+
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	now = time.UnixMilli(160_000)
+	p.resetSourceFailureBefore("one", now)
+	now = time.UnixMilli(170_000)
+	p.rememberSourceFailure("one", time.UnixMilli(100_000), errors.New("late pre-recovery failure"))
+	if got := p.sourceFailureBackoff("one"); got != 0 {
+		t.Fatalf("late pre-recovery backoff = %s, want it rejected by the recovery epoch", got)
+	}
+}
+
+func TestTokenCarryingRetainedSweepDoesNotReleaseParent(t *testing.T) {
+	t.Parallel()
+	p := newTestProviderWithSources(nil, newFakeLyricsCache(), time.Now, []source.Source{
+		variantSource("one", "[00:01.00]one", "lrc"),
+	}, nil)
+	publisher := &fakePublisher{handled: true, accepted: true, token: "parent", cache: p.cache}
+	p.publisher = publisher
+	payload, err := json.Marshal(sweepTaskPayload{
+		Track:       lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
+		Publication: Publication{Generation: "generation", Token: "parent"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, TaskID: "old", Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.releases != 0 {
+		t.Fatalf("releases = %d, want a pre-fix child to leave its parent token alone", publisher.releases)
 	}
 }

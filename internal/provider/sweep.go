@@ -84,9 +84,9 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	if !payload.Refresh && payload.Publication.Token != "" {
 		// Ordinary sweeps never inherit a foreground token; a retained
 		// token-carrying sweep would be a pre-fix child that could run before
-		// its parent committed.
+		// its parent committed. The token belongs to that parent, so do not
+		// release it from here.
 		p.clearOwnMarkers(payload)
-		p.releaseOperation(payload.Track, payload.Publication)
 		return "stale publication", nil
 	}
 	if payload.Publication.Generation == "" {

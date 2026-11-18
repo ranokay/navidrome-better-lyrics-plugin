@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
@@ -76,6 +77,7 @@ type Provider struct {
 	publication  *pendingPublication
 	pubMeta      Publication
 	pubKind      string
+	mergeMu      sync.Mutex
 	mergeChecked bool
 	merger       maxMerger
 	// enqueueMeta is captured before a sweep task is enqueued and carried in

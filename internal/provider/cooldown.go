@@ -76,7 +76,7 @@ func (p *Provider) readScalarSourceFailure(sourceID string) (sourceFailureState,
 		return sourceFailureState{}, false
 	}
 	state := sourceFailureState{Failures: uint8(min(failures, 5)), Until: until, UpdatedAt: updated}
-	if !p.validSourceFailure(state) {
+	if !p.validSourceFailure(state) || state.UpdatedAt < epoch {
 		return sourceFailureState{}, false
 	}
 	return state, true
@@ -203,14 +203,24 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
 	state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
 	if merger, ok := p.controlMerge(); ok {
-		state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
-		state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
 		epoch := p.readLegacyReset(sourceID)
-		_ = merger.MergeMax(sourceFailureUntilKey(sourceID, epoch), state.Until, sourceFailureStateTTL)
-		_ = merger.MergeMax(sourceFailureUpdatedKey(sourceID, epoch), state.UpdatedAt, sourceFailureStateTTL)
-		_ = merger.MergeMax(sourceFailureCountKey(sourceID, epoch), int64(state.Failures), sourceFailureStateTTL)
+		failed := false
+		for key, value := range map[string]int64{
+			sourceFailureUntilKey(sourceID, epoch):   state.Until,
+			sourceFailureUpdatedKey(sourceID, epoch): state.UpdatedAt,
+			sourceFailureCountKey(sourceID, epoch):   int64(state.Failures),
+		} {
+			if err := merger.MergeMax(key, value, sourceFailureStateTTL); err != nil {
+				failed = true
+			}
+		}
+		if failed {
+			p.demoteMerger()
+		}
 		p.storeLegacySourceFailure(sourceID, state)
-		return
+		if !failed {
+			return
+		}
 	}
 	value, marshalErr := json.Marshal(state)
 	if marshalErr == nil {
@@ -258,10 +268,11 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 		}
 		if err := merger.MergeMax(sourceFailureResetKey(sourceID), resetAt, sourceFailureStateTTL); err != nil {
 			p.logf(fmt.Sprintf("source-failure reset merge failed: %v", p.safeDiagnosticError(err)))
+			p.demoteMerger()
+		} else {
+			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
 			return
 		}
-		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
-		return
 	}
 	if lister, canList := p.cache.(storeLister); canList {
 		if p.readSourceFailureReset(sourceID, lister) >= resetAt {
@@ -347,8 +358,10 @@ func (p *Provider) RememberCooldown(key string, retryAfter time.Duration) {
 	if merger, ok := p.controlMerge(); ok {
 		if err := merger.MergeMax(key, untilUnix, ttlSeconds); err != nil {
 			p.logf(fmt.Sprintf("rate-limit cooldown merge failed: %v", p.safeDiagnosticError(err)))
+			p.demoteMerger()
+		} else {
+			return
 		}
-		return
 	}
 	if _, canList := p.cache.(storeLister); canList {
 		// Write the deadline-keyed observation first: if it cannot persist,

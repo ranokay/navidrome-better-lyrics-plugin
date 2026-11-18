@@ -494,7 +494,7 @@ func TestFailedBufferedMissCannotClaimCompletion(t *testing.T) {
 			p.publisher = &fakePublisher{handled: true, accepted: true, token: "token", commitErr: errors.New(name), cache: cache}
 			payload, err := json.Marshal(sweepTaskPayload{
 				Track:       lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-				Publication: Publication{Generation: "generation", Token: "token"},
+				Publication: Publication{Generation: "generation"},
 			})
 			if err != nil {
 				t.Fatal(err)

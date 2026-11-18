@@ -28,6 +28,7 @@ type fakePublisher struct {
 	releases     int
 	probe        *bool
 	probeError   error
+	mergeErr     error
 	rejectTokens map[string]bool
 	onAdmit      func(admissionWire)
 	onCommit     func(commitWire)
@@ -120,8 +121,8 @@ func (f *fakePublisher) Active() (string, bool, error) {
 }
 
 func (f *fakePublisher) MergeMax(key string, value, ttlSeconds int64) error {
-	if f.commitErr != nil {
-		return f.commitErr
+	if f.mergeErr != nil {
+		return f.mergeErr
 	}
 	if f.cache == nil {
 		return nil
