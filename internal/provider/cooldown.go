@@ -167,7 +167,8 @@ func (p *Provider) resetSourceFailure(sourceID string) {
 // operation that observed the success. A stale success cannot erase a newer
 // failure backoff.
 func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) {
-	if p.readSourceFailure(sourceID).Failures == 0 {
+	state := p.readSourceFailure(sourceID)
+	if state.Failures == 0 {
 		// A healthy source with no recorded failure needs no reset marker;
 		// writing one per success would grow unbounded control records.
 		return
@@ -191,6 +192,11 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	}
 	// Keep the legacy reset key for older plugin readers.
 	_ = p.cache.SetWithTTL(sourceFailureResetKey(sourceID), []byte(strconv.FormatInt(resetAt, 10)), sourceFailureStateTTL)
+	if state.UpdatedAt < resetAt {
+		// This success actually covers the recorded failure; an empty legacy
+		// record prevents a downgraded reader from retaining the old backoff.
+		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+	}
 }
 
 // Cooldown reports the remaining provider-wide cooldown for a key; a cache

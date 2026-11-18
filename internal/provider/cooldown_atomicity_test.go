@@ -147,4 +147,7 @@ func TestHealthyResetWritesNoFailureObservation(t *testing.T) {
 	if keys, err := cache.List(sourceFailureResetObservationPrefix + "one:"); err != nil || len(keys) != 1 {
 		t.Fatalf("recovery reset observations = %v, %v; want one", keys, err)
 	}
+	if legacy, exists, err := cache.Get(sourceFailureKey("one")); err != nil || !exists || string(legacy) != "{}" {
+		t.Fatalf("legacy failure clear = %q, %v; want an empty record", legacy, err)
+	}
 }
