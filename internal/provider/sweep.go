@@ -504,6 +504,10 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	p.enqueueMeta = p.captureEnqueuePublication()
 	p.enqueueRefresh = false
 	if err := p.enqueueSweep(track); err != nil {
+		// No sweep owns the admitted token; clear the captured metadata so a
+		// zero-write terminal can release it instead of holding the host TTL.
+		p.enqueueMeta = Publication{}
+		p.enqueueRefresh = false
 		// Release the spot early with a 1-second TTL so the next lookup can retry
 		// the sweep rather than waiting out the whole dedupe window.
 		_ = p.storeSweepMarker(markerKey, 1)
@@ -626,6 +630,8 @@ func (p *Provider) enqueueRefreshTailWithOp(track lyrics.TrackInfo, sources []st
 	p.enqueueMeta = op
 	p.enqueueRefresh = true
 	if err := p.enqueueSweepSources(track, sources, 0); err != nil {
+		p.enqueueMeta = Publication{}
+		p.enqueueRefresh = false
 		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
 			_ = p.storeSweepMarker(markerKey, 1)
 		}

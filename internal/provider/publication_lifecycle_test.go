@@ -864,3 +864,36 @@ func TestRefreshKeepsTokenForQueuedFullSweep(t *testing.T) {
 		t.Fatal("the refresh released the token its queued sweep needs")
 	}
 }
+
+func TestFailedSweepEnqueueDoesNotHoldAdmission(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+		variantSource("one", "[00:01.00]one", "lrc"),
+	}, nil)
+	publisher := &fakePublisher{handled: true, accepted: true, token: "token", cache: cache}
+	p.publisher = publisher
+	p.preparePublication(Publication{Generation: "generation", Token: "token"}, "normal")
+	if err := p.ensurePublication(track); err != nil {
+		t.Fatal(err)
+	}
+	p.enqueueSweep = func(lyrics.TrackInfo) error { return errors.New("queue unavailable") }
+	if p.maybeEnqueueSweep(track) {
+		t.Fatal("maybeEnqueueSweep reported success after an enqueue error")
+	}
+	if p.enqueueMeta.Token != "" {
+		t.Fatal("a failed enqueue left a live token in enqueueMeta")
+	}
+	if p.publication == nil || !p.publication.active {
+		t.Fatal("the admitted publication disappeared")
+	}
+	// The zero-write terminal release must now be able to clear the admission.
+	if p.enqueueMeta.Token == "" {
+		p.releasePublication()
+		p.publication = nil
+	}
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the ownerless admission released", publisher.releases)
+	}
+}
