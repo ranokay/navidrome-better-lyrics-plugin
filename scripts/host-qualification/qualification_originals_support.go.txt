@@ -195,16 +195,6 @@ func (h *QualificationPlugin) PublicationTrackKey(mf *model.MediaFile) string {
 	return publicationTrackKey(mf)
 }
 
-// ActiveGeneration returns the host-owned publication generation.
-func (h *QualificationPlugin) ActiveGeneration(t testing.TB) string {
-	t.Helper()
-	var generation string
-	if err := h.kv.db.QueryRowContext(t.Context(), `SELECT generation FROM plugin_publication_generation WHERE id=1`).Scan(&generation); err != nil {
-		t.Fatal(err)
-	}
-	return generation
-}
-
 // Admission returns the current admission identity for a track.
 func (h *QualificationPlugin) Admission(t testing.TB, trackKey string) (string, string, bool) {
 	t.Helper()

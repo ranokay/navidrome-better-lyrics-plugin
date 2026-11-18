@@ -80,7 +80,8 @@ with a deterministic provider transport and exercises: classic cache reuse,
 sweep alternatives observable before the classic TTL, clean-miss and transient
 backoff/Retry-After recovery, an obsolete classic writer racing an admitted
 refresh, in-flight supersession, enhanced/refresh coalescing, the three-source
-foreground budget, the deferred refresh tail, and retained-KV export. It
+foreground budget, the deferred refresh tail, config reload with a stale queued continuation, and
+retained-KV export. It
 records the host head and package SHA-256 and verifies the host checkout is
 unchanged.
 

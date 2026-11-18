@@ -399,7 +399,8 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		}
 	} else if !candidate.Present() && len(evidence) > 0 {
 		// Preserve a successful assertion across another source's outage while
-		// keeping the pass explicitly incomplete for retry/sweep purposes.
+		// recording the pass's actual coverage; the active marker still governs
+		// whether a later sweep is needed.
 		p.cacheNegativeWinner(track, sources, completion, evidence)
 		p.maybeEnqueueSweep(track)
 	} else {
