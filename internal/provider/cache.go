@@ -290,6 +290,11 @@ func (p *Provider) storeCandidateBytes(key string, value []byte, oversized bool,
 		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), MaxCacheEntryBytes))
 		return false
 	}
+	if p.publication != nil && (p.publication.denied || p.publication.failed) {
+		// A denied scope or a rejected commit must never fall back to an
+		// unadmitted direct write.
+		return false
+	}
 	if p.publication != nil && p.publication.active {
 		// The host publication transaction enforces the quota and applies all
 		// writes atomically; buffering here keeps provider I/O outside its lock.

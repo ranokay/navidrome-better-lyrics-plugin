@@ -520,8 +520,8 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 }
 
 // readCachedView re-reads the winner and best source after lazy admission so
-// callers rank the current cache. The no-fresh fallback still serves the
-// pre-admission candidate, but that path does not write it as fresh state.
+// callers rank the current cache. Callers omit a pre-admission candidate when
+// no fresh view remains.
 func (p *Provider) readCachedView(track lyrics.TrackInfo, sources []source.Source) (lyric.Candidate, []lyric.Evidence, bool, bool) {
 	winner, evidence, ok, sweepComplete := p.readCachedWinner(track, sources)
 	complete := sweepComplete || p.sweepMarkerActive(p.doneMarkerKey(track, sources))

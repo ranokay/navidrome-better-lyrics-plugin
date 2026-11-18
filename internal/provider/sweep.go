@@ -523,6 +523,16 @@ func (p *Provider) storeSweepMarker(key string, ttl int64) error {
 	return p.cache.SetWithTTL(key, value, ttl)
 }
 
+// clearSweepMarker writes an already-expired tombstone so a same-request
+// `maybeEnqueueSweep` can immediately enqueue a replacement.
+func (p *Provider) clearSweepMarker(key string) error {
+	value, err := json.Marshal(cachedLyricsEnvelope{ExpiresAt: p.now().Unix() - 1})
+	if err != nil {
+		return err
+	}
+	return p.cache.SetWithTTL(key, value, 1)
+}
+
 // storeDoneMarker is discovery-visible coverage and must commit with the
 // source results it describes.
 func (p *Provider) storeDoneMarker(key string, ttl int64) error {
@@ -593,7 +603,7 @@ func (p *Provider) prepareRefreshTail(track lyrics.TrackInfo, sources []source.S
 		// A newer refresh that needs no tail retires any stale queued-tail
 		// marker, otherwise it would suppress new sweeps for the marker TTL.
 		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
-			_ = p.storeSweepMarker(markerKey, 1)
+			_ = p.clearSweepMarker(markerKey)
 		}
 		return
 	}

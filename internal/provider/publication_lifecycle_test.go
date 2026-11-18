@@ -809,3 +809,58 @@ func TestMintedTokenlessSweepZeroWriteReleasesAdmission(t *testing.T) {
 		t.Fatalf("releases = %d, want the minted zero-write admission released", publisher.releases)
 	}
 }
+
+func TestDeniedPublicationRefusesDiscoveryWrites(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{}, nil)
+	p.publisher = &fakePublisher{handled: true, accepted: true, token: "token", cache: cache}
+	p.preparePublication(Publication{Generation: "generation", CallID: "call"}, "normal")
+	if err := p.ensurePublication(track); err != nil {
+		t.Fatal(err)
+	}
+	if p.publication == nil || !p.publication.denied {
+		t.Fatalf("publication = %#v, want a denied scope", p.publication)
+	}
+	key, ok := lyricsCacheKeyForSource(track, "one")
+	if !ok {
+		t.Fatal("source key unavailable")
+	}
+	if p.storeCandidateBytes(key, []byte("value"), false, 60) {
+		t.Fatal("a denied publication wrote directly")
+	}
+	if _, exists, err := cache.Get(key); err != nil || exists {
+		t.Fatalf("denied source write = %v, %v", exists, err)
+	}
+}
+
+func TestRefreshKeepsTokenForQueuedFullSweep(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	cache := newFakeLyricsCache()
+	sources := []source.Source{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+				return nil, source.Degraded, errors.New("upstream down")
+			}},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, sources, nil)
+	enqueued := false
+	p.enqueueSweep = func(lyrics.TrackInfo) error {
+		enqueued = true
+		return nil
+	}
+	publisher := &fakePublisher{handled: true, accepted: true, token: "token", cache: cache}
+	p.publisher = publisher
+	_, _ = p.GetLyricsV2Published(
+		lyrics.GetLyricsRequest{Track: track},
+		Publication{Generation: "generation", CallID: "refresh", Token: "token", Kind: "refresh"}, true,
+	)
+	if !enqueued {
+		t.Fatal("the failed refresh did not queue a full sweep")
+	}
+	if publisher.releases != 0 {
+		t.Fatal("the refresh released the token its queued sweep needs")
+	}
+}
