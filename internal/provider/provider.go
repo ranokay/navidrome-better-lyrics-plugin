@@ -67,8 +67,9 @@ type Provider struct {
 	pubKind     string
 	// enqueueMeta is captured before a sweep task is enqueued and carried in
 	// the payload; execution never adopts a newer generation by re-reading.
-	enqueueMeta    Publication
-	enqueueRefresh bool
+	enqueueMeta         Publication
+	enqueueRefresh      bool
+	refreshTailEnqueued bool
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
 	sources []source.Source
@@ -144,6 +145,7 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.pubKind = kind
 	p.enqueueMeta = Publication{}
 	p.enqueueRefresh = false
+	p.refreshTailEnqueued = false
 }
 
 func (p *Provider) ensurePublication(track lyrics.TrackInfo) error {
@@ -222,6 +224,10 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 		Complete bool
 	}{Track: input.Track, Complete: sweepComplete})
 	committedDiscovery, commitErr := p.commitPublication(snapshot, sweepComplete)
+	if refresh && commitErr == nil && !p.refreshTailEnqueued && (p.publication == nil || len(p.publication.writes) == 0) {
+		p.releasePublication()
+		p.publication = nil
+	}
 	discovery := committedDiscovery
 	if commitErr != nil {
 		if current, currentDiscovery, ok := p.currentV2Response(input.Track); ok {

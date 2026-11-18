@@ -583,7 +583,9 @@ func (p *Provider) enqueueRefreshTail(track lyrics.TrackInfo, sources []source.S
 		Kind:       "tail",
 	}
 	p.enqueueRefresh = true
+	p.refreshTailEnqueued = true
 	if err := p.enqueueSweepSources(track, remaining, 0); err != nil {
+		p.refreshTailEnqueued = false
 		_ = p.storeSweepMarker(markerKey, 1)
 		p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
 	}
