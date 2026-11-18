@@ -398,3 +398,30 @@ func TestFallbackFailurePreservesCommittedReset(t *testing.T) {
 		t.Fatalf("fallback backoff after committed reset = %s, want zero", got)
 	}
 }
+
+func TestOutOfOrderFailureObservationsKeepEscalatedWindow(t *testing.T) {
+	t.Parallel()
+	for name, control := range map[string]bool{"legacy": false, "control-fallback": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			now := time.UnixMilli(100_000)
+			cache := listableCache{newFakeLyricsCache()}
+			p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+			if control {
+				p.publisher = &fakePublisher{
+					handled: true, active: "generation", control: true,
+					reduceErr: errors.New("reducer unavailable"), cache: cache.fakeLyricsCache,
+				}
+			}
+			p.rememberSourceFailure("one", now, errors.New("first"))
+			now = now.Add(5 * time.Second)
+			p.rememberSourceFailure("one", now, errors.New("newer start completes first"))
+			now = now.Add(time.Millisecond)
+			// An older attempt completes last; its escalated window must survive.
+			p.rememberSourceFailure("one", time.UnixMilli(99_999), errors.New("older start completes last"))
+			if got := p.sourceFailureBackoff("one"); got != 20*time.Second {
+				t.Fatalf("backoff after out-of-order completion = %s, want the escalated 20s window", got)
+			}
+		})
+	}
+}

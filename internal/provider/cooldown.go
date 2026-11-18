@@ -17,6 +17,10 @@ type sourceFailureState struct {
 	Until     int64 `json:"until"`
 	UpdatedAt int64 `json:"updatedAt,omitempty"`
 	ResetAt   int64 `json:"resetAt,omitempty"`
+	// ObservedAt is the failure's own start. Observations carry it so a
+	// completion that started before a recovery is ignored even when its
+	// merged UpdatedAt is newer.
+	ObservedAt int64 `json:"observedAt,omitempty"`
 }
 
 func sourceFailureKey(sourceID string) string {
@@ -133,6 +137,12 @@ func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister
 		if json.Unmarshal(value, &state) != nil || !p.validSourceFailure(state) {
 			continue
 		}
+		if state.ObservedAt != 0 && state.ObservedAt < resetAt {
+			continue
+		}
+		if state.ObservedAt == 0 && state.UpdatedAt < resetAt {
+			continue
+		}
 		if !found || state.UpdatedAt > best.UpdatedAt ||
 			(state.UpdatedAt == best.UpdatedAt && state.Until > best.Until) {
 			best, found = state, true
@@ -140,9 +150,6 @@ func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister
 	}
 	if !found {
 		return sourceFailureState{}, false
-	}
-	if best.UpdatedAt < resetAt {
-		return sourceFailureState{}, true
 	}
 	return best, true
 }
@@ -226,7 +233,7 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 		// transient reducer failure; the next call retries the reducer.
 	}
 	observedState := state
-	observedState.UpdatedAt = observedAt.UnixMilli()
+	observedState.ObservedAt = observedAt.UnixMilli()
 	observedValue, marshalErr := json.Marshal(observedState)
 	if marshalErr == nil {
 		if _, canList := p.cache.(storeLister); canList {
