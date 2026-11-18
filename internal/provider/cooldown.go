@@ -94,7 +94,7 @@ func (p *Provider) readReducerSourceFailure(sourceID string) (sourceFailureState
 		if !exists && !observedValid {
 			return sourceFailureState{}, false
 		}
-		return sourceFailureState{}, true
+		return sourceFailureState{ResetAt: rowState.ResetAt}, true
 	}
 	resetAt := max(max(state.ResetAt, rowState.ResetAt), p.readLegacyReset(sourceID))
 	if state.UpdatedAt < resetAt {
@@ -237,10 +237,13 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 			_ = p.cache.SetWithTTL(key, observedValue, sourceFailureStateTTL)
 		}
 		// Keep the legacy key for older plugin readers and non-list stores,
-		// where the merged timestamp/window is the best available guard.
-		legacyValue, legacyErr := json.Marshal(state)
-		if legacyErr == nil {
-			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
+		// where the merged timestamp/window is the best available guard. In
+		// control mode leave the reducer row (and its ResetAt) untouched.
+		if _, control := p.controlMerge(); !control {
+			legacyValue, legacyErr := json.Marshal(state)
+			if legacyErr == nil {
+				_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
+			}
 		}
 		_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 	}
@@ -289,10 +292,13 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	}
 	// Keep the legacy reset key for older plugin readers.
 	_ = p.cache.SetWithTTL(sourceFailureResetKey(sourceID), []byte(strconv.FormatInt(resetAt, 10)), sourceFailureStateTTL)
-	if state.UpdatedAt < resetAt {
-		// This success actually covers the recorded failure; an empty legacy
-		// record prevents a downgraded reader from retaining the old backoff.
-		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+	if _, control := p.controlMerge(); !control {
+		if state.UpdatedAt < resetAt {
+			// This success actually covers the recorded failure; an empty
+			// legacy record prevents a downgraded reader from retaining the old
+			// backoff. In control mode the reducer row keeps its ResetAt.
+			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+		}
 	}
 	_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 }

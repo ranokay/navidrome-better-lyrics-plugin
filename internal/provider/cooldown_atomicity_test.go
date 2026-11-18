@@ -380,3 +380,21 @@ func TestReducerFallbackObservationWinsOverStaleRow(t *testing.T) {
 		t.Fatalf("backoff from fallback observation = %s, want the newer 5s window", got)
 	}
 }
+
+func TestFallbackFailurePreservesCommittedReset(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(150_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	publisher := &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
+	p.publisher = publisher
+	p.rememberSourceFailure("one", now, errors.New("pre-reset failure"))
+	now = time.UnixMilli(200_000)
+	p.resetSourceFailureBefore("one", now)
+	publisher.reduceErr = errors.New("reducer unavailable")
+	now = time.UnixMilli(250_000)
+	p.rememberSourceFailure("one", time.UnixMilli(150_000), errors.New("late pre-reset failure"))
+	if got := p.sourceFailureBackoff("one"); got != 0 {
+		t.Fatalf("fallback backoff after committed reset = %s, want zero", got)
+	}
+}
