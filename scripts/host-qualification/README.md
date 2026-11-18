@@ -98,7 +98,8 @@ runner keeps working on otherwise compatible host checkouts.
 with a qualification-only TTL clock. It forces real cache expiry in a
 disposable run without deleting rows: the same database file and the
 10-year instance-salt row are retained. The offset is strictly matched (a
-trailing newline or an unknown unit is rejected). The modifier is strictly validated and
-recorded in `qualification/receipt.json` as `qualificationClockOffset`; the
-overlay hash is recorded too. Build a second binary without the option when a
+trailing newline or an unknown unit is rejected) and limited to 30 days, well
+inside the ten-year instance-salt TTL. The selected offset is recorded in
+`qualification/receipt.json` as `qualificationClockOffset`; the overlay hash
+is recorded too. Build a second binary without the option when a
 phase must observe the cache before expiry.

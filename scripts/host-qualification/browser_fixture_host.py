@@ -26,15 +26,43 @@ KVSTORE = "plugins/host_kvstore.go"
 HOOK = "\tsvc.client = &http.Client{Transport: httpclient.NewTransport(svc.transport)}\n"
 KV_FILTER = "const notExpiredFilter = \"(expires_at IS NULL OR expires_at >= datetime('now'))\""
 KV_TTL = "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', ?))"
-CLOCK_OFFSET_PATTERN = re.compile(r"^[+-][0-9]{1,4} (seconds?|minutes?|hours?|days?)$")
+CLOCK_OFFSET_PATTERN = re.compile(
+    r"^([+-][0-9]{1,4}) (seconds?|minutes?|hours?|days?)$"
+)
+CLOCK_OFFSET_UNIT_DAYS = {
+    "second": 1 / 86400,
+    "seconds": 1 / 86400,
+    "minute": 1 / 1440,
+    "minutes": 1 / 1440,
+    "hour": 1 / 24,
+    "hours": 1 / 24,
+    "day": 1,
+    "days": 1,
+}
+# The instance salt lives for ten years. A forward offset beyond a few weeks
+# would make it look expired and let qualification replace the salt it is
+# meant to preserve, so keep the accepted window far below that TTL.
+MAX_CLOCK_OFFSET_DAYS = 30
+
+
+def validate_clock_offset(value: str) -> str:
+    match = CLOCK_OFFSET_PATTERN.fullmatch(value or "")
+    if not match:
+        raise ValueError("expected an offset like '+25 hours' or '-90 minutes'")
+    amount = int(match.group(1))
+    if abs(amount) * CLOCK_OFFSET_UNIT_DAYS[match.group(2)] > MAX_CLOCK_OFFSET_DAYS:
+        raise ValueError(
+            "qualification clock offset must stay within "
+            f"{MAX_CLOCK_OFFSET_DAYS} days to preserve the instance salt"
+        )
+    return value
 
 
 def clock_offset_argument(value: str) -> str:
-    if not CLOCK_OFFSET_PATTERN.fullmatch(value):
-        raise argparse.ArgumentTypeError(
-            "expected an offset like '+25 hours' or '-90 minutes'"
-        )
-    return value
+    try:
+        return validate_clock_offset(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 FIXTURE_HELPER = """
@@ -171,8 +199,7 @@ func qualificationKVClockTTLModifier() string {
 
 
 def rewrite_kvstore(source: str, clock_offset: str) -> str:
-    if not CLOCK_OFFSET_PATTERN.fullmatch(clock_offset or ""):
-        raise ValueError("invalid qualification clock offset")
+    validate_clock_offset(clock_offset)
     if source.count(KV_FILTER) != 1:
         raise ValueError("expected exactly one plugin KV expiry filter")
     if source.count(KV_TTL) != 1:
@@ -204,8 +231,7 @@ def prepare_overlays(
     explicit, strictly validated --clock-offset.
     """
     if clock_offset:
-        if not CLOCK_OFFSET_PATTERN.fullmatch(clock_offset):
-            raise ValueError("invalid qualification clock offset")
+        validate_clock_offset(clock_offset)
     http_source = (checkout / HTTPCLIENT).read_text()
     http_overlay = overlay_dir / "host_httpclient.go"
     http_overlay.write_text(rewrite_httpclient(http_source))

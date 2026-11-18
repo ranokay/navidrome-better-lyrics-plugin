@@ -46,7 +46,16 @@ class RewriteKVStoreTest(unittest.TestCase):
         self.assertNotIn("qualificationKVClockOffset", source)
 
     def test_rejects_missing_or_invalid_clock_offsets(self):
-        for offset in ("", "25 hours", "+25 fortnights", "+25 hours\n", " +25 hours"):
+        for offset in (
+            "",
+            "25 hours",
+            "+25 fortnights",
+            "+25 hours\n",
+            " +25 hours",
+            "+31 days",
+            "+3651 days",
+            "-4000 days",
+        ):
             with self.subTest(offset=offset):
                 with self.assertRaises(ValueError):
                     host.rewrite_kvstore(kv_source(), offset)
@@ -67,6 +76,12 @@ class ParseArgsTest(unittest.TestCase):
 
     def test_accepts_a_valid_clock_offset(self):
         self.assertEqual(self.parse("--clock-offset", "+25 hours").clock_offset, "+25 hours")
+
+    def test_rejects_an_offset_beyond_the_instance_salt_ttl(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                self.parse("--clock-offset", "+3651 days")
+        self.assertEqual(raised.exception.code, 2)
 
     def test_rejects_an_invalid_clock_offset_with_a_cli_error(self):
         with contextlib.redirect_stderr(io.StringIO()):
