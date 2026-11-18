@@ -27,18 +27,6 @@ func sourceFailureResetKey(sourceID string) string {
 	return "source-failure-reset:v1:" + sourceID
 }
 
-func sourceFailureUntilKey(sourceID string, epoch int64) string {
-	return fmt.Sprintf("source-failure-until:v1:%s:%d", sourceID, epoch)
-}
-
-func sourceFailureUpdatedKey(sourceID string, epoch int64) string {
-	return fmt.Sprintf("source-failure-updated:v1:%s:%d", sourceID, epoch)
-}
-
-func sourceFailureCountKey(sourceID string, epoch int64) string {
-	return fmt.Sprintf("source-failure-count:v1:%s:%d", sourceID, epoch)
-}
-
 const sourceFailureObservationPrefix = "source-failure-observation:v1:"
 const sourceFailureResetObservationPrefix = "source-failure-reset-observation:v1:"
 
@@ -80,49 +68,40 @@ func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 
 func (p *Provider) readReducerSourceFailure(sourceID string) (sourceFailureState, bool) {
 	value, exists, err := p.cache.Get(sourceFailureKey(sourceID))
-	if err != nil || !exists {
-		return sourceFailureState{}, false
+	rowState := sourceFailureState{}
+	rowValid := false
+	if err == nil && exists {
+		if json.Unmarshal(value, &rowState) == nil && p.validSourceFailure(rowState) {
+			rowValid = true
+		}
 	}
-	var state sourceFailureState
-	if json.Unmarshal(value, &state) != nil {
+	var observedState sourceFailureState
+	observedValid := false
+	if _, marked, markerErr := p.cache.Get(failureFallbackMarkerKey(sourceID)); markerErr == nil && marked {
+		if lister, ok := p.cache.(storeLister); ok {
+			if observed, found := p.readObservedSourceFailure(sourceID, lister); found {
+				observedState, observedValid = observed, true
+			}
+		}
+	}
+	state := rowState
+	valid := rowValid
+	if observedValid && (!valid || observedState.UpdatedAt > state.UpdatedAt ||
+		(observedState.UpdatedAt == state.UpdatedAt && observedState.Until > state.Until)) {
+		state, valid = observedState, true
+	}
+	if !valid {
+		if !exists && !observedValid {
+			return sourceFailureState{}, false
+		}
 		return sourceFailureState{}, true
 	}
-	if !p.validSourceFailure(state) {
-		return sourceFailureState{}, true
-	}
-	resetAt := max(state.ResetAt, p.readLegacyReset(sourceID))
+	resetAt := max(max(state.ResetAt, rowState.ResetAt), p.readLegacyReset(sourceID))
 	if state.UpdatedAt < resetAt {
 		return sourceFailureState{}, true
 	}
 	state.ResetAt = resetAt
 	return state, true
-}
-
-func (p *Provider) readScalarSourceFailure(sourceID string) (sourceFailureState, bool) {
-	epoch := p.readLegacyReset(sourceID)
-	until, untilOK := p.readScalar(sourceFailureUntilKey(sourceID, epoch))
-	updated, updatedOK := p.readScalar(sourceFailureUpdatedKey(sourceID, epoch))
-	failures, countOK := p.readScalar(sourceFailureCountKey(sourceID, epoch))
-	if !untilOK || !updatedOK || !countOK || failures == 0 {
-		return sourceFailureState{}, false
-	}
-	state := sourceFailureState{Failures: uint8(min(failures, 5)), Until: until, UpdatedAt: updated}
-	if !p.validSourceFailure(state) || state.UpdatedAt < epoch {
-		return sourceFailureState{}, false
-	}
-	return state, true
-}
-
-func (p *Provider) readScalar(key string) (int64, bool) {
-	value, exists, err := p.cache.Get(key)
-	if err != nil || !exists {
-		return 0, false
-	}
-	parsed, err := strconv.ParseInt(string(value), 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return parsed, true
 }
 
 func (p *Provider) readLegacyReset(sourceID string) int64 {
@@ -263,15 +242,8 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 		if legacyErr == nil {
 			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
 		}
+		_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 	}
-}
-
-func (p *Provider) storeLegacySourceFailure(sourceID string, state sourceFailureState) {
-	value, err := json.Marshal(state)
-	if err != nil {
-		return
-	}
-	_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), value, sourceFailureStateTTL)
 }
 
 func (p *Provider) resetSourceFailure(sourceID string) {
@@ -322,6 +294,7 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 		// record prevents a downgraded reader from retaining the old backoff.
 		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
 	}
+	_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 }
 
 // Cooldown reports the remaining provider-wide cooldown for a key; a cache
@@ -368,6 +341,10 @@ func cooldownMergeMarkerKey(key string) string {
 	return "cooldown-merge-fallback:v1:" + key
 }
 
+func failureFallbackMarkerKey(sourceID string) string {
+	return "source-failure-fallback:v1:" + sourceID
+}
+
 func (p *Provider) cooldownDeadline(key string) int64 {
 	value, exists, err := p.cache.Get(key)
 	if err != nil || !exists {
@@ -403,8 +380,11 @@ func (p *Provider) RememberCooldown(key string, retryAfter time.Duration) {
 			if _, canList := p.cache.(storeLister); canList {
 				observation := key + cooldownObservationSuffix + strconv.FormatInt(untilUnix, 10)
 				if obsErr := p.cache.SetWithTTL(observation, deadlineValue, ttlSeconds); obsErr == nil {
-					_ = p.cache.SetWithTTL(cooldownMergeMarkerKey(key), []byte("1"), 2*60*60)
-					return
+					observedUntil := p.maxCooldownObservation(key, untilUnix)
+					markerTTL := max(ttlSeconds, observedUntil-p.now().Unix())
+					if markerErr := p.cache.SetWithTTL(cooldownMergeMarkerKey(key), []byte("1"), markerTTL); markerErr == nil {
+						return
+					}
 				}
 			}
 			// Do not replace a longer stored deadline with this shorter one.

@@ -244,8 +244,8 @@ func TestMergedForegroundReadsAreBounded(t *testing.T) {
 	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
 		t.Fatalf("backoff = %s, want 10s", got)
 	}
-	if cache.lists != 0 || cache.gets > 2 {
-		t.Fatalf("failure read work = %d gets, %d lists; want at most 2 gets and no list", cache.gets, cache.lists)
+	if cache.lists != 0 || cache.gets > 3 {
+		t.Fatalf("failure read work = %d gets, %d lists; want at most 3 gets and no list", cache.gets, cache.lists)
 	}
 	cache.gets, cache.lists = 0, 0
 	if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
@@ -354,5 +354,29 @@ func TestCooldownMergeFailureSurvivesNextInvocation(t *testing.T) {
 	second.RememberCooldown(key, time.Minute)
 	if got := second.Cooldown(key); got != 55*time.Minute {
 		t.Fatalf("cooldown after shorter merge failure = %s, want the longer 55m window", got)
+	}
+}
+
+func TestReducerFallbackObservationWinsOverStaleRow(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(130_000)
+	cache := listableCache{newFakeLyricsCache()}
+	row, err := json.Marshal(sourceFailureState{Failures: 1, Until: 131_000, UpdatedAt: 130_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureKey("one"), row, 600); err != nil {
+		t.Fatal(err)
+	}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{
+		handled: true, active: "generation", control: true,
+		reduceErr: errors.New("reducer unavailable"), cache: cache,
+	}
+	now = time.UnixMilli(140_000)
+	p.rememberSourceFailure("one", now, errors.New("new failure"))
+	now = time.UnixMilli(145_000)
+	if got := p.sourceFailureBackoff("one"); got != 5*time.Second {
+		t.Fatalf("backoff from fallback observation = %s, want the newer 5s window", got)
 	}
 }
