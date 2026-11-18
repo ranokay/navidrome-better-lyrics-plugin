@@ -882,10 +882,11 @@ func TestFailedSweepEnqueueDoesNotHoldAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.enqueueSweep = func(lyrics.TrackInfo) error { return errors.New("queue unavailable") }
-	if !p.maybeEnqueueSweep(track) {
+	var deferred deferredSweep
+	if !p.maybeEnqueueSweepDeferred(track, &deferred) || !deferred.set {
 		t.Fatal("an active parent did not defer the sweep")
 	}
-	p.flushDeferredSweep()
+	_ = p.enqueueSweepNow(deferred.track)
 	if p.enqueueMeta.Token != "" {
 		t.Fatal("a failed enqueue left a live token in enqueueMeta")
 	}

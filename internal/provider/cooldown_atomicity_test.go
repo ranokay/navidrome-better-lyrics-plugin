@@ -206,6 +206,11 @@ func TestControlMergeFailureIsMonotonic(t *testing.T) {
 	if got := p.sourceFailureBackoff("one"); got != 0 {
 		t.Fatalf("backoff after recovery = %s, want it cleared", got)
 	}
+	now = time.UnixMilli(126_000)
+	p.rememberSourceFailure("one", now, errors.New("post-recovery failure"))
+	if got := p.sourceFailureBackoff("one"); got != 5*time.Second {
+		t.Fatalf("backoff after recovery failure = %s, want a fresh 5s window", got)
+	}
 }
 
 func TestMergedForegroundReadsAreBounded(t *testing.T) {
@@ -221,9 +226,9 @@ func TestMergedForegroundReadsAreBounded(t *testing.T) {
 		}
 	}
 	for key, value := range map[string]string{
-		sourceFailureUntilKey("one"):   "140000",
-		sourceFailureUpdatedKey("one"): "130000",
-		sourceFailureCountKey("one"):   "1",
+		sourceFailureUntilKey("one", 0):   "140000",
+		sourceFailureUpdatedKey("one", 0): "130000",
+		sourceFailureCountKey("one", 0):   "1",
 	} {
 		if err := cache.SetWithTTL(key, []byte(value), 600); err != nil {
 			t.Fatal(err)

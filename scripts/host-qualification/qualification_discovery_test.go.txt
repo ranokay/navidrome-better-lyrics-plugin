@@ -68,9 +68,14 @@ func testSweepDiscovery(t *testing.T) {
 	ttml := ttmlFixture(t)
 	releaseSweep := make(chan struct{})
 	var gate sync.Once
+	var unisonMu sync.Mutex
+	unisonCalls := 0
 	host := newQualificationHost(t, []string{"unison", "binimum"}, func(request *http.Request) (int, []byte) {
 		switch {
 		case request.URL.Host == "unison.boidu.dev":
+			unisonMu.Lock()
+			unisonCalls++
+			unisonMu.Unlock()
 			body, _ := json.Marshal(map[string]any{"success": true, "data": map[string]any{
 				"lyrics": "[00:01.00]line result", "format": "lrc", "language": "en",
 			}})
@@ -98,8 +103,11 @@ func testSweepDiscovery(t *testing.T) {
 	firstRevision := first.DiscoveryRevision
 	gate.Do(func() { close(releaseSweep) })
 	host.plugin.Idle(t)
-	if got := host.transport.count("unison.boidu.dev"); got != 1 {
-		t.Fatalf("foreground source requests = %d, want the sweep child to reuse the committed source", got)
+	unisonMu.Lock()
+	foregroundCalls := unisonCalls
+	unisonMu.Unlock()
+	if foregroundCalls != 1 {
+		t.Fatalf("foreground source requests = %d, want the sweep child to reuse the committed source", foregroundCalls)
 	}
 	before := host.transport.requests()
 	second := host.playback(t)

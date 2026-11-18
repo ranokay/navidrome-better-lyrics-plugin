@@ -80,13 +80,11 @@ type Provider struct {
 	merger       maxMerger
 	// enqueueMeta is captured before a sweep task is enqueued and carried in
 	// the payload; execution never adopts a newer generation by re-reading.
-	enqueueMeta       Publication
-	enqueueRefresh    bool
-	enqueueMarker     string
-	pendingSweep      bool
-	pendingSweepTrack lyrics.TrackInfo
-	tailSources       []string
-	tailOp            Publication
+	enqueueMeta    Publication
+	enqueueRefresh bool
+	enqueueMarker  string
+	tailSources    []string
+	tailOp         Publication
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
 	sources []source.Source
@@ -163,8 +161,6 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.enqueueMeta = Publication{}
 	p.enqueueRefresh = false
 	p.enqueueMarker = ""
-	p.pendingSweep = false
-	p.pendingSweepTrack = lyrics.TrackInfo{}
 	p.tailSources = nil
 	p.tailOp = Publication{}
 }
@@ -192,20 +188,21 @@ func (p *Provider) GetLyrics(input lyrics.GetLyricsRequest) (lyrics.GetLyricsRes
 // classic response shape.
 func (p *Provider) GetLyricsPublished(input lyrics.GetLyricsRequest, meta Publication) (lyrics.GetLyricsResponse, error) {
 	p.preparePublication(meta, "classic")
-	candidate, sources, _, sweepComplete, err := p.resolveLyrics(input, false)
+	var deferred deferredSweep
+	candidate, sources, _, sweepComplete, err := p.resolveLyricsWithDeferred(input, false, &deferred)
 	if errors.Is(err, errPublicationSuperseded) {
-		p.dropDeferredSweep()
 		return lyrics.GetLyricsResponse{}, err
 	}
 	if _, commitErr := p.commitPublication(sweepComplete, false, p.pendingSnapshotExpiry(input.Track, sources)); commitErr != nil {
-		p.dropDeferredSweep()
 		// The classic host cache must not retain a rejected publication.
 		return lyrics.GetLyricsResponse{}, commitErr
 	}
 	// Release any terminal parent before a deferred sweep admits its own
 	// token. A denied publication may still carry a host-minted token.
 	p.clearPublication()
-	p.flushDeferredSweep()
+	if deferred.set {
+		_ = p.enqueueSweepNow(deferred.track)
+	}
 	if current, ok := p.currentV1Response(input.Track); ok {
 		return current, err
 	}
@@ -234,9 +231,9 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 			return V2Response{}, err
 		}
 	}
-	candidate, sources, evidence, sweepComplete, err := p.resolveLyrics(input, refresh)
+	var deferred deferredSweep
+	candidate, sources, evidence, sweepComplete, err := p.resolveLyricsWithDeferred(input, refresh, &deferred)
 	if errors.Is(err, errPublicationSuperseded) {
-		p.dropDeferredSweep()
 		if current, discovery, ok := p.currentV2Response(input.Track); ok {
 			current.Discovery = discovery
 			return current, nil
@@ -249,7 +246,7 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 		sweepComplete, refresh && len(tailSources) > 0, p.pendingSnapshotExpiry(input.Track, sources),
 	)
 	if commitErr != nil {
-		p.dropDeferredSweep()
+		// A rejected publication owns no child sweep.
 	} else if refresh && len(tailSources) > 0 {
 		if err := p.enqueueRefreshTailWithOp(input.Track, tailSources, tailOp); err != nil {
 			p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
@@ -259,7 +256,9 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 		// A zero-write foreground has no commit to release its admission;
 		// release the parent before a deferred sweep admits its own token.
 		p.clearPublication()
-		p.flushDeferredSweep()
+		if deferred.set {
+			_ = p.enqueueSweepNow(deferred.track)
+		}
 	}
 	discovery := committedDiscovery
 	if commitErr != nil {
@@ -380,6 +379,10 @@ func sameCachedView(a lyric.Candidate, aEvidence []lyric.Evidence, b lyric.Candi
 // resolveLyrics selects the servable candidate and keeps the source order for
 // callers that build variant responses.
 func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (lyric.Candidate, []source.Source, []lyric.Evidence, bool, error) {
+	return p.resolveLyricsWithDeferred(input, refresh, nil)
+}
+
+func (p *Provider) resolveLyricsWithDeferred(input lyrics.GetLyricsRequest, refresh bool, deferred *deferredSweep) (lyric.Candidate, []source.Source, []lyric.Evidence, bool, error) {
 	track := input.Track
 	if title := strings.TrimSpace(track.Title); title == "" || lyric.TrackArtist(track) == "" {
 		return lyric.Candidate{}, nil, nil, false, nil
@@ -447,7 +450,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 					}
 					candidate, evidence, completion = fresh, freshEvidence, freshComplete
 				}
-				p.maybeEnqueueSweep(track)
+				p.maybeEnqueueSweepDeferred(track, deferred)
 			}
 			return candidate, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 		}
@@ -473,7 +476,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		// for its TTL so replays do not re-walk the sources — but an incomplete
 		// sweep must still be schedulable.
 		if !completion {
-			p.maybeEnqueueSweep(track)
+			p.maybeEnqueueSweepDeferred(track, deferred)
 		}
 		return candidate, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 	}
@@ -486,7 +489,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 			return lyric.Candidate{}, sources, nil, false, nil
 		}
 		p.cacheWinnerUntil(track, sources, fresh, freshComplete, expiry, nil)
-		p.maybeEnqueueSweep(track)
+		p.maybeEnqueueSweepDeferred(track, deferred)
 		return fresh, sources, p.sourceEvidence(track, sources, freshEvidence), freshComplete, nil
 	}
 
@@ -504,7 +507,7 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 	if candidate.Present() {
 		p.cacheWinnerUntil(track, sources, candidate, completion, p.now().Add(time.Duration(sourceCacheTTLSeconds(candidate.Quality))*time.Second).Unix(), evidence)
 		if !completion && !refresh {
-			p.maybeEnqueueSweep(track)
+			p.maybeEnqueueSweepDeferred(track, deferred)
 		}
 		return candidate, sources, p.sourceEvidence(track, sources, evidence), completion, nil
 	}
@@ -513,19 +516,19 @@ func (p *Provider) resolveLyrics(input lyrics.GetLyricsRequest, refresh bool) (l
 		if !completion {
 			// A fully covered negative pass needs no sweep: every implemented
 			// source already answered inside stage one.
-			p.maybeEnqueueSweep(track)
+			p.maybeEnqueueSweepDeferred(track, deferred)
 		}
 	} else if !candidate.Present() && len(evidence) > 0 {
 		// Preserve a successful assertion across another source's outage while
 		// recording the pass's actual coverage; the active marker still governs
 		// whether a later sweep is needed.
 		p.cacheNegativeWinner(track, sources, completion, evidence)
-		p.maybeEnqueueSweep(track)
+		p.maybeEnqueueSweepDeferred(track, deferred)
 	} else {
 		// Retain the error, but an incomplete walk must still reach the tail:
 		// schedule the sweep so the returned error is the only failure the
 		// request exposes.
-		p.maybeEnqueueSweep(track)
+		p.maybeEnqueueSweepDeferred(track, deferred)
 	}
 	if !candidate.Present() && len(evidence) > 0 {
 		// A successful assertion from one source survives another source's

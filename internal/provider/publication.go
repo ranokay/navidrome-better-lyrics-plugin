@@ -447,6 +447,9 @@ func (p *Provider) considerBundleExpiry(raw []byte, consider func(int64)) {
 	}
 }
 
+// controlMerge caches whether the live host supports atomic control merges.
+// Active reports the host's seeded publication generation (a capability
+// signal), not a live admission.
 func (p *Provider) controlMerge() (maxMerger, bool) {
 	if p.mergeChecked {
 		return p.merger, p.merger != nil

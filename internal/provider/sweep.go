@@ -492,30 +492,27 @@ func sharesBetterLyricsHost(src source.Source) bool {
 // runs. Source cooldowns observed during the stage-one pass are honored here too:
 // sources behind those cooldowns benefit from the same deviating skip logic in the
 // sweep, so enqueuing without a marker check could cause duplicate work.
+type deferredSweep struct {
+	track lyrics.TrackInfo
+	set   bool
+}
+
 func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
+	return p.maybeEnqueueSweepDeferred(track, nil)
+}
+
+func (p *Provider) maybeEnqueueSweepDeferred(track lyrics.TrackInfo, deferred *deferredSweep) bool {
 	if p.publication != nil && p.publication.active {
 		// The parent publication must commit before a child sweep can admit.
-		// Queue the handoff locally and flush it from the foreground terminal.
-		p.pendingSweep = true
-		p.pendingSweepTrack = track
+		// The caller holds this request-local handoff and flushes it from its
+		// terminal path.
+		if deferred != nil {
+			deferred.track = track
+			deferred.set = true
+		}
 		return true
 	}
 	return p.enqueueSweepNow(track)
-}
-
-func (p *Provider) flushDeferredSweep() {
-	if !p.pendingSweep {
-		return
-	}
-	track := p.pendingSweepTrack
-	p.pendingSweep = false
-	p.pendingSweepTrack = lyrics.TrackInfo{}
-	_ = p.enqueueSweepNow(track)
-}
-
-func (p *Provider) dropDeferredSweep() {
-	p.pendingSweep = false
-	p.pendingSweepTrack = lyrics.TrackInfo{}
 }
 
 func (p *Provider) enqueueSweepNow(track lyrics.TrackInfo) bool {

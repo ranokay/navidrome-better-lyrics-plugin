@@ -26,16 +26,16 @@ func sourceFailureResetKey(sourceID string) string {
 	return "source-failure-reset:v1:" + sourceID
 }
 
-func sourceFailureUntilKey(sourceID string) string {
-	return "source-failure-until:v1:" + sourceID
+func sourceFailureUntilKey(sourceID string, epoch int64) string {
+	return fmt.Sprintf("source-failure-until:v1:%s:%d", sourceID, epoch)
 }
 
-func sourceFailureUpdatedKey(sourceID string) string {
-	return "source-failure-updated:v1:" + sourceID
+func sourceFailureUpdatedKey(sourceID string, epoch int64) string {
+	return fmt.Sprintf("source-failure-updated:v1:%s:%d", sourceID, epoch)
 }
 
-func sourceFailureCountKey(sourceID string) string {
-	return "source-failure-count:v1:" + sourceID
+func sourceFailureCountKey(sourceID string, epoch int64) string {
+	return fmt.Sprintf("source-failure-count:v1:%s:%d", sourceID, epoch)
 }
 
 const sourceFailureObservationPrefix = "source-failure-observation:v1:"
@@ -68,18 +68,16 @@ func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 }
 
 func (p *Provider) readScalarSourceFailure(sourceID string) (sourceFailureState, bool) {
-	until, untilOK := p.readScalar(sourceFailureUntilKey(sourceID))
-	updated, updatedOK := p.readScalar(sourceFailureUpdatedKey(sourceID))
-	failures, countOK := p.readScalar(sourceFailureCountKey(sourceID))
+	epoch := p.readLegacyReset(sourceID)
+	until, untilOK := p.readScalar(sourceFailureUntilKey(sourceID, epoch))
+	updated, updatedOK := p.readScalar(sourceFailureUpdatedKey(sourceID, epoch))
+	failures, countOK := p.readScalar(sourceFailureCountKey(sourceID, epoch))
 	if !untilOK || !updatedOK || !countOK || failures == 0 {
 		return sourceFailureState{}, false
 	}
 	state := sourceFailureState{Failures: uint8(min(failures, 5)), Until: until, UpdatedAt: updated}
 	if !p.validSourceFailure(state) {
 		return sourceFailureState{}, false
-	}
-	if state.UpdatedAt < p.readLegacyReset(sourceID) {
-		return sourceFailureState{}, true
 	}
 	return state, true
 }
@@ -207,9 +205,10 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	if merger, ok := p.controlMerge(); ok {
 		state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
 		state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
-		_ = merger.MergeMax(sourceFailureUntilKey(sourceID), state.Until, sourceFailureStateTTL)
-		_ = merger.MergeMax(sourceFailureUpdatedKey(sourceID), state.UpdatedAt, sourceFailureStateTTL)
-		_ = merger.MergeMax(sourceFailureCountKey(sourceID), int64(state.Failures), sourceFailureStateTTL)
+		epoch := p.readLegacyReset(sourceID)
+		_ = merger.MergeMax(sourceFailureUntilKey(sourceID, epoch), state.Until, sourceFailureStateTTL)
+		_ = merger.MergeMax(sourceFailureUpdatedKey(sourceID, epoch), state.UpdatedAt, sourceFailureStateTTL)
+		_ = merger.MergeMax(sourceFailureCountKey(sourceID, epoch), int64(state.Failures), sourceFailureStateTTL)
 		p.storeLegacySourceFailure(sourceID, state)
 		return
 	}
