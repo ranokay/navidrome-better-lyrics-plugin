@@ -467,3 +467,24 @@ func TestFallbackObservationCannotBypassCommittedReset(t *testing.T) {
 		t.Fatalf("backoff after a pre-reset fallback observation = %s, want the post-reset 4s window", got)
 	}
 }
+
+func TestResetVerifiesNewerFailureSurvives(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(90_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{
+		handled: true, active: "generation", control: true,
+		clearOnReset: true, cache: cache,
+	}
+	p.rememberSourceFailure("one", now, errors.New("first failure"))
+	now = time.UnixMilli(120_000)
+	p.rememberSourceFailure("one", now, errors.New("newer failure"))
+	// This recovery started before the newer failure. A host that clears it
+	// anyway must not lose the surviving window.
+	p.resetSourceFailureBefore("one", time.UnixMilli(110_000))
+	now = time.UnixMilli(126_000)
+	if got := p.sourceFailureBackoff("one"); got != 4*time.Second {
+		t.Fatalf("backoff after an over-eager host reset = %s, want the newer 4s window", got)
+	}
+}

@@ -447,12 +447,11 @@ func (p *Provider) considerBundleExpiry(raw []byte, consider func(int64)) {
 	}
 }
 
-// controlMerge caches whether the live host applies the reserved
-// @navidrome/publication/control:<key> merge. Active reports the host's
-// seeded publication generation, a capability signal rather than a live
-// admission. The host merges the cooldown scalar and reduces failure rows;
-// a transient merge failure additionally writes the append-only observation
-// fallback, which the reader consults while its marker is live.
+// controlMerge caches whether the live host advertises the controlMerge
+// capability for @navidrome/publication/control:<key>. The host merges the
+// cooldown scalar and reduces failure rows; a transient reducer failure
+// writes an append-only observation fallback that the reader consults while
+// its marker is live.
 func (p *Provider) controlMerge() (maxMerger, bool) {
 	p.mergeMu.Lock()
 	defer p.mergeMu.Unlock()

@@ -241,26 +241,46 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	}
 	observedState := state
 	observedState.ObservedAt = observedAt.UnixMilli()
-	observedValue, marshalErr := json.Marshal(observedState)
-	if marshalErr == nil {
-		if _, canList := p.cache.(storeLister); canList {
-			// Append-only observations avoid the read-modify-write lost update:
-			// concurrent failures never overwrite each other, and readers pick
-			// the newest observation with the longest deadline.
-			key := fmt.Sprintf("%s%s:%d:%s", sourceFailureObservationPrefix, sourceID, observedState.UpdatedAt, newMarkerID())
-			_ = p.cache.SetWithTTL(key, observedValue, sourceFailureStateTTL)
+	// Append-only observations avoid the read-modify-write lost update:
+	// concurrent failures never overwrite each other, and readers pick the
+	// newest observation with the longest deadline.
+	p.storeFailureObservation(sourceID, observedState)
+	// Keep the legacy key for older plugin readers and non-list stores,
+	// where the merged timestamp/window is the best available guard. In
+	// control mode leave the reducer row (and its ResetAt) untouched.
+	if _, control := p.controlMerge(); !control {
+		legacyValue, legacyErr := json.Marshal(state)
+		if legacyErr == nil {
+			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
 		}
-		// Keep the legacy key for older plugin readers and non-list stores,
-		// where the merged timestamp/window is the best available guard. In
-		// control mode leave the reducer row (and its ResetAt) untouched.
-		if _, control := p.controlMerge(); !control {
-			legacyValue, legacyErr := json.Marshal(state)
-			if legacyErr == nil {
-				_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), legacyValue, sourceFailureStateTTL)
-			}
-		}
-		_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 	}
+}
+
+// resetRetainedFailure reports whether the post-reset row still carries the
+// newer failure that the reset was not allowed to clear.
+func (p *Provider) resetRetainedFailure(sourceID string, prior sourceFailureState) bool {
+	raw, exists, err := p.cache.Get(sourceFailureKey(sourceID))
+	if err != nil || !exists {
+		return false
+	}
+	var after sourceFailureState
+	if json.Unmarshal(raw, &after) != nil {
+		return false
+	}
+	return after.Failures >= prior.Failures && after.Until >= prior.Until &&
+		after.UpdatedAt >= prior.UpdatedAt
+}
+
+func (p *Provider) storeFailureObservation(sourceID string, state sourceFailureState) {
+	value, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	if _, canList := p.cache.(storeLister); canList {
+		key := fmt.Sprintf("%s%s:%d:%s", sourceFailureObservationPrefix, sourceID, state.UpdatedAt, newMarkerID())
+		_ = p.cache.SetWithTTL(key, value, sourceFailureStateTTL)
+	}
+	_ = p.cache.SetWithTTL(failureFallbackMarkerKey(sourceID), []byte("1"), sourceFailureStateTTL)
 }
 
 func (p *Provider) resetSourceFailure(sourceID string) {
@@ -283,8 +303,13 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	}
 	if merger, ok := p.controlMerge(); ok {
 		// Always submit the conditional reset: the host keeps any failure
-		// newer than resetAt but still advances the recovery epoch.
+		// newer than resetAt but still advances the recovery epoch. Verify
+		// that a newer failure survived before trusting the host.
 		if err := merger.ReduceFailure(sourceID, "reset", 0, 0, 0, resetAt, sourceFailureStateTTL); err == nil {
+			if state.UpdatedAt < resetAt || p.resetRetainedFailure(sourceID, state) {
+				return
+			}
+			p.storeFailureObservation(sourceID, state)
 			return
 		}
 		// Fall through to the observation/legacy reset path on a transient

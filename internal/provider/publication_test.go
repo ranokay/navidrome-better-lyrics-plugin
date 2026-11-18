@@ -31,6 +31,7 @@ type fakePublisher struct {
 	mergeErr     error
 	reduceErr    error
 	control      bool
+	clearOnReset bool
 	rejectTokens map[string]bool
 	onAdmit      func(admissionWire)
 	onCommit     func(commitWire)
@@ -147,6 +148,11 @@ func (f *fakePublisher) ReduceFailure(sourceID, operation string, failures, unti
 		state.Until = max(state.Until, until)
 		state.UpdatedAt = max(state.UpdatedAt, updatedAt)
 	case "reset":
+		if f.clearOnReset {
+			state.ResetAt = resetAt
+			state.Failures, state.Until, state.UpdatedAt = 0, 0, 0
+			break
+		}
 		if resetAt > state.ResetAt {
 			state.ResetAt = resetAt
 			if state.UpdatedAt < resetAt {
