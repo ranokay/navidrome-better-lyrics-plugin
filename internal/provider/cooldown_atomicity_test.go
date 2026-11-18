@@ -176,7 +176,7 @@ func TestControlMergeCooldownIsMonotonic(t *testing.T) {
 	now := time.Unix(110_000, 0)
 	cache := listableCache{newFakeLyricsCache()}
 	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache}
+	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
 	key := source.GlobalCooldownKey("one")
 	p.RememberCooldown(key, time.Hour)
 	now = now.Add(5 * time.Minute)
@@ -194,7 +194,7 @@ func TestControlMergeFailureIsMonotonic(t *testing.T) {
 	now := time.UnixMilli(120_000)
 	cache := listableCache{newFakeLyricsCache()}
 	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache}
+	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
 
 	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
 	p.resetSourceFailureBefore("one", time.UnixMilli(110_000))
@@ -220,21 +220,19 @@ func TestMergedForegroundReadsAreBounded(t *testing.T) {
 	now := time.UnixMilli(130_000)
 	cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
 	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache.fakeLyricsCache}
+	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache.fakeLyricsCache}
 	for i := 0; i < 1000; i++ {
 		key := sourceFailureObservationPrefix + "one:" + strconv.Itoa(i)
 		if err := cache.SetWithTTL(key, []byte(`{"failures":1,"until":9999999999999}`), 600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for key, value := range map[string]string{
-		sourceFailureUntilKey("one", 0):   "140000",
-		sourceFailureUpdatedKey("one", 0): "130000",
-		sourceFailureCountKey("one", 0):   "1",
-	} {
-		if err := cache.SetWithTTL(key, []byte(value), 600); err != nil {
-			t.Fatal(err)
-		}
+	reducer, err := json.Marshal(sourceFailureState{Failures: 1, Until: 140000, UpdatedAt: 130000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureKey("one"), reducer, 600); err != nil {
+		t.Fatal(err)
 	}
 	for i := 0; i < 1000; i++ {
 		key := source.GlobalCooldownKey("one") + cooldownObservationSuffix + strconv.Itoa(i)
@@ -246,15 +244,15 @@ func TestMergedForegroundReadsAreBounded(t *testing.T) {
 	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
 		t.Fatalf("backoff = %s, want 10s", got)
 	}
-	if cache.lists != 0 || cache.gets > 4 {
-		t.Fatalf("failure read work = %d gets, %d lists; want at most 4 gets and no list", cache.gets, cache.lists)
+	if cache.lists != 0 || cache.gets > 2 {
+		t.Fatalf("failure read work = %d gets, %d lists; want at most 2 gets and no list", cache.gets, cache.lists)
 	}
 	cache.gets, cache.lists = 0, 0
 	if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
 		t.Fatalf("cooldown = %s, want none", got)
 	}
-	if cache.lists != 0 || cache.gets != 1 {
-		t.Fatalf("cooldown read work = %d gets, %d lists; want one get and no list", cache.gets, cache.lists)
+	if cache.lists != 0 || cache.gets != 2 {
+		t.Fatalf("cooldown read work = %d gets, %d lists; want base+marker gets and no list", cache.gets, cache.lists)
 	}
 }
 
@@ -264,13 +262,11 @@ func TestControlMergeFailureFallsBackToLegacy(t *testing.T) {
 	cache := listableCache{newFakeLyricsCache()}
 	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
 	p.publisher = &fakePublisher{
-		handled: true, active: "generation", mergeErr: errors.New("control unavailable"), cache: cache,
+		handled: true, active: "generation", control: true,
+		mergeErr: errors.New("control unavailable"), reduceErr: errors.New("control unavailable"), cache: cache,
 	}
 	key := source.GlobalCooldownKey("one")
 	p.RememberCooldown(key, time.Hour)
-	if p.merger != nil {
-		t.Fatal("a failed control merge was not demoted")
-	}
 	now = now.Add(5 * time.Minute)
 	if got := p.Cooldown(key); got < 54*time.Minute || got > 56*time.Minute {
 		t.Fatalf("fallback cooldown = %s, want the legacy observation window", got)
@@ -291,7 +287,7 @@ func TestLatePreRecoveryFailureIsRejected(t *testing.T) {
 	now := time.UnixMilli(150_000)
 	cache := listableCache{newFakeLyricsCache()}
 	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache}
+	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
 
 	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
 	now = time.UnixMilli(160_000)

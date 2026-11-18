@@ -472,7 +472,12 @@ func (p *Provider) controlMerge() (maxMerger, bool) {
 	if !ok {
 		return nil, false
 	}
-	if _, active, err := p.publisher.Active(); err != nil || !active {
+	reporter, ok := p.publisher.(capabilityReporter)
+	if !ok {
+		return nil, false
+	}
+	capable, err := reporter.ControlMerge()
+	if err != nil || !capable {
 		return nil, false
 	}
 	p.merger = merger

@@ -29,6 +29,8 @@ type fakePublisher struct {
 	probe        *bool
 	probeError   error
 	mergeErr     error
+	reduceErr    error
+	control      bool
 	rejectTokens map[string]bool
 	onAdmit      func(admissionWire)
 	onCommit     func(commitWire)
@@ -118,6 +120,45 @@ func (f *fakePublisher) Current(trackKey string) ([]byte, bool, error) {
 
 func (f *fakePublisher) Active() (string, bool, error) {
 	return f.active, f.active != "", nil
+}
+
+func (f *fakePublisher) ControlMerge() (bool, error) {
+	return f.control, nil
+}
+
+func (f *fakePublisher) ReduceFailure(sourceID, operation string, failures, until, updatedAt, resetAt, ttlSeconds int64) error {
+	if f.reduceErr != nil {
+		return f.reduceErr
+	}
+	if f.cache == nil {
+		return nil
+	}
+	key := sourceFailureKey(sourceID)
+	state := sourceFailureState{}
+	if raw, exists, err := f.cache.Get(key); err == nil && exists {
+		_ = json.Unmarshal(raw, &state)
+	}
+	switch operation {
+	case "failure":
+		if updatedAt < state.ResetAt {
+			return nil
+		}
+		state.Failures = uint8(max(int(state.Failures), int(failures)))
+		state.Until = max(state.Until, until)
+		state.UpdatedAt = max(state.UpdatedAt, updatedAt)
+	case "reset":
+		if resetAt > state.ResetAt {
+			state.ResetAt = resetAt
+			if state.UpdatedAt < resetAt {
+				state.Failures, state.Until, state.UpdatedAt = 0, 0, 0
+			}
+		}
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return f.cache.SetWithTTL(key, raw, ttlSeconds)
 }
 
 func (f *fakePublisher) MergeMax(key string, value, ttlSeconds int64) error {

@@ -16,6 +16,7 @@ type sourceFailureState struct {
 	Failures  uint8 `json:"failures"`
 	Until     int64 `json:"until"`
 	UpdatedAt int64 `json:"updatedAt,omitempty"`
+	ResetAt   int64 `json:"resetAt,omitempty"`
 }
 
 func sourceFailureKey(sourceID string) string {
@@ -54,8 +55,13 @@ func (p *Provider) validSourceFailure(state sourceFailureState) bool {
 
 func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 	if _, ok := p.controlMerge(); ok {
-		if state, found := p.readScalarSourceFailure(sourceID); found {
+		if state, found := p.readReducerSourceFailure(sourceID); found {
 			return state
+		}
+		if lister, ok := p.cache.(storeLister); ok {
+			if state, found := p.readObservedSourceFailure(sourceID, lister); found {
+				return state
+			}
 		}
 		return p.readLegacySourceFailure(sourceID)
 	}
@@ -65,6 +71,25 @@ func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 		}
 	}
 	return p.readLegacySourceFailure(sourceID)
+}
+
+func (p *Provider) readReducerSourceFailure(sourceID string) (sourceFailureState, bool) {
+	value, exists, err := p.cache.Get(sourceFailureKey(sourceID))
+	if err != nil || !exists {
+		return sourceFailureState{}, false
+	}
+	var state sourceFailureState
+	if json.Unmarshal(value, &state) != nil {
+		return sourceFailureState{}, true
+	}
+	if !p.validSourceFailure(state) {
+		return sourceFailureState{}, true
+	}
+	resetAt := max(state.ResetAt, p.readLegacyReset(sourceID))
+	if state.UpdatedAt < resetAt {
+		return sourceFailureState{}, true
+	}
+	return state, true
 }
 
 func (p *Provider) readScalarSourceFailure(sourceID string) (sourceFailureState, bool) {
@@ -167,13 +192,16 @@ func (p *Provider) readLegacySourceFailure(sourceID string) sourceFailureState {
 	if json.Unmarshal(value, &state) != nil || !p.validSourceFailure(state) {
 		return sourceFailureState{}
 	}
+	resetAt := state.ResetAt
 	if raw, exists, err := p.cache.Get(sourceFailureResetKey(sourceID)); err == nil && exists {
-		// Strictly older failures were being retried when the success
-		// started. Equal observations keep the failure: a newer outage at the
-		// same clock tick must not be erased by a concurrent recovery.
-		if resetAt, parseErr := strconv.ParseInt(string(raw), 10, 64); parseErr == nil && state.UpdatedAt < resetAt {
-			return sourceFailureState{}
+		if parsed, parseErr := strconv.ParseInt(string(raw), 10, 64); parseErr == nil && parsed > resetAt {
+			resetAt = parsed
 		}
+	}
+	// Strictly older failures were being retried when the success started.
+	// Equal observations keep the failure.
+	if state.UpdatedAt < resetAt {
+		return sourceFailureState{}
 	}
 	return state
 }
@@ -203,24 +231,11 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
 	state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
 	if merger, ok := p.controlMerge(); ok {
-		epoch := p.readLegacyReset(sourceID)
-		failed := false
-		for key, value := range map[string]int64{
-			sourceFailureUntilKey(sourceID, epoch):   state.Until,
-			sourceFailureUpdatedKey(sourceID, epoch): state.UpdatedAt,
-			sourceFailureCountKey(sourceID, epoch):   int64(state.Failures),
-		} {
-			if err := merger.MergeMax(key, value, sourceFailureStateTTL); err != nil {
-				failed = true
-			}
-		}
-		if failed {
-			p.demoteMerger()
-		}
-		p.storeLegacySourceFailure(sourceID, state)
-		if !failed {
+		if err := merger.ReduceFailure(sourceID, "failure", int64(state.Failures), state.Until, state.UpdatedAt, 0, sourceFailureStateTTL); err == nil {
 			return
 		}
+		// Fall through to the append-only observation/legacy path on a
+		// transient reducer failure; the next call retries the reducer.
 	}
 	value, marshalErr := json.Marshal(state)
 	if marshalErr == nil {
@@ -266,13 +281,11 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 		if state.UpdatedAt >= resetAt {
 			return
 		}
-		if err := merger.MergeMax(sourceFailureResetKey(sourceID), resetAt, sourceFailureStateTTL); err != nil {
-			p.logf(fmt.Sprintf("source-failure reset merge failed: %v", p.safeDiagnosticError(err)))
-			p.demoteMerger()
-		} else {
-			_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+		if err := merger.ReduceFailure(sourceID, "reset", 0, 0, 0, resetAt, sourceFailureStateTTL); err == nil {
 			return
 		}
+		// Fall through to the observation/legacy reset path on a transient
+		// reducer failure.
 	}
 	if lister, canList := p.cache.(storeLister); canList {
 		if p.readSourceFailureReset(sourceID, lister) >= resetAt {
@@ -301,8 +314,16 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 func (p *Provider) Cooldown(key string) time.Duration {
 	untilUnix := p.cooldownDeadline(key)
 	if _, ok := p.controlMerge(); ok {
+		if _, marked, err := p.cache.Get(cooldownMergeMarkerKey(key)); err == nil && marked {
+			untilUnix = p.maxCooldownObservation(key, untilUnix)
+		}
 		return cooldownRemaining(untilUnix, p.now())
 	}
+	untilUnix = p.maxCooldownObservation(key, untilUnix)
+	return cooldownRemaining(untilUnix, p.now())
+}
+
+func (p *Provider) maxCooldownObservation(key string, untilUnix int64) int64 {
 	if lister, ok := p.cache.(storeLister); ok {
 		if keys, err := lister.List(key + cooldownObservationSuffix); err == nil {
 			for _, observation := range keys {
@@ -314,7 +335,7 @@ func (p *Provider) Cooldown(key string) time.Duration {
 			}
 		}
 	}
-	return cooldownRemaining(untilUnix, p.now())
+	return untilUnix
 }
 
 func cooldownRemaining(untilUnix int64, now time.Time) time.Duration {
@@ -327,6 +348,10 @@ func cooldownRemaining(untilUnix int64, now time.Time) time.Duration {
 }
 
 const cooldownObservationSuffix = ":observation:"
+
+func cooldownMergeMarkerKey(key string) string {
+	return "cooldown-merge-fallback:v1:" + key
+}
 
 func (p *Provider) cooldownDeadline(key string) int64 {
 	value, exists, err := p.cache.Get(key)
@@ -356,10 +381,21 @@ func (p *Provider) RememberCooldown(key string, retryAfter time.Duration) {
 	ttlSeconds := durationSecondsCeil(time.Unix(untilUnix, 0).Sub(now))
 	deadlineValue := []byte(strconv.FormatInt(untilUnix, 10))
 	if merger, ok := p.controlMerge(); ok {
-		if err := merger.MergeMax(key, untilUnix, ttlSeconds); err != nil {
-			p.logf(fmt.Sprintf("rate-limit cooldown merge failed: %v", p.safeDiagnosticError(err)))
-			p.demoteMerger()
+		if err := merger.MergeMax(key, untilUnix, ttlSeconds); err == nil {
+			return
 		} else {
+			p.logf(fmt.Sprintf("rate-limit cooldown merge failed: %v", p.safeDiagnosticError(err)))
+			if _, canList := p.cache.(storeLister); canList {
+				observation := key + cooldownObservationSuffix + strconv.FormatInt(untilUnix, 10)
+				if obsErr := p.cache.SetWithTTL(observation, deadlineValue, ttlSeconds); obsErr == nil {
+					_ = p.cache.SetWithTTL(cooldownMergeMarkerKey(key), []byte("1"), 2*60*60)
+					return
+				}
+			}
+			// Do not replace a longer stored deadline with this shorter one.
+			if p.cooldownDeadline(key) < untilUnix {
+				_ = p.cache.SetWithTTL(key, deadlineValue, ttlSeconds)
+			}
 			return
 		}
 	}

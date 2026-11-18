@@ -39,9 +39,14 @@ type storeLister interface {
 	List(prefix string) ([]string, error)
 }
 
-// maxMerger is the capable-host atomic maximum merge for scalar control keys.
+// maxMerger is the capable-host atomic control reducer.
 type maxMerger interface {
 	MergeMax(key string, value, ttlSeconds int64) error
+	ReduceFailure(sourceID, operation string, failures, until, updatedAt, resetAt, ttlSeconds int64) error
+}
+
+type capabilityReporter interface {
+	ControlMerge() (bool, error)
 }
 
 // Deps is the plugin surface the provider runs against: host HTTP, the KV

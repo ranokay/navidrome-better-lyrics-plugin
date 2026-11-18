@@ -62,6 +62,44 @@ func (hostStore) Current(trackKey string) ([]byte, bool, error) {
 
 var errControlMergeUnsupported = errors.New("control merge unsupported")
 
+func (hostStore) ControlMerge() (bool, error) {
+	raw, exists, err := host.KVStoreGet(publicationKeyPrefix + "active")
+	if err != nil || !exists {
+		return false, err
+	}
+	var response struct {
+		ControlMerge bool `json:"controlMerge"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return false, nil
+	}
+	return response.ControlMerge, nil
+}
+
+func (hostStore) ReduceFailure(sourceID, operation string, failures, until, updatedAt, resetAt, ttlSeconds int64) error {
+	target := "source-failure:v1:" + sourceID
+	request, err := json.Marshal(struct {
+		Operation string `json:"operation"`
+		Failures  int64  `json:"failures,omitempty"`
+		Until     int64  `json:"until,omitempty"`
+		UpdatedAt int64  `json:"updatedAt,omitempty"`
+		ResetAt   int64  `json:"resetAt,omitempty"`
+		TTL       int64  `json:"ttl"`
+	}{Operation: operation, Failures: failures, Until: until, UpdatedAt: updatedAt, ResetAt: resetAt, TTL: ttlSeconds})
+	if err != nil {
+		return err
+	}
+	if err := host.KVStoreSetWithTTL(publicationKeyPrefix+"control:"+target, request, ttlSeconds+60); err != nil {
+		return err
+	}
+	if _, exists, err := host.KVStoreGet(target); err != nil {
+		return err
+	} else if !exists {
+		return errControlMergeUnsupported
+	}
+	return nil
+}
+
 func (hostStore) MergeMax(key string, value, ttlSeconds int64) error {
 	if key == "" || strings.HasPrefix(key, publicationKeyPrefix) {
 		return errControlMergeUnsupported
