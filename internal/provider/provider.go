@@ -175,11 +175,7 @@ func (p *Provider) GetLyricsPublished(input lyrics.GetLyricsRequest, meta Public
 	if errors.Is(err, errPublicationSuperseded) {
 		return lyrics.GetLyricsResponse{}, err
 	}
-	snapshot, _ := json.Marshal(struct {
-		Track    lyrics.TrackInfo
-		Complete bool
-	}{Track: input.Track, Complete: sweepComplete})
-	if _, commitErr := p.commitPublication(snapshot, sweepComplete); commitErr != nil {
+	if _, commitErr := p.commitPublication(sweepComplete); commitErr != nil {
 		// The classic host cache must not retain a rejected publication.
 		return lyrics.GetLyricsResponse{}, commitErr
 	}
@@ -219,11 +215,7 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 		}
 		return V2Response{}, err
 	}
-	snapshot, _ := json.Marshal(struct {
-		Track    lyrics.TrackInfo
-		Complete bool
-	}{Track: input.Track, Complete: sweepComplete})
-	committedDiscovery, commitErr := p.commitPublication(snapshot, sweepComplete)
+	committedDiscovery, commitErr := p.commitPublication(sweepComplete)
 	if refresh && commitErr == nil && !p.refreshTailEnqueued && (p.publication == nil || len(p.publication.writes) == 0) {
 		p.releasePublication()
 		p.publication = nil

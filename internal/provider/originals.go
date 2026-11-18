@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -102,11 +101,7 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 		p.prepareCandidate(track, sourceID, &candidates[index])
 	}
 	p.cacheSourceCandidates(track, sourceID, candidates)
-	snapshot, _ := json.Marshal(struct {
-		Track    lyrics.TrackInfo
-		Identity lyric.VariantIdentity
-	}{Track: track, Identity: identity})
-	if _, err := p.commitPublication(snapshot, p.discoveryComplete(track, p.activeSources())); err != nil {
+	if _, err := p.commitPublication(p.discoveryComplete(track, p.activeSources())); err != nil {
 		return lyric.Original{}, "selection unavailable"
 	}
 	p.publication = nil

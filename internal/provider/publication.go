@@ -254,7 +254,7 @@ func (p *Provider) storeDiscoveryBytes(key string, value []byte, ttl int64) bool
 	return true
 }
 
-func publicationDigest(writes []publicationWriteWire, snapshot []byte, complete bool) string {
+func publicationDigest(writes []publicationWriteWire, trackKey string, complete bool) string {
 	hash := sha256.New()
 	for _, write := range writes {
 		hash.Write([]byte(write.Key))
@@ -262,7 +262,7 @@ func publicationDigest(writes []publicationWriteWire, snapshot []byte, complete 
 		hash.Write(write.Value)
 		hash.Write([]byte{0})
 	}
-	hash.Write(snapshot)
+	hash.Write([]byte(trackKey))
 	if complete {
 		hash.Write([]byte{1})
 	} else {
@@ -278,12 +278,12 @@ func publicationRevision(generation, trackKey, digest string) string {
 
 // commitPublication publishes the buffered snapshot. A nil result means there
 // was nothing to publish.
-func (p *Provider) commitPublication(snapshot []byte, complete bool) (Discovery, error) {
+func (p *Provider) commitPublication(complete bool) (Discovery, error) {
 	pub := p.publication
 	if pub == nil || !pub.active || len(pub.writes) == 0 {
 		return Discovery{}, nil
 	}
-	digest := publicationDigest(pub.writes, snapshot, complete)
+	digest := publicationDigest(pub.writes, pub.trackKey, complete)
 	revision := publicationRevision(pub.generation, pub.trackKey, digest)
 	request, err := json.Marshal(commitWire{
 		Version: 1, Generation: pub.generation, Token: pub.token,

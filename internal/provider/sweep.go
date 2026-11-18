@@ -411,11 +411,7 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 			}
 		}
 	}
-	snapshot, _ := json.Marshal(struct {
-		Track    lyrics.TrackInfo
-		Complete bool
-	}{Track: track, Complete: complete})
-	if _, err := p.commitPublication(snapshot, complete); err != nil {
+	if _, err := p.commitPublication(complete); err != nil {
 		p.releasePublication()
 		p.publication = nil
 		return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d stale-publication", cached, skipped, failed, deferred), deferredIDs, fullOrder
