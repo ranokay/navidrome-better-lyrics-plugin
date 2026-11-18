@@ -897,3 +897,63 @@ func TestFailedSweepEnqueueDoesNotHoldAdmission(t *testing.T) {
 		t.Fatalf("releases = %d, want the ownerless admission released", publisher.releases)
 	}
 }
+
+func TestStaleTaskClearsItsOwnOrphanedMarker(t *testing.T) {
+	t.Parallel()
+	for _, refresh := range []bool{false, true} {
+		name := "sweep"
+		if refresh {
+			name = "tail"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			cache := newFakeLyricsCache()
+			p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+				variantSource("one", "[00:01.00]one", "lrc"),
+			}, nil)
+			publisher := &fakePublisher{
+				handled: true, accepted: true, token: "new", rejectTokens: map[string]bool{"old": true},
+			}
+			p.publisher = publisher
+			markerID := "old-marker-" + name
+			var markerKey string
+			if refresh {
+				markerKey, _ = p.refreshTailMarkerKey(track)
+			} else {
+				if trackKey, ok := lyricsTrackKey(track); ok {
+					markerKey = p.sweepPendingMarkerKey(track, trackKey)
+				}
+			}
+			if markerKey == "" {
+				t.Fatal("marker key unavailable")
+			}
+			if err := p.storeOwnedSweepMarker(markerKey, 1800, markerID); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(sweepTaskPayload{
+				Track:       track,
+				Publication: Publication{Generation: "generation", Token: "old", Kind: name},
+				Refresh:     refresh,
+				MarkerID:    markerID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, TaskID: "stale", Payload: payload}); err != nil {
+				t.Fatal(err)
+			}
+			if p.sweepMarkerActive(markerKey) {
+				t.Fatal("a stale task left its own 30-minute marker active")
+			}
+			enqueued := false
+			p.enqueueSweep = func(lyrics.TrackInfo) error {
+				enqueued = true
+				return nil
+			}
+			if !p.maybeEnqueueSweep(track) || !enqueued {
+				t.Fatal("a replacement sweep was suppressed by the orphaned marker")
+			}
+		})
+	}
+}

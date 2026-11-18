@@ -26,20 +26,88 @@ func sourceFailureResetKey(sourceID string) string {
 	return "source-failure-reset:v1:" + sourceID
 }
 
+const sourceFailureObservationPrefix = "source-failure-observation:v1:"
+const sourceFailureResetObservationPrefix = "source-failure-reset-observation:v1:"
+
+func (p *Provider) validSourceFailure(state sourceFailureState) bool {
+	if state.Until <= 0 || state.Failures == 0 || state.Failures > 5 {
+		return false
+	}
+	// Expired host entries must not preserve escalation indefinitely.
+	if p.now().UnixMilli()-state.Until >= sourceFailureStateTTL*1000 {
+		return false
+	}
+	return state.Until <= p.now().Add(time.Minute).UnixMilli()
+}
+
 func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
+	if lister, ok := p.cache.(storeLister); ok {
+		if state, found := p.readObservedSourceFailure(sourceID, lister); found {
+			return state
+		}
+	}
+	return p.readLegacySourceFailure(sourceID)
+}
+
+func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister) (sourceFailureState, bool) {
+	keys, err := lister.List(sourceFailureObservationPrefix + sourceID + ":")
+	if err != nil {
+		return sourceFailureState{}, false
+	}
+	resetAt := p.readSourceFailureReset(sourceID, lister)
+	var best sourceFailureState
+	found := false
+	for _, key := range keys {
+		value, exists, err := p.cache.Get(key)
+		if err != nil || !exists {
+			continue
+		}
+		var state sourceFailureState
+		if json.Unmarshal(value, &state) != nil || !p.validSourceFailure(state) {
+			continue
+		}
+		if !found || state.UpdatedAt > best.UpdatedAt ||
+			(state.UpdatedAt == best.UpdatedAt && state.Until > best.Until) {
+			best, found = state, true
+		}
+	}
+	if !found {
+		return sourceFailureState{}, false
+	}
+	if best.UpdatedAt < resetAt {
+		return sourceFailureState{}, true
+	}
+	return best, true
+}
+
+func (p *Provider) readSourceFailureReset(sourceID string, lister storeLister) int64 {
+	maxReset := int64(0)
+	if keys, err := lister.List(sourceFailureResetObservationPrefix + sourceID + ":"); err == nil {
+		for _, key := range keys {
+			value, exists, err := p.cache.Get(key)
+			if err != nil || !exists {
+				continue
+			}
+			if parsed, parseErr := strconv.ParseInt(string(value), 10, 64); parseErr == nil && parsed > maxReset {
+				maxReset = parsed
+			}
+		}
+	}
+	if raw, exists, err := p.cache.Get(sourceFailureResetKey(sourceID)); err == nil && exists {
+		if parsed, parseErr := strconv.ParseInt(string(raw), 10, 64); parseErr == nil && parsed > maxReset {
+			maxReset = parsed
+		}
+	}
+	return maxReset
+}
+
+func (p *Provider) readLegacySourceFailure(sourceID string) sourceFailureState {
 	value, exists, err := p.cache.Get(sourceFailureKey(sourceID))
 	if err != nil || !exists {
 		return sourceFailureState{}
 	}
 	var state sourceFailureState
-	if json.Unmarshal(value, &state) != nil || state.Until <= 0 || state.Failures == 0 || state.Failures > 5 {
-		return sourceFailureState{}
-	}
-	// Expired host entries must not preserve escalation indefinitely.
-	if p.now().UnixMilli()-state.Until >= sourceFailureStateTTL*1000 {
-		return sourceFailureState{}
-	}
-	if state.Until > p.now().Add(time.Minute).UnixMilli() {
+	if json.Unmarshal(value, &state) != nil || !p.validSourceFailure(state) {
 		return sourceFailureState{}
 	}
 	if raw, exists, err := p.cache.Get(sourceFailureResetKey(sourceID)); err == nil && exists {
@@ -79,7 +147,14 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
 	value, marshalErr := json.Marshal(state)
 	if marshalErr == nil {
-		// A broken store fails open; it must never disable a source.
+		if _, canList := p.cache.(storeLister); canList {
+			// Append-only observations avoid the read-modify-write lost update:
+			// concurrent failures never overwrite each other, and readers pick
+			// the newest observation with the longest deadline.
+			key := fmt.Sprintf("%s%s:%d:%s", sourceFailureObservationPrefix, sourceID, state.UpdatedAt, newMarkerID())
+			_ = p.cache.SetWithTTL(key, value, sourceFailureStateTTL)
+		}
+		// Keep the legacy key for older plugin readers.
 		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), value, sourceFailureStateTTL)
 	}
 }
@@ -96,13 +171,20 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	if !started.IsZero() {
 		resetAt = started.UnixMilli()
 	}
-	if raw, exists, err := p.cache.Get(sourceFailureResetKey(sourceID)); err == nil && exists {
+	if lister, canList := p.cache.(storeLister); canList {
+		if p.readSourceFailureReset(sourceID, lister) >= resetAt {
+			return
+		}
+		// Reset observations are append-only too: a stale success cannot
+		// overwrite a newer recovery marker.
+		key := fmt.Sprintf("%s%s:%d:%s", sourceFailureResetObservationPrefix, sourceID, resetAt, newMarkerID())
+		_ = p.cache.SetWithTTL(key, []byte(strconv.FormatInt(resetAt, 10)), sourceFailureStateTTL)
+	} else if raw, exists, err := p.cache.Get(sourceFailureResetKey(sourceID)); err == nil && exists {
 		if prior, parseErr := strconv.ParseInt(string(raw), 10, 64); parseErr == nil && prior >= resetAt {
 			return
 		}
 	}
-	// The reset is a separate observation, never an overwrite of failure state:
-	// a newer failure with a later UpdatedAt survives regardless of write order.
+	// Keep the legacy reset key for older plugin readers.
 	_ = p.cache.SetWithTTL(sourceFailureResetKey(sourceID), []byte(strconv.FormatInt(resetAt, 10)), sourceFailureStateTTL)
 }
 

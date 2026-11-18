@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +49,7 @@ type sweepTaskPayload struct {
 	StalledPasses int              `json:"stalledPasses,omitempty"`
 	Publication   Publication      `json:"publication,omitempty"`
 	Refresh       bool             `json:"refresh,omitempty"`
+	MarkerID      string           `json:"markerId,omitempty"`
 }
 
 // OnInit purges cached data from removed sources and creates the permanent
@@ -99,6 +102,18 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 			err = p.beginPublication(payload.Track, payload.Publication, kind)
 		}
 		if err != nil {
+			// This task never owned the slot. Clear only markers carrying this
+			// enqueue's ID so a newer owner's marker is preserved.
+			if payload.MarkerID != "" {
+				if trackKey, ok := lyricsTrackKey(payload.Track); ok {
+					p.clearOwnedSweepMarker(p.sweepPendingMarkerKey(payload.Track, trackKey), payload.MarkerID)
+				}
+				if payload.Refresh {
+					if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
+						p.clearOwnedSweepMarker(key, payload.MarkerID)
+					}
+				}
+			}
 			p.releaseOperation(payload.Track, payload.Publication)
 			return "stale publication", nil
 		}
@@ -108,13 +123,14 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	markerKey := ""
 	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
 		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
-		_ = p.storeSweepMarker(markerKey, sweepMarkerTTL)
+		_ = p.storeOwnedSweepMarker(markerKey, sweepMarkerTTL, payload.MarkerID)
 	}
 	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources, payload.Refresh)
 	continuationQueued := false
 	if len(deferredIDs) > 0 && p.enqueueSweepSources != nil {
 		p.enqueueMeta = payload.Publication
 		p.enqueueRefresh = payload.Refresh
+		p.enqueueMarker = payload.MarkerID
 		stalledPasses := 0
 		if slices.Equal(payload.Sources, deferredIDs) {
 			stalledPasses = min(max(payload.StalledPasses, 0), maxSweepStalledPasses) + 1
@@ -140,7 +156,7 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 			// A continuation still works this track: keep the queued marker
 			// alive so replays cannot enqueue a parallel full sweep while it
 			// waits behind other songs.
-			_ = p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL)
+			_ = p.storeOwnedSweepMarker(markerKey, sweepQueuedMarkerTTL, payload.MarkerID)
 		default:
 			// Nothing is pending: release the slot so the next lookup can
 			// retry the incomplete sweep promptly.
@@ -150,7 +166,7 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	if !continuationQueued {
 		if payload.Refresh {
 			if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
-				_ = p.storeSweepMarker(key, 1)
+				_ = p.clearSweepMarker(key)
 			}
 		}
 		// Every terminal task releases its slot, including ordinary sweeps
@@ -497,20 +513,22 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if p.sweepMarkerActive(markerKey) {
 		return false
 	}
-	if err := p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL); err != nil {
+	markerID := newMarkerID()
+	if err := p.storeOwnedSweepMarker(markerKey, sweepQueuedMarkerTTL, markerID); err != nil {
 		// A broken cache must not block lyrics: skip the sweep this round.
 		return false
 	}
 	p.enqueueMeta = p.captureEnqueuePublication()
 	p.enqueueRefresh = false
+	p.enqueueMarker = markerID
 	if err := p.enqueueSweep(track); err != nil {
 		// No sweep owns the admitted token; clear the captured metadata so a
 		// zero-write terminal can release it instead of holding the host TTL.
 		p.enqueueMeta = Publication{}
 		p.enqueueRefresh = false
-		// Release the spot early with a 1-second TTL so the next lookup can retry
-		// the sweep rather than waiting out the whole dedupe window.
-		_ = p.storeSweepMarker(markerKey, 1)
+		p.enqueueMarker = ""
+		// Release the spot immediately so the next lookup can retry.
+		_ = p.clearSweepMarker(markerKey)
 		p.logf(fmt.Sprintf("sweep enqueue failed: %v", p.safeDiagnosticError(err)))
 		return false
 	}
@@ -525,6 +543,37 @@ func (p *Provider) storeSweepMarker(key string, ttl int64) error {
 		return err
 	}
 	return p.cache.SetWithTTL(key, value, ttl)
+}
+
+func (p *Provider) storeOwnedSweepMarker(key string, ttl int64, owner string) error {
+	value, err := json.Marshal(cachedLyricsEnvelope{
+		ExpiresAt: p.now().Add(time.Duration(ttl) * time.Second).Unix(), Owner: owner,
+	})
+	if err != nil {
+		return err
+	}
+	return p.cache.SetWithTTL(key, value, ttl)
+}
+
+// clearOwnedSweepMarker releases a queued marker only when this enqueue
+// created it; a newer enqueue must keep its own marker.
+func (p *Provider) clearOwnedSweepMarker(key, owner string) {
+	if owner == "" {
+		return
+	}
+	envelope, found := p.readCachedEnvelope(key)
+	if !found || envelope.Owner != owner {
+		return
+	}
+	_ = p.clearSweepMarker(key)
+}
+
+func newMarkerID() string {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 // clearSweepMarker writes an already-expired tombstone so a same-request
@@ -623,17 +672,20 @@ func (p *Provider) enqueueRefreshTailWithOp(track lyrics.TrackInfo, sources []st
 	if len(sources) == 0 || op.Generation == "" || op.Token == "" {
 		return nil
 	}
+	markerID := newMarkerID()
 	if markerKey, ok := p.refreshTailMarkerKey(track); ok {
 		// A newer refresh owns this track; replace any stale tail marker.
-		_ = p.storeSweepMarker(markerKey, sweepQueuedMarkerTTL)
+		_ = p.storeOwnedSweepMarker(markerKey, sweepQueuedMarkerTTL, markerID)
 	}
 	p.enqueueMeta = op
 	p.enqueueRefresh = true
+	p.enqueueMarker = markerID
 	if err := p.enqueueSweepSources(track, sources, 0); err != nil {
 		p.enqueueMeta = Publication{}
 		p.enqueueRefresh = false
+		p.enqueueMarker = ""
 		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
-			_ = p.storeSweepMarker(markerKey, 1)
+			_ = p.clearSweepMarker(markerKey)
 		}
 		return err
 	}

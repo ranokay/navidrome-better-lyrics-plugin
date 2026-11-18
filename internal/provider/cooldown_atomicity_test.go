@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -96,5 +97,33 @@ func TestOverlappingFailureCannotRegressNewerObservation(t *testing.T) {
 	p.rememberSourceFailure("one", time.UnixMilli(0), errors.New("upstream failed"))
 	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
 		t.Fatalf("backoff after late overlapping failure = %s, want the newer 10s window preserved", got)
+	}
+}
+
+func TestFailureObservationsSurviveLostUpdate(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(15_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+
+	// Failure B records the newer observation.
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	p.resetSourceFailureBefore("one", time.UnixMilli(10_000))
+
+	// A concurrent writer that read before B appends an older observation
+	// instead of overwriting B's key.
+	stale, err := json.Marshal(sourceFailureState{Failures: 1, Until: 12_000, UpdatedAt: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureObservationPrefix+"one:0:stale", stale, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureResetObservationPrefix+"one:5000:stale", []byte("5000"), 600); err != nil {
+		t.Fatal(err)
+	}
+	now = time.UnixMilli(18_000)
+	if got := p.sourceFailureBackoff("one"); got != 2*time.Second {
+		t.Fatalf("backoff after a lost-update observation = %s, want B's 2s remaining window", got)
 	}
 }

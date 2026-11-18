@@ -170,6 +170,9 @@ type cachedLyricsEnvelope struct {
 	// source data is promoted again. Older winners lack this bound and must be
 	// rebuilt from their source entries instead of renewing their age.
 	SourceExpiresAt int64 `json:"sourceExpiresAt,omitempty"`
+	// Owner records the enqueue that created a pending/tail marker so a
+	// stale task can clear only its own marker.
+	Owner string `json:"owner,omitempty"`
 }
 
 // winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.

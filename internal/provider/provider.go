@@ -74,6 +74,7 @@ type Provider struct {
 	// the payload; execution never adopts a newer generation by re-reading.
 	enqueueMeta    Publication
 	enqueueRefresh bool
+	enqueueMarker  string
 	tailSources    []string
 	tailOp         Publication
 	// sources overrides the config-derived catalog for tests; nil means prod walks
@@ -128,17 +129,17 @@ func New(deps Deps) *Provider {
 	if deps.EnqueueTask != nil {
 		enqueue := deps.EnqueueTask
 		p.enqueueSweep = func(track lyrics.TrackInfo) error {
-			return enqueueSweepTask(enqueue, track, nil, 0, p.enqueueMeta, p.enqueueRefresh)
+			return enqueueSweepTask(enqueue, track, nil, 0, p.enqueueMeta, p.enqueueRefresh, p.enqueueMarker)
 		}
 		p.enqueueSweepSources = func(track lyrics.TrackInfo, sources []string, stalledPasses int) error {
-			return enqueueSweepTask(enqueue, track, sources, stalledPasses, p.enqueueMeta, p.enqueueRefresh)
+			return enqueueSweepTask(enqueue, track, sources, stalledPasses, p.enqueueMeta, p.enqueueRefresh, p.enqueueMarker)
 		}
 	}
 	return p
 }
 
-func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track lyrics.TrackInfo, sources []string, stalledPasses int, publication Publication, refresh bool) error {
-	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources, StalledPasses: stalledPasses, Publication: publication, Refresh: refresh})
+func enqueueSweepTask(enqueue func(queue string, payload []byte) error, track lyrics.TrackInfo, sources []string, stalledPasses int, publication Publication, refresh bool, markerID string) error {
+	payload, err := json.Marshal(sweepTaskPayload{Track: track, Sources: sources, StalledPasses: stalledPasses, Publication: publication, Refresh: refresh, MarkerID: markerID})
 	if err != nil {
 		return err
 	}
@@ -151,6 +152,7 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.pubKind = kind
 	p.enqueueMeta = Publication{}
 	p.enqueueRefresh = false
+	p.enqueueMarker = ""
 	p.tailSources = nil
 	p.tailOp = Publication{}
 }
