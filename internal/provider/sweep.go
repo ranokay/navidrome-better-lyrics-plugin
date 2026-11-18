@@ -432,6 +432,12 @@ func (p *Provider) runSweepDetailed(track lyrics.TrackInfo, allowed []string, re
 		// resume and would only leave the markers suppressed for their TTL.
 		return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d stale-publication", cached, skipped, failed, deferred), nil, fullOrder
 	}
+	if p.publication != nil && p.publication.active && p.publication.minted && len(p.publication.writes) == 0 {
+		// beginPublication minted this token for a token-less sweep. A
+		// zero-write pass has no commit to mark it terminal, and the
+		// payload cannot release it.
+		p.releasePublication()
+	}
 	p.publication = nil
 	return fmt.Sprintf("cached=%d skipped=%d failed=%d deferred=%d", cached, skipped, failed, deferred), deferredIDs, fullOrder
 }

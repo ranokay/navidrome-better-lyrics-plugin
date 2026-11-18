@@ -108,6 +108,7 @@ type pendingPublication struct {
 	legacy     bool
 	active     bool
 	failed     bool
+	minted     bool
 	// denied marks a scope-less publication that must not write directly;
 	// its host-minted token is released at terminal completion when the track
 	// key is known.
@@ -182,6 +183,7 @@ func (p *Provider) beginPublication(track lyrics.TrackInfo, meta Publication, ki
 			return fmt.Errorf("%w: %s", errPublicationSuperseded, admitted.Reason)
 		}
 		pub.token = admitted.Token
+		pub.minted = true
 	}
 	pub.active = true
 	p.publication = pub

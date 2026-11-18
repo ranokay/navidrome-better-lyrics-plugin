@@ -786,3 +786,26 @@ func TestRefreshCachedPositiveRevalidatesAfterAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestMintedTokenlessSweepZeroWriteReleasesAdmission(t *testing.T) {
+	t.Parallel()
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true},
+	}, nil)
+	publisher := &fakePublisher{handled: true, accepted: true, token: "minted", cache: cache}
+	p.publisher = publisher
+	payload, err := json.Marshal(sweepTaskPayload{
+		Track:       lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
+		Publication: Publication{Generation: "generation"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, TaskID: "sweep", Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the minted zero-write admission released", publisher.releases)
+	}
+}
