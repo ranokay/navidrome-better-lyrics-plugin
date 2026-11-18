@@ -320,3 +320,39 @@ func TestTokenCarryingRetainedSweepDoesNotReleaseParent(t *testing.T) {
 		t.Fatalf("releases = %d, want a pre-fix child to leave its parent token alone", publisher.releases)
 	}
 }
+
+func TestLateFailureCannotBypassPostResetState(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(150_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
+
+	p.rememberSourceFailure("one", now, errors.New("first failure"))
+	now = time.UnixMilli(200_000)
+	p.resetSourceFailureBefore("one", now)
+	now = time.UnixMilli(300_000)
+	p.rememberSourceFailure("one", now, errors.New("post-reset failure"))
+	now = time.UnixMilli(301_000)
+	p.rememberSourceFailure("one", time.UnixMilli(150_000), errors.New("late pre-reset failure"))
+	if got := p.sourceFailureBackoff("one"); got != 4*time.Second {
+		t.Fatalf("backoff after late pre-reset failure = %s, want the post-reset 4s window", got)
+	}
+}
+
+func TestCooldownMergeFailureSurvivesNextInvocation(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(150_000, 0)
+	cache := listableCache{newFakeLyricsCache()}
+	key := source.GlobalCooldownKey("one")
+	first := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	first.publisher = &fakePublisher{handled: true, active: "generation", control: true, mergeErr: errors.New("merge failed"), cache: cache}
+	first.RememberCooldown(key, time.Hour)
+	now = now.Add(5 * time.Minute)
+	second := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	second.publisher = &fakePublisher{handled: true, active: "generation", control: true, mergeErr: errors.New("merge failed"), cache: cache}
+	second.RememberCooldown(key, time.Minute)
+	if got := second.Cooldown(key); got != 55*time.Minute {
+		t.Fatalf("cooldown after shorter merge failure = %s, want the longer 55m window", got)
+	}
+}
