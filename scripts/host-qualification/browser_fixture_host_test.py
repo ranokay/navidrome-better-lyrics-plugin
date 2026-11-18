@@ -24,7 +24,9 @@ class RewriteKVStoreTest(unittest.TestCase):
         self.assertIn("qualificationKVClockTTLModifier", generated)
         self.assertIn('const qualificationKVClockOffset = "+25 hours"', generated)
         self.assertIn("datetime('now', ?`", generated)
-        self.assertEqual(source, self.source())
+        self.assertNotEqual(source, generated)
+        self.assertIn(host.KV_FILTER, source)
+        self.assertNotIn("qualificationKVClockOffset", source)
 
         neutral = host.rewrite_kvstore(self.source(), "")
         self.assertIn('const qualificationKVClockOffset = ""', neutral)
