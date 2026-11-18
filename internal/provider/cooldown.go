@@ -54,7 +54,8 @@ func (p *Provider) validSourceFailure(state sourceFailureState) bool {
 
 func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 	if _, capability := p.controlMode(); capability != controlUnsupported {
-		// Capable and indeterminate hosts read only the canonical tuple.
+		// Capable and indeterminate hosts read only the canonical row and
+		// its reset mirror.
 		return p.readReducerSourceFailure(sourceID)
 	}
 	if lister, ok := p.cache.(storeLister); ok {
@@ -206,7 +207,7 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 			if err := merger.ReduceFailure(sourceID, "failure", int64(state.Failures), state.Until, observedAt.UnixMilli(), 0, sourceFailureStateTTL); err == nil {
 				return
 			}
-			p.logf("source failure reduce failed")
+			p.logf(fmt.Sprintf("source failure reduce failed: %v", p.safeDiagnosticError(err)))
 		}
 		return
 	}
@@ -258,7 +259,7 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 		// reduce leaves the canonical tuple untouched.
 		if merger != nil {
 			if err := merger.ReduceFailure(sourceID, "reset", 0, 0, 0, resetAt, sourceFailureStateTTL); err != nil {
-				p.logf("source failure reset reduce failed")
+				p.logf(fmt.Sprintf("source failure reset reduce failed: %v", p.safeDiagnosticError(err)))
 			}
 		}
 		return

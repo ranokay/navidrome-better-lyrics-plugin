@@ -217,99 +217,66 @@ func TestControlMergeFailureIsMonotonic(t *testing.T) {
 	}
 }
 
-func TestCapableReadsAreBoundedWithRetainedObservations(t *testing.T) {
+func TestCapableAndIndeterminateReadsAreBounded(t *testing.T) {
 	t.Parallel()
-	for _, missingRow := range []bool{false, true} {
-		name := "with-row"
-		if missingRow {
-			name = "missing-row"
+	for _, mode := range []string{"capable", "indeterminate"} {
+		for _, missingRow := range []bool{false, true} {
+			name := mode + "/with-row"
+			if missingRow {
+				name = mode + "/missing-row"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				now := time.UnixMilli(130_000)
+				cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
+				p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+				publisher := &fakePublisher{
+					handled: true, active: "generation", control: true,
+					reduceErr: errors.New("reducer unavailable"), cache: cache.fakeLyricsCache,
+				}
+				if mode == "indeterminate" {
+					publisher.controlErr = errors.New("kv unavailable")
+				}
+				p.publisher = publisher
+				for i := 0; i < 1000; i++ {
+					key := sourceFailureObservationPrefix + "one:" + strconv.Itoa(i)
+					if err := cache.SetWithTTL(key, []byte(`{"failures":1,"until":9999999999999}`), 600); err != nil {
+						t.Fatal(err)
+					}
+					key = source.GlobalCooldownKey("one") + cooldownObservationSuffix + strconv.Itoa(i)
+					if err := cache.SetWithTTL(key, []byte("999999"), 3600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if !missingRow {
+					reducer, err := json.Marshal(sourceFailureState{Failures: 1, Until: 140000, UpdatedAt: 130000})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := cache.SetWithTTL(sourceFailureKey("one"), reducer, 600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// Repeated reducer errors must not create observations that
+				// force a scan.
+				p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+				p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+				cache.gets, cache.lists = 0, 0
+				if got := p.sourceFailureBackoff("one"); (missingRow && got != 0) || (!missingRow && got != 10*time.Second) {
+					t.Fatalf("backoff = %s, missingRow=%v", got, missingRow)
+				}
+				if cache.lists != 0 || cache.gets > 2 {
+					t.Fatalf("failure read work = %d gets, %d lists; want at most 2 gets and no list", cache.gets, cache.lists)
+				}
+				cache.gets, cache.lists = 0, 0
+				if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
+					t.Fatalf("cooldown = %s, want none", got)
+				}
+				if cache.lists != 0 || cache.gets != 1 {
+					t.Fatalf("cooldown read work = %d gets, %d lists; want one get and no list", cache.gets, cache.lists)
+				}
+			})
 		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			now := time.UnixMilli(130_000)
-			cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
-			p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-			p.publisher = &fakePublisher{
-				handled: true, active: "generation", control: true,
-				reduceErr: errors.New("reducer unavailable"), cache: cache.fakeLyricsCache,
-			}
-			for i := 0; i < 1000; i++ {
-				key := sourceFailureObservationPrefix + "one:" + strconv.Itoa(i)
-				if err := cache.SetWithTTL(key, []byte(`{"failures":1,"until":9999999999999}`), 600); err != nil {
-					t.Fatal(err)
-				}
-				key = source.GlobalCooldownKey("one") + cooldownObservationSuffix + strconv.Itoa(i)
-				if err := cache.SetWithTTL(key, []byte("999999"), 3600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if !missingRow {
-				reducer, err := json.Marshal(sourceFailureState{Failures: 1, Until: 140000, UpdatedAt: 130000})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := cache.SetWithTTL(sourceFailureKey("one"), reducer, 600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			// Repeated reducer errors must not create observations or a
-			// marker that forces a scan.
-			p.rememberSourceFailure("one", now, errors.New("upstream failed"))
-			p.rememberSourceFailure("one", now, errors.New("upstream failed"))
-			cache.gets, cache.lists = 0, 0
-			if got := p.sourceFailureBackoff("one"); (missingRow && got != 0) || (!missingRow && got != 10*time.Second) {
-				t.Fatalf("backoff = %s, missingRow=%v", got, missingRow)
-			}
-			if cache.lists != 0 || cache.gets > 2 {
-				t.Fatalf("failure read work = %d gets, %d lists; want at most 2 gets and no list", cache.gets, cache.lists)
-			}
-			cache.gets, cache.lists = 0, 0
-			if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
-				t.Fatalf("cooldown = %s, want none", got)
-			}
-			if cache.lists != 0 || cache.gets != 1 {
-				t.Fatalf("cooldown read work = %d gets, %d lists; want one get and no list", cache.gets, cache.lists)
-			}
-		})
-	}
-}
-
-func TestIndeterminateCapabilityDoesNotWriteLegacy(t *testing.T) {
-	t.Parallel()
-	now := time.Unix(140_000, 0)
-	cache := listableCache{newFakeLyricsCache()}
-	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
-	publisher := &fakePublisher{
-		handled: true, active: "generation", control: true,
-		controlErr: errors.New("kv unavailable"), cache: cache,
-	}
-	p.publisher = publisher
-	key := source.GlobalCooldownKey("one")
-	if err := cache.SetWithTTL(key, []byte(strconv.FormatInt(now.Add(time.Hour).Unix(), 10)), 3600); err != nil {
-		t.Fatal(err)
-	}
-	row, err := json.Marshal(sourceFailureState{Failures: 1, Until: now.Add(30 * time.Second).UnixMilli(), UpdatedAt: now.UnixMilli()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cache.SetWithTTL(sourceFailureKey("one"), row, 600); err != nil {
-		t.Fatal(err)
-	}
-
-	p.RememberCooldown(key, time.Minute)
-	if got := p.Cooldown(key); got != time.Hour {
-		t.Fatalf("cooldown with an indeterminate capability = %s, want the canonical hour", got)
-	}
-	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
-	if got := p.sourceFailureBackoff("one"); got != 30*time.Second {
-		t.Fatalf("backoff with an indeterminate capability = %s, want the canonical window", got)
-	}
-
-	// A later successful probe must not have been cached as unsupported.
-	publisher.controlErr = nil
-	p.RememberCooldown(key, 2*time.Hour)
-	if got := p.Cooldown(key); got != 2*time.Hour {
-		t.Fatalf("cooldown after the probe recovered = %s, want two hours", got)
 	}
 }
 
@@ -340,6 +307,9 @@ func TestControlMergeFailurePreservesCanonicalState(t *testing.T) {
 	p.RememberCooldown(key, time.Minute)
 	if cache.gets != 0 || cache.lists != 0 {
 		t.Fatalf("failed merge work = %d gets, %d lists; want no canonical access", cache.gets, cache.lists)
+	}
+	if keys, err := cache.List(key + cooldownObservationSuffix); err != nil || len(keys) != 0 {
+		t.Fatalf("cooldown observations after a failed merge = %v, %v; want none", keys, err)
 	}
 	if got := p.Cooldown(key); got != time.Hour {
 		t.Fatalf("cooldown after a failed merge = %s, want the canonical hour", got)
@@ -461,7 +431,7 @@ func TestReducerFailureLeavesCanonicalRowUnchanged(t *testing.T) {
 	}
 }
 
-func TestFallbackFailurePreservesCommittedReset(t *testing.T) {
+func TestReducerFailurePreservesCommittedReset(t *testing.T) {
 	t.Parallel()
 	now := time.UnixMilli(150_000)
 	cache := listableCache{newFakeLyricsCache()}
@@ -545,5 +515,71 @@ func TestReducerFailureCannotBypassCommittedReset(t *testing.T) {
 	p.rememberSourceFailure("one", time.UnixMilli(150_000), errors.New("late pre-reset failure"))
 	if got := p.sourceFailureBackoff("one"); got != 4*time.Second {
 		t.Fatalf("backoff during a reducer outage = %s, want the post-reset 4s window", got)
+	}
+}
+
+func TestIndeterminateCapabilityDoesNotWriteLegacy(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(140_000, 0)
+	cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	publisher := &fakePublisher{
+		handled: true, active: "generation", control: true,
+		controlErr: errors.New("kv unavailable"), cache: cache,
+	}
+	p.publisher = publisher
+	key := source.GlobalCooldownKey("one")
+	if err := cache.SetWithTTL(key, []byte(strconv.FormatInt(now.Add(time.Hour).Unix(), 10)), 3600); err != nil {
+		t.Fatal(err)
+	}
+	row, err := json.Marshal(sourceFailureState{Failures: 1, Until: now.Add(30 * time.Second).UnixMilli(), UpdatedAt: now.UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SetWithTTL(sourceFailureKey("one"), row, 600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Every unknown-capability path must leave the canonical records alone
+	// and perform no observation-list scan.
+	p.RememberCooldown(key, time.Minute)
+	if keys, err := cache.List(key + cooldownObservationSuffix); err != nil || len(keys) != 0 {
+		t.Fatalf("cooldown observations = %v, %v; want none", keys, err)
+	}
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	if keys, err := cache.List(sourceFailureObservationPrefix + "one:"); err != nil || len(keys) != 0 {
+		t.Fatalf("failure observations = %v, %v; want none", keys, err)
+	}
+	if raw, exists, err := cache.Get(sourceFailureKey("one")); err != nil || !exists || string(raw) != string(row) {
+		t.Fatalf("canonical row = %q, %v; want it unchanged", raw, err)
+	}
+	p.resetSourceFailureBefore("one", now.Add(time.Second))
+	if keys, err := cache.List(sourceFailureResetObservationPrefix + "one:"); err != nil || len(keys) != 0 {
+		t.Fatalf("reset observations = %v, %v; want none", keys, err)
+	}
+	if _, exists, err := cache.Get(sourceFailureResetKey("one")); err != nil || exists {
+		t.Fatalf("legacy reset = %v, %v; want none", exists, err)
+	}
+	if got := p.Cooldown(key); got != time.Hour {
+		t.Fatalf("cooldown with an indeterminate capability = %s, want the canonical hour", got)
+	}
+	if got := p.sourceFailureBackoff("one"); got != 30*time.Second {
+		t.Fatalf("backoff with an indeterminate capability = %s, want the canonical window", got)
+	}
+	cache.gets, cache.lists = 0, 0
+	p.sourceFailureBackoff("one")
+	if cache.lists != 0 || cache.gets > 2 {
+		t.Fatalf("indeterminate failure read = %d gets, %d lists; want at most 2 gets", cache.gets, cache.lists)
+	}
+
+	// A later successful probe must not have been cached as unsupported;
+	// the capable path records no observation.
+	publisher.controlErr = nil
+	p.RememberCooldown(key, 2*time.Hour)
+	if keys, err := cache.List(key + cooldownObservationSuffix); err != nil || len(keys) != 0 {
+		t.Fatalf("cooldown observations after probe recovery = %v, %v; want none", keys, err)
+	}
+	if got := p.Cooldown(key); got != 2*time.Hour {
+		t.Fatalf("cooldown after the probe recovered = %s, want two hours", got)
 	}
 }

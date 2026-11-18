@@ -67,13 +67,7 @@ func (hostStore) ControlMerge() (bool, error) {
 	if err != nil || !exists {
 		return false, err
 	}
-	var response struct {
-		ControlMerge bool `json:"controlMerge"`
-	}
-	if err := json.Unmarshal(raw, &response); err != nil {
-		return false, nil
-	}
-	return response.ControlMerge, nil
+	return parseControlMerge(raw)
 }
 
 func (hostStore) ReduceFailure(sourceID, operation string, failures, until, updatedAt, resetAt, ttlSeconds int64) error {
