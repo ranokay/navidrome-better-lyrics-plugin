@@ -95,6 +95,7 @@ type discoveryStateWire struct {
 	Scope      string `json:"scope,omitempty"`
 	Revision   string `json:"revision,omitempty"`
 	Complete   bool   `json:"complete,omitempty"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"`
 }
 
 type pendingPublication struct {
@@ -233,6 +234,14 @@ func (p *Provider) resumePublication(track lyrics.TrackInfo, meta Publication, k
 	return nil
 }
 
+func (p *Provider) clearPublication() {
+	if p.publication == nil {
+		return
+	}
+	p.releasePublication()
+	p.publication = nil
+}
+
 func (p *Provider) releasePublication() {
 	pub := p.publication
 	if pub == nil || p.publisher == nil || pub.trackKey == "" ||
@@ -342,7 +351,8 @@ func (p *Provider) currentState(track lyrics.TrackInfo) (Discovery, bool) {
 	}
 	var state discoveryStateWire
 	if json.Unmarshal(raw, &state) != nil || !state.Handled || state.Revision == "" ||
-		state.Generation != p.pubMeta.Generation || state.Scope != scope {
+		state.Generation != p.pubMeta.Generation || state.Scope != scope ||
+		(state.ExpiresAt > 0 && state.ExpiresAt <= p.now().Unix()) {
 		return Discovery{}, false
 	}
 	return Discovery{Revision: state.Revision, Complete: state.Complete}, true
@@ -398,12 +408,17 @@ func (p *Provider) snapshotExpiry(track lyrics.TrackInfo, sources []source.Sourc
 			if err != nil {
 				p.logf(fmt.Sprintf("lyrics variant cache read failed: %v", p.safeDiagnosticError(err)))
 			} else if found {
-				var bundle cachedSourceBundle
-				if err := json.Unmarshal(raw, &bundle); err != nil {
-					p.logf(fmt.Sprintf("lyrics variant cache decode failed: %v", p.safeDiagnosticError(err)))
-				} else {
-					consider(bundle.ExpiresAt)
-				}
+				p.considerBundleExpiry(raw, consider)
+			}
+		}
+	}
+	// A bundle written by this commit is not visible in the cache yet. Its
+	// batch TTL is the bundle maximum, so per-entry lifetimes must be carried
+	// explicitly.
+	if p.publication != nil {
+		for _, write := range p.publication.writes {
+			if strings.HasPrefix(write.Key, lyricsVariantCacheKeyPrefix) {
+				p.considerBundleExpiry(write.Value, consider)
 			}
 		}
 	}
@@ -413,17 +428,48 @@ func (p *Provider) snapshotExpiry(track lyrics.TrackInfo, sources []source.Sourc
 	return expiry
 }
 
+func (p *Provider) considerBundleExpiry(raw []byte, consider func(int64)) {
+	var bundle cachedSourceBundle
+	if json.Unmarshal(raw, &bundle) != nil {
+		return
+	}
+	now := p.now().Unix()
+	considered := false
+	for _, entry := range bundle.Candidates {
+		if entry.ExpiresAt > 0 && entry.ExpiresAt <= now {
+			continue
+		}
+		consider(entry.ExpiresAt)
+		considered = true
+	}
+	if !considered && len(bundle.Candidates) == 0 {
+		consider(bundle.ExpiresAt)
+	}
+}
+
+func (p *Provider) controlMerge() (maxMerger, bool) {
+	if p.mergeChecked {
+		return p.merger, p.merger != nil
+	}
+	p.mergeChecked = true
+	merger, ok := p.publisher.(maxMerger)
+	if !ok {
+		return nil, false
+	}
+	if _, active, err := p.publisher.Active(); err != nil || !active {
+		return nil, false
+	}
+	p.merger = merger
+	return merger, true
+}
+
 // enqueuePublication captures the generation/token that a background task may
 // resume. A task never re-reads the live active key at execution to adopt a
 // newer generation.
 func (p *Provider) captureEnqueuePublication() Publication {
-	if p.publication != nil && p.publication.active {
-		return Publication{
-			Generation: p.publication.generation,
-			Token:      p.publication.token,
-			Kind:       "sweep",
-		}
-	}
+	// Ordinary sweeps never inherit the foreground token: the child admits
+	// only after the parent publication is terminal, so it cannot replay the
+	// parent's phase or run against pre-commit coverage.
 	if p.pubMeta.Generation != "" {
 		return Publication{Generation: p.pubMeta.Generation, Kind: "sweep"}
 	}

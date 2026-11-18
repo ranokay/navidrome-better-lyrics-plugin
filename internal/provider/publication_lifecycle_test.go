@@ -435,7 +435,7 @@ func TestBufferedCleanMissCompletesFirstSweepPass(t *testing.T) {
 	p.publisher = publisher
 	payload, err := json.Marshal(sweepTaskPayload{
 		Track:       lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-		Publication: Publication{Generation: "generation", Token: "token"},
+		Publication: Publication{Generation: "generation"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -656,7 +656,7 @@ func TestNonRefreshSweepZeroWriteReleasesAdmission(t *testing.T) {
 	p.publisher = publisher
 	payload, err := json.Marshal(sweepTaskPayload{
 		Track:       lyrics.TrackInfo{Title: "Song", Artist: "Artist"},
-		Publication: Publication{Generation: "generation", Token: "token"},
+		Publication: Publication{Generation: "generation"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -835,7 +835,7 @@ func TestDeniedPublicationRefusesDiscoveryWrites(t *testing.T) {
 	}
 }
 
-func TestRefreshKeepsTokenForQueuedFullSweep(t *testing.T) {
+func TestRefreshHandsOffSweepWithoutParentToken(t *testing.T) {
 	t.Parallel()
 	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
 	cache := newFakeLyricsCache()
@@ -860,8 +860,11 @@ func TestRefreshKeepsTokenForQueuedFullSweep(t *testing.T) {
 	if !enqueued {
 		t.Fatal("the failed refresh did not queue a full sweep")
 	}
-	if publisher.releases != 0 {
-		t.Fatal("the refresh released the token its queued sweep needs")
+	if publisher.releases != 1 {
+		t.Fatalf("releases = %d, want the terminal parent released", publisher.releases)
+	}
+	if p.enqueueMeta.Token != "" || p.enqueueMeta.Generation != "generation" {
+		t.Fatalf("deferred sweep publication = %#v, want a generation-only child", p.enqueueMeta)
 	}
 }
 
@@ -879,9 +882,10 @@ func TestFailedSweepEnqueueDoesNotHoldAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.enqueueSweep = func(lyrics.TrackInfo) error { return errors.New("queue unavailable") }
-	if p.maybeEnqueueSweep(track) {
-		t.Fatal("maybeEnqueueSweep reported success after an enqueue error")
+	if !p.maybeEnqueueSweep(track) {
+		t.Fatal("an active parent did not defer the sweep")
 	}
+	p.flushDeferredSweep()
 	if p.enqueueMeta.Token != "" {
 		t.Fatal("a failed enqueue left a live token in enqueueMeta")
 	}
@@ -889,10 +893,7 @@ func TestFailedSweepEnqueueDoesNotHoldAdmission(t *testing.T) {
 		t.Fatal("the admitted publication disappeared")
 	}
 	// The zero-write terminal release must now be able to clear the admission.
-	if p.enqueueMeta.Token == "" {
-		p.releasePublication()
-		p.publication = nil
-	}
+	p.clearPublication()
 	if publisher.releases != 1 {
 		t.Fatalf("releases = %d, want the ownerless admission released", publisher.releases)
 	}
@@ -955,5 +956,138 @@ func TestStaleTaskClearsItsOwnOrphanedMarker(t *testing.T) {
 				t.Fatal("a replacement sweep was suppressed by the orphaned marker")
 			}
 		})
+	}
+}
+
+func TestForegroundHandoffEnqueuesSweepAfterCommit(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	var events []string
+	cache := newFakeLyricsCache()
+	sources := []source.Source{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+				return []lyric.Candidate{lrcCandidate(false)}, source.Healthy, nil
+			}},
+		{ID: "two", Display: "two", Hosts: []string{"two.example.test"}, DefaultEnabled: true,
+			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+				return []lyric.Candidate{lrcCandidate(false)}, source.Healthy, nil
+			}},
+	}
+	p := newTestProviderWithSources(nil, cache, time.Now, sources, nil)
+	p.enqueueSweep = func(lyrics.TrackInfo) error {
+		events = append(events, "enqueue")
+		return nil
+	}
+	publisher := &fakePublisher{
+		handled: true, accepted: true, token: "token", cache: cache,
+		onCommit: func(commitWire) { events = append(events, "commit") },
+	}
+	p.publisher = publisher
+	if _, err := p.GetLyricsV2Published(
+		lyrics.GetLyricsRequest{Track: track},
+		Publication{Generation: "generation", CallID: "call"}, false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0] != "commit" || events[1] != "enqueue" {
+		t.Fatalf("events = %v, want the foreground commit before the sweep enqueue", events)
+	}
+}
+
+func TestScopedMarkerOwnershipProtectsNewerReplacement(t *testing.T) {
+	t.Parallel()
+	for _, refresh := range []bool{false, true} {
+		name := "sweep"
+		if refresh {
+			name = "tail"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+			cache := listableCache{newFakeLyricsCache()}
+			p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+				variantSource("one", "[00:01.00]one", "lrc"),
+			}, nil)
+			p.publisher = &fakePublisher{
+				handled: true, accepted: true, token: "new", rejectTokens: map[string]bool{"old": true},
+			}
+			var base string
+			if refresh {
+				base, _ = p.refreshTailMarkerKey(track)
+			} else if trackKey, ok := lyricsTrackKey(track); ok {
+				base = p.sweepPendingMarkerKey(track, trackKey)
+			}
+			if base == "" {
+				t.Fatal("marker base unavailable")
+			}
+			oldKey := p.markerKey(base, "old")
+			newKey := p.markerKey(base, "new")
+			if err := p.storeOwnedSweepMarker(oldKey, 1800, "old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.storeOwnedSweepMarker(newKey, 1800, "new"); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(sweepTaskPayload{
+				Track:       track,
+				Publication: Publication{Generation: "generation", Token: "old", Kind: name},
+				Refresh:     refresh,
+				MarkerID:    "old",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, TaskID: "stale", Payload: payload}); err != nil {
+				t.Fatal(err)
+			}
+			if p.sweepMarkerActive(oldKey) {
+				t.Fatal("a stale task left its own scoped marker active")
+			}
+			if !p.sweepMarkerActive(newKey) {
+				t.Fatal("a stale task cleared the newer owner's scoped marker")
+			}
+		})
+	}
+}
+
+func TestSupersededDuringIOOnlyClearsItsOwnMarker(t *testing.T) {
+	t.Parallel()
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	cache := listableCache{newFakeLyricsCache()}
+	var base string
+	var p *Provider
+	p = newTestProviderWithSources(nil, cache, time.Now, []source.Source{
+		{ID: "one", Display: "one", Hosts: []string{"one.example.test"}, DefaultEnabled: true,
+			Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+				if err := p.storeOwnedSweepMarker(p.markerKey(base, "new"), 1800, "new"); err != nil {
+					t.Error(err)
+				}
+				return []lyric.Candidate{lrcCandidate(false)}, source.Healthy, nil
+			}},
+	}, nil)
+	p.publisher = &fakePublisher{
+		handled: true, accepted: true, token: "old", commitErr: errors.New("superseded"),
+	}
+	trackKey, _ := lyricsTrackKey(track)
+	base = p.sweepPendingMarkerKey(track, trackKey)
+	oldKey := p.markerKey(base, "old")
+	newKey := p.markerKey(base, "new")
+	payload, err := json.Marshal(sweepTaskPayload{
+		Track:       track,
+		Publication: Publication{Generation: "generation", Kind: "sweep"},
+		MarkerID:    "old",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.OnTaskExecute(taskworker.TaskExecuteRequest{QueueName: sweepQueueName, TaskID: "task", Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if p.sweepMarkerActive(oldKey) {
+		t.Fatal("a superseded task left its scoped marker active")
+	}
+	if !p.sweepMarkerActive(newKey) {
+		t.Fatal("a superseded task cleared the newer marker")
 	}
 }

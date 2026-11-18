@@ -12,13 +12,18 @@ import (
 
 func publicationStateFor(t *testing.T, p *Provider, track lyrics.TrackInfo, generation, revision string, complete bool) []byte {
 	t.Helper()
+	return publicationStateWithExpiry(t, p, track, generation, revision, complete, 0)
+}
+
+func publicationStateWithExpiry(t *testing.T, p *Provider, track lyrics.TrackInfo, generation, revision string, complete bool, expiresAt int64) []byte {
+	t.Helper()
 	scope, ok := p.publicationScope(track, p.activeSources())
 	if !ok {
 		t.Fatal("publication scope unavailable")
 	}
 	value, err := json.Marshal(discoveryStateWire{
 		Handled: true, Generation: generation, Scope: scope,
-		Revision: revision, Complete: complete,
+		Revision: revision, Complete: complete, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,5 +233,115 @@ func TestPublishedCompletionOmittedWhenCoverageExpired(t *testing.T) {
 	}
 	if discovery.Revision != "" || discovery.Complete {
 		t.Fatalf("discovery = %#v, want no claim when coverage expired", discovery)
+	}
+}
+
+func TestSnapshotExpiryUsesShortestDisplayedVariant(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(80_000, 0)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	sources := []source.Source{{ID: "one", Display: "One"}}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, sources, nil)
+	bundle := cachedSourceBundle{
+		Generation: lyricsCacheGeneration, Credentials: p.sourceCredentialsFingerprint("one"),
+		ExpiresAt: now.Add(time.Hour).Unix(),
+		Candidates: []cachedSourceVariant{
+			{Response: lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: "[00:01.00]short"}}}, ExpiresAt: now.Add(time.Minute).Unix()},
+			{Response: lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: "[00:01.00]long"}}}, ExpiresAt: now.Add(time.Hour).Unix()},
+		},
+	}
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := lyricsVariantCacheKey(track, "one")
+	if err := cache.SetWithTTL(key, raw, 3600); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.snapshotExpiry(track, sources), now.Add(time.Minute).Unix(); got != want {
+		t.Fatalf("snapshot expiry = %d, want the shortest displayed variant %d", got, want)
+	}
+
+	// A newly committed bundle is only in the publication batch; its per-entry
+	// lifetime must still bound the state claim.
+	p.publication = &pendingPublication{active: true, writes: []publicationWriteWire{{Key: key, Value: raw, TTL: 3600}}}
+	if got, want := p.pendingSnapshotExpiry(track, sources), now.Add(time.Minute).Unix(); got != want {
+		t.Fatalf("buffered snapshot expiry = %d, want %d", got, want)
+	}
+}
+
+func TestPublishedVariantExpiryBoundsClaim(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(90_000, 0)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	sources := []source.Source{{ID: "one", Display: "One"}}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, sources, nil)
+	p.cacheWinner(track, sources, lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]winner"}, "one", "lrc"), true)
+	bundle := cachedSourceBundle{
+		Generation: lyricsCacheGeneration, Credentials: p.sourceCredentialsFingerprint("one"),
+		ExpiresAt: now.Add(time.Hour).Unix(),
+		Candidates: []cachedSourceVariant{
+			{Response: lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: "[00:01.00]short"}}}, ExpiresAt: now.Add(time.Minute).Unix()},
+		},
+	}
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := lyricsVariantCacheKey(track, "one")
+	if err := cache.SetWithTTL(key, raw, 3600); err != nil {
+		t.Fatal(err)
+	}
+	p.publisher = &fakePublisher{
+		handled: true, accepted: true, token: "token", cache: cache,
+		current: publicationStateWithExpiry(t, p, track, "generation", "revision", true, now.Add(time.Minute).Unix()),
+	}
+	p.pubMeta = Publication{Generation: "generation"}
+	if _, discovery, ok := p.currentV2Response(track); !ok || discovery.Revision == "" {
+		t.Fatalf("current response = %#v, want a claim before the variant expires", discovery)
+	}
+	now = now.Add(61 * time.Second)
+	if _, discovery, ok := p.currentV2Response(track); !ok || discovery.Revision != "" {
+		t.Fatalf("current response after variant expiry = %#v, want the claim omitted", discovery)
+	}
+}
+
+func TestPublishedViewDigestDetectsVariantExpiryDuringBuild(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(100_000, 0)
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	sources := []source.Source{{ID: "one", Display: "One"}}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, sources, nil)
+	p.cacheWinner(track, sources, lyric.NewCandidate(lyrics.LyricsText{Text: "[00:01.00]winner"}, "one", "lrc"), true)
+	bundle := cachedSourceBundle{
+		Generation: lyricsCacheGeneration, Credentials: p.sourceCredentialsFingerprint("one"),
+		ExpiresAt: now.Add(time.Hour).Unix(),
+		Candidates: []cachedSourceVariant{
+			{Response: lyrics.GetLyricsResponse{Lyrics: []lyrics.LyricsText{{Text: "[00:01.00]short"}}}, ExpiresAt: now.Add(time.Minute).Unix()},
+		},
+	}
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := lyricsVariantCacheKey(track, "one")
+	if err := cache.SetWithTTL(key, raw, 3600); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &fakePublisher{
+		handled: true, accepted: true, token: "token", cache: cache,
+		current: publicationStateWithExpiry(t, p, track, "generation", "revision", true, now.Add(time.Hour).Unix()),
+	}
+	publisher.onCurrent = func(string) {
+		publisher.onCurrent = nil
+		now = now.Add(61 * time.Second)
+	}
+	p.publisher = publisher
+	p.pubMeta = Publication{Generation: "generation"}
+	if _, discovery, ok := p.currentV2Response(track); !ok || discovery.Revision != "" {
+		t.Fatalf("current response = %#v, want the claim omitted after the view changed", discovery)
 	}
 }

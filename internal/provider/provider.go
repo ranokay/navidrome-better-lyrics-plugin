@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,11 @@ type storeLister interface {
 	List(prefix string) ([]string, error)
 }
 
+// maxMerger is the capable-host atomic maximum merge for scalar control keys.
+type maxMerger interface {
+	MergeMax(key string, value, ttlSeconds int64) error
+}
+
 // Deps is the plugin surface the provider runs against: host HTTP, the KV
 // store, the clock, config, the sweep queue, logging, and the identifying
 // User-Agent. The entrypoint supplies the host-backed implementations; nil
@@ -67,16 +73,20 @@ type Provider struct {
 	publisher    Publisher
 	// publication is the current invocation's buffered writer. Every discovery
 	// write goes through it; legacy hosts keep the previous direct behavior.
-	publication *pendingPublication
-	pubMeta     Publication
-	pubKind     string
+	publication  *pendingPublication
+	pubMeta      Publication
+	pubKind      string
+	mergeChecked bool
+	merger       maxMerger
 	// enqueueMeta is captured before a sweep task is enqueued and carried in
 	// the payload; execution never adopts a newer generation by re-reading.
-	enqueueMeta    Publication
-	enqueueRefresh bool
-	enqueueMarker  string
-	tailSources    []string
-	tailOp         Publication
+	enqueueMeta       Publication
+	enqueueRefresh    bool
+	enqueueMarker     string
+	pendingSweep      bool
+	pendingSweepTrack lyrics.TrackInfo
+	tailSources       []string
+	tailOp            Publication
 	// sources overrides the config-derived catalog for tests; nil means prod walks
 	// whatever the admin configured.
 	sources []source.Source
@@ -153,6 +163,8 @@ func (p *Provider) preparePublication(meta Publication, kind string) {
 	p.enqueueMeta = Publication{}
 	p.enqueueRefresh = false
 	p.enqueueMarker = ""
+	p.pendingSweep = false
+	p.pendingSweepTrack = lyrics.TrackInfo{}
 	p.tailSources = nil
 	p.tailOp = Publication{}
 }
@@ -182,19 +194,18 @@ func (p *Provider) GetLyricsPublished(input lyrics.GetLyricsRequest, meta Public
 	p.preparePublication(meta, "classic")
 	candidate, sources, _, sweepComplete, err := p.resolveLyrics(input, false)
 	if errors.Is(err, errPublicationSuperseded) {
+		p.dropDeferredSweep()
 		return lyrics.GetLyricsResponse{}, err
 	}
 	if _, commitErr := p.commitPublication(sweepComplete, false, p.pendingSnapshotExpiry(input.Track, sources)); commitErr != nil {
+		p.dropDeferredSweep()
 		// The classic host cache must not retain a rejected publication.
 		return lyrics.GetLyricsResponse{}, commitErr
 	}
-	if p.publication != nil && p.publication.active && p.enqueueMeta.Token == "" {
-		// A zero-write classic lookup without a queued sweep has no deferred
-		// owner for its admission; release the slot instead of waiting out
-		// the host TTL.
-		p.releasePublication()
-		p.publication = nil
-	}
+	// Release any terminal parent before a deferred sweep admits its own
+	// token. A denied publication may still carry a host-minted token.
+	p.clearPublication()
+	p.flushDeferredSweep()
 	if current, ok := p.currentV1Response(input.Track); ok {
 		return current, err
 	}
@@ -225,6 +236,7 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 	}
 	candidate, sources, evidence, sweepComplete, err := p.resolveLyrics(input, refresh)
 	if errors.Is(err, errPublicationSuperseded) {
+		p.dropDeferredSweep()
 		if current, discovery, ok := p.currentV2Response(input.Track); ok {
 			current.Discovery = discovery
 			return current, nil
@@ -236,25 +248,18 @@ func (p *Provider) GetLyricsV2Published(input lyrics.GetLyricsRequest, meta Publ
 	committedDiscovery, commitErr := p.commitPublication(
 		sweepComplete, refresh && len(tailSources) > 0, p.pendingSnapshotExpiry(input.Track, sources),
 	)
-	if refresh && commitErr == nil {
-		if len(tailSources) > 0 {
-			if err := p.enqueueRefreshTailWithOp(input.Track, tailSources, tailOp); err != nil {
-				p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
-				p.releaseOperation(input.Track, tailOp)
-			}
-		} else if p.enqueueMeta.Token == "" {
-			// A refresh that resolved entirely from cache has no commit to
-			// release its admission; release it here so foreground work is
-			// not blocked for the host TTL. A queued full sweep keeps the
-			// token so it can finish the uncovered sources.
-			p.releasePublication()
-			p.publication = nil
+	if commitErr != nil {
+		p.dropDeferredSweep()
+	} else if refresh && len(tailSources) > 0 {
+		if err := p.enqueueRefreshTailWithOp(input.Track, tailSources, tailOp); err != nil {
+			p.logf(fmt.Sprintf("refresh tail enqueue failed: %v", p.safeDiagnosticError(err)))
+			p.releaseOperation(input.Track, tailOp)
 		}
-	} else if commitErr == nil && p.publication != nil && p.publication.active && p.enqueueMeta.Token == "" {
-		// A normal zero-write lookup without a queued sweep has no deferred
-		// owner for its admission.
-		p.releasePublication()
-		p.publication = nil
+	} else {
+		// A zero-write foreground has no commit to release its admission;
+		// release the parent before a deferred sweep admits its own token.
+		p.clearPublication()
+		p.flushDeferredSweep()
 	}
 	discovery := committedDiscovery
 	if commitErr != nil {
@@ -311,7 +316,7 @@ func (p *Provider) currentV2Response(track lyrics.TrackInfo) (V2Response, Discov
 	if len(sources) == 0 {
 		return V2Response{}, Discovery{}, false
 	}
-	beforeCandidate, beforeEvidence, beforeComplete, beforeCached := p.readResponseView(track, sources)
+	beforeCandidate, beforeEvidence, beforeComplete, beforeDigest, beforeCached := p.readResponseView(track, sources)
 	if !beforeCached {
 		return V2Response{}, Discovery{}, false
 	}
@@ -319,13 +324,13 @@ func (p *Provider) currentV2Response(track lyrics.TrackInfo) (V2Response, Discov
 	response := p.buildV2Response(track, sources, beforeCandidate)
 	response.Evidence = dedupeEvidence(append(beforeEvidence, response.Evidence...))
 	after, afterOK := p.currentState(track)
-	afterCandidate, afterEvidence, afterComplete, afterCached := p.readResponseView(track, sources)
+	afterCandidate, afterEvidence, afterComplete, afterDigest, afterCached := p.readResponseView(track, sources)
 	// A commit may land between the cached read and the state read. Only a
 	// state whose revision and dependencies both survived the build may label
 	// this response; otherwise the claim is omitted rather than mismatched.
 	if beforeOK && afterOK && before == after && afterCached &&
 		before.Complete == beforeComplete && after.Complete == afterComplete &&
-		beforeComplete == afterComplete &&
+		beforeComplete == afterComplete && beforeDigest == afterDigest &&
 		sameCachedView(beforeCandidate, beforeEvidence, afterCandidate, afterEvidence) {
 		return response, before, true
 	}
@@ -335,17 +340,30 @@ func (p *Provider) currentV2Response(track lyrics.TrackInfo) (V2Response, Discov
 // readResponseView is the cached winner/evidence pair a published response is
 // built from. It preserves the winner's evidence even when a per-source entry
 // is preferred.
-func (p *Provider) readResponseView(track lyrics.TrackInfo, sources []source.Source) (lyric.Candidate, []lyric.Evidence, bool, bool) {
+func (p *Provider) readResponseView(track lyrics.TrackInfo, sources []source.Source) (lyric.Candidate, []lyric.Evidence, bool, string, bool) {
 	candidate, evidence, ok, sweepComplete := p.readCachedWinner(track, sources)
 	complete := sweepComplete || p.sweepMarkerActive(p.doneMarkerKey(track, sources))
 	if !ok {
 		best, _ := p.readBestFromSourceCache(track, sources)
 		if !best.Present() {
-			return lyric.Candidate{}, nil, false, false
+			return lyric.Candidate{}, nil, false, "", false
 		}
 		candidate = best
 	}
-	return candidate, evidence, complete, true
+	variants := make([]lyric.Candidate, 0)
+	for _, src := range sources {
+		variants = append(variants, p.readCachedSourceCandidates(track, src.ID)...)
+	}
+	payload, err := json.Marshal(struct {
+		Candidate lyric.Candidate
+		Evidence  []lyric.Evidence
+		Variants  []lyric.Candidate
+	}{candidate, evidence, variants})
+	if err != nil {
+		return lyric.Candidate{}, nil, false, "", false
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	return candidate, evidence, complete, digest, true
 }
 
 func sameCachedView(a lyric.Candidate, aEvidence []lyric.Evidence, b lyric.Candidate, bEvidence []lyric.Evidence) bool {

@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,21 @@ func (f *fakePublisher) Current(trackKey string) ([]byte, bool, error) {
 
 func (f *fakePublisher) Active() (string, bool, error) {
 	return f.active, f.active != "", nil
+}
+
+func (f *fakePublisher) MergeMax(key string, value, ttlSeconds int64) error {
+	if f.commitErr != nil {
+		return f.commitErr
+	}
+	if f.cache == nil {
+		return nil
+	}
+	if raw, exists, err := f.cache.Get(key); err == nil && exists {
+		if prior, parseErr := strconv.ParseInt(string(raw), 10, 64); parseErr == nil && prior > value {
+			value = prior
+		}
+	}
+	return f.cache.SetWithTTL(key, []byte(strconv.FormatInt(value, 10)), ttlSeconds)
 }
 
 func (f *fakePublisher) Probe() (bool, error) {

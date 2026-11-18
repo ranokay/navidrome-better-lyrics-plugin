@@ -4,6 +4,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"strconv"
+	"strings"
 
 	pdk "github.com/extism/go-pdk"
 	"github.com/navidrome/navidrome/plugins/pdk/go/host"
@@ -55,6 +58,33 @@ func (hostStore) Commit(trackKey string, request []byte) error {
 
 func (hostStore) Current(trackKey string) ([]byte, bool, error) {
 	return host.KVStoreGet(publicationKeyPrefix + "state:" + trackKey)
+}
+
+var errControlMergeUnsupported = errors.New("control merge unsupported")
+
+func (hostStore) MergeMax(key string, value, ttlSeconds int64) error {
+	if key == "" || strings.HasPrefix(key, publicationKeyPrefix) {
+		return errControlMergeUnsupported
+	}
+	request, err := json.Marshal(struct {
+		Value int64 `json:"value"`
+		TTL   int64 `json:"ttl"`
+	}{Value: value, TTL: ttlSeconds})
+	if err != nil {
+		return err
+	}
+	if err := host.KVStoreSetWithTTL(publicationKeyPrefix+"control:"+key, request, ttlSeconds+60); err != nil {
+		return err
+	}
+	raw, exists, err := host.KVStoreGet(key)
+	if err != nil || !exists {
+		return errControlMergeUnsupported
+	}
+	stored, parseErr := strconv.ParseInt(string(raw), 10, 64)
+	if parseErr != nil || stored < value {
+		return errControlMergeUnsupported
+	}
+	return nil
 }
 
 func (hostStore) Probe() (bool, error) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,5 +150,103 @@ func TestHealthyResetWritesNoFailureObservation(t *testing.T) {
 	}
 	if legacy, exists, err := cache.Get(sourceFailureKey("one")); err != nil || !exists || string(legacy) != "{}" {
 		t.Fatalf("legacy failure clear = %q, %v; want an empty record", legacy, err)
+	}
+}
+
+type countingCache struct {
+	listableCache
+	gets  int
+	lists int
+}
+
+func (c *countingCache) Get(key string) ([]byte, bool, error) {
+	c.gets++
+	return c.listableCache.Get(key)
+}
+
+func (c *countingCache) List(prefix string) ([]string, error) {
+	c.lists++
+	return c.listableCache.List(prefix)
+}
+
+func TestControlMergeCooldownIsMonotonic(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(110_000, 0)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache}
+	key := source.GlobalCooldownKey("one")
+	p.RememberCooldown(key, time.Hour)
+	now = now.Add(5 * time.Minute)
+	p.RememberCooldown(key, time.Minute)
+	if got := p.Cooldown(key); got != 55*time.Minute {
+		t.Fatalf("merged cooldown = %s, want 55m", got)
+	}
+	if keys, err := cache.List(key + cooldownObservationSuffix); err != nil || len(keys) != 0 {
+		t.Fatalf("merged cooldown observations = %v, %v; want none", keys, err)
+	}
+}
+
+func TestControlMergeFailureIsMonotonic(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(120_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache}
+
+	p.rememberSourceFailure("one", now, errors.New("upstream failed"))
+	p.resetSourceFailureBefore("one", time.UnixMilli(110_000))
+	now = time.UnixMilli(123_000)
+	p.rememberSourceFailure("one", time.UnixMilli(0), errors.New("upstream failed"))
+	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
+		t.Fatalf("merged backoff = %s, want the merged 10s window", got)
+	}
+	now = time.UnixMilli(125_000)
+	p.resetSourceFailureBefore("one", now)
+	if got := p.sourceFailureBackoff("one"); got != 0 {
+		t.Fatalf("backoff after recovery = %s, want it cleared", got)
+	}
+}
+
+func TestMergedForegroundReadsAreBounded(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(130_000)
+	cache := &countingCache{listableCache: listableCache{newFakeLyricsCache()}}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{handled: true, active: "generation", cache: cache.fakeLyricsCache}
+	for i := 0; i < 1000; i++ {
+		key := sourceFailureObservationPrefix + "one:" + strconv.Itoa(i)
+		if err := cache.SetWithTTL(key, []byte(`{"failures":1,"until":9999999999999}`), 600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for key, value := range map[string]string{
+		sourceFailureUntilKey("one"):   "140000",
+		sourceFailureUpdatedKey("one"): "130000",
+		sourceFailureCountKey("one"):   "1",
+	} {
+		if err := cache.SetWithTTL(key, []byte(value), 600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 1000; i++ {
+		key := source.GlobalCooldownKey("one") + cooldownObservationSuffix + strconv.Itoa(i)
+		if err := cache.SetWithTTL(key, []byte("999999"), 3600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache.gets, cache.lists = 0, 0
+	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
+		t.Fatalf("backoff = %s, want 10s", got)
+	}
+	if cache.lists != 0 || cache.gets > 4 {
+		t.Fatalf("failure read work = %d gets, %d lists; want at most 4 gets and no list", cache.gets, cache.lists)
+	}
+	cache.gets, cache.lists = 0, 0
+	if got := p.Cooldown(source.GlobalCooldownKey("one")); got != 0 {
+		t.Fatalf("cooldown = %s, want none", got)
+	}
+	if cache.lists != 0 || cache.gets != 1 {
+		t.Fatalf("cooldown read work = %d gets, %d lists; want one get and no list", cache.gets, cache.lists)
 	}
 }

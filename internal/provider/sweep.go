@@ -81,6 +81,14 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		kind = "tail"
 	}
 	p.preparePublication(payload.Publication, kind)
+	if !payload.Refresh && payload.Publication.Token != "" {
+		// Ordinary sweeps never inherit a foreground token; a retained
+		// token-carrying sweep would be a pre-fix child that could run before
+		// its parent committed.
+		p.clearOwnMarkers(payload)
+		p.releaseOperation(payload.Track, payload.Publication)
+		return "stale publication", nil
+	}
 	if payload.Publication.Generation == "" {
 		if p.publisher != nil {
 			capable, err := p.publisher.Probe()
@@ -104,16 +112,7 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		if err != nil {
 			// This task never owned the slot. Clear only markers carrying this
 			// enqueue's ID so a newer owner's marker is preserved.
-			if payload.MarkerID != "" {
-				if trackKey, ok := lyricsTrackKey(payload.Track); ok {
-					p.clearOwnedSweepMarker(p.sweepPendingMarkerKey(payload.Track, trackKey), payload.MarkerID)
-				}
-				if payload.Refresh {
-					if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
-						p.clearOwnedSweepMarker(key, payload.MarkerID)
-					}
-				}
-			}
+			p.clearOwnMarkers(payload)
 			p.releaseOperation(payload.Track, payload.Publication)
 			return "stale publication", nil
 		}
@@ -122,7 +121,7 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 	// task must not stomp a newer generation's marker.
 	markerKey := ""
 	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
-		markerKey = p.sweepPendingMarkerKey(payload.Track, trackKey)
+		markerKey = p.markerKey(p.sweepPendingMarkerKey(payload.Track, trackKey), payload.MarkerID)
 		_ = p.storeOwnedSweepMarker(markerKey, sweepMarkerTTL, payload.MarkerID)
 	}
 	status, deferredIDs, markerOrder := p.runSweepDetailed(payload.Track, payload.Sources, payload.Refresh)
@@ -151,22 +150,24 @@ func (p *Provider) OnTaskExecute(req taskworker.TaskExecuteRequest) (string, err
 		done := p.sweepMarkerActive(p.doneMarkerKey(payload.Track, markerOrder))
 		switch {
 		case done:
-			// The completed marker gates duplicates now.
+			// The completed marker gates duplicates now; release the pending
+			// marker so it cannot outlive the done marker.
+			p.clearTaskMarker(markerKey, payload.MarkerID)
 		case continuationQueued:
-			// A continuation still works this track: keep the queued marker
+			// A continuation still works this track: keep its own queued marker
 			// alive so replays cannot enqueue a parallel full sweep while it
 			// waits behind other songs.
 			_ = p.storeOwnedSweepMarker(markerKey, sweepQueuedMarkerTTL, payload.MarkerID)
 		default:
-			// Nothing is pending: release the slot so the next lookup can
-			// retry the incomplete sweep promptly.
-			_ = p.storeSweepMarker(markerKey, 1)
+			// Nothing is pending: tombstone only this task's marker so the next
+			// lookup can retry without disturbing a newer owner.
+			p.clearTaskMarker(markerKey, payload.MarkerID)
 		}
 	}
 	if !continuationQueued {
 		if payload.Refresh {
 			if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
-				_ = p.clearSweepMarker(key)
+				p.clearTaskMarker(p.markerKey(key, payload.MarkerID), payload.MarkerID)
 			}
 		}
 		// Every terminal task releases its slot, including ordinary sweeps
@@ -492,6 +493,32 @@ func sharesBetterLyricsHost(src source.Source) bool {
 // sources behind those cooldowns benefit from the same deviating skip logic in the
 // sweep, so enqueuing without a marker check could cause duplicate work.
 func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
+	if p.publication != nil && p.publication.active {
+		// The parent publication must commit before a child sweep can admit.
+		// Queue the handoff locally and flush it from the foreground terminal.
+		p.pendingSweep = true
+		p.pendingSweepTrack = track
+		return true
+	}
+	return p.enqueueSweepNow(track)
+}
+
+func (p *Provider) flushDeferredSweep() {
+	if !p.pendingSweep {
+		return
+	}
+	track := p.pendingSweepTrack
+	p.pendingSweep = false
+	p.pendingSweepTrack = lyrics.TrackInfo{}
+	_ = p.enqueueSweepNow(track)
+}
+
+func (p *Provider) dropDeferredSweep() {
+	p.pendingSweep = false
+	p.pendingSweepTrack = lyrics.TrackInfo{}
+}
+
+func (p *Provider) enqueueSweepNow(track lyrics.TrackInfo) bool {
 	if len(p.tailSources) > 0 {
 		// The explicit refresh tail owns the deferred coverage and the
 		// foreground admission; a competing full sweep would duplicate work
@@ -501,7 +528,7 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if p.sweepMarkerActive(p.doneMarkerKey(track, p.activeSources())) {
 		return false
 	}
-	if key, ok := p.refreshTailMarkerKey(track); ok && p.sweepMarkerActive(key) {
+	if key, ok := p.refreshTailMarkerKey(track); ok && p.markerActiveAny(key) {
 		// The explicit refresh tail owns deferred negative coverage.
 		return false
 	}
@@ -509,11 +536,12 @@ func (p *Provider) maybeEnqueueSweep(track lyrics.TrackInfo) bool {
 	if !ok {
 		return false
 	}
-	markerKey := p.sweepPendingMarkerKey(track, trackKey)
-	if p.sweepMarkerActive(markerKey) {
+	markerBase := p.sweepPendingMarkerKey(track, trackKey)
+	if p.markerActiveAny(markerBase) {
 		return false
 	}
 	markerID := newMarkerID()
+	markerKey := p.markerKey(markerBase, markerID)
 	if err := p.storeOwnedSweepMarker(markerKey, sweepQueuedMarkerTTL, markerID); err != nil {
 		// A broken cache must not block lyrics: skip the sweep this round.
 		return false
@@ -631,6 +659,55 @@ func (p *Provider) refreshTailMarkerKey(track lyrics.TrackInfo) (string, bool) {
 	return fmt.Sprintf("%sg%d:%s:%s", refreshTailMarkerPrefix, lyricsCacheGeneration, p.lyricsCredentialsFingerprint(), trackKey), true
 }
 
+// markerKey scopes a queued marker by its enqueue so a stale task can only
+// tombstone its own key. Stores without List keep the legacy single key.
+func (p *Provider) markerKey(base, markerID string) string {
+	if markerID == "" {
+		return base
+	}
+	if _, ok := p.cache.(storeLister); !ok {
+		return base
+	}
+	return base + ":" + markerID
+}
+
+func (p *Provider) clearOwnMarkers(payload sweepTaskPayload) {
+	if payload.MarkerID == "" {
+		return
+	}
+	if trackKey, ok := lyricsTrackKey(payload.Track); ok {
+		p.clearTaskMarker(p.markerKey(p.sweepPendingMarkerKey(payload.Track, trackKey), payload.MarkerID), payload.MarkerID)
+	}
+	if payload.Refresh {
+		if key, ok := p.refreshTailMarkerKey(payload.Track); ok {
+			p.clearTaskMarker(p.markerKey(key, payload.MarkerID), payload.MarkerID)
+		}
+	}
+}
+
+func (p *Provider) markerActiveAny(base string) bool {
+	if lister, ok := p.cache.(storeLister); ok {
+		if keys, err := lister.List(base + ":"); err == nil {
+			for _, key := range keys {
+				if p.sweepMarkerActive(key) {
+					return true
+				}
+			}
+			// Legacy single-key marker.
+			return p.sweepMarkerActive(base)
+		}
+	}
+	return p.sweepMarkerActive(base)
+}
+
+func (p *Provider) clearTaskMarker(key, owner string) {
+	if _, ok := p.cache.(storeLister); ok || owner == "" {
+		_ = p.clearSweepMarker(key)
+		return
+	}
+	p.clearOwnedSweepMarker(key, owner)
+}
+
 // prepareRefreshTail records eligible negative/error sources beyond the
 // foreground bound. It is enqueued only after the foreground publication
 // commits, so the tail can never observe pre-commit coverage.
@@ -653,10 +730,13 @@ func (p *Provider) prepareRefreshTail(track lyrics.TrackInfo, sources []source.S
 		remaining = append(remaining, src.ID)
 	}
 	if len(remaining) == 0 {
-		// A newer refresh that needs no tail retires any stale queued-tail
-		// marker, otherwise it would suppress new sweeps for the marker TTL.
-		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
-			_ = p.clearSweepMarker(markerKey)
+		// A newer refresh that needs no tail retires the legacy single-key
+		// marker. Scoped markers belong to their enqueue and are cleared by
+		// that task's rejection or terminal path.
+		if _, canList := p.cache.(storeLister); !canList {
+			if markerKey, ok := p.refreshTailMarkerKey(track); ok {
+				_ = p.clearSweepMarker(markerKey)
+			}
 		}
 		return
 	}
@@ -673,8 +753,11 @@ func (p *Provider) enqueueRefreshTailWithOp(track lyrics.TrackInfo, sources []st
 		return nil
 	}
 	markerID := newMarkerID()
-	if markerKey, ok := p.refreshTailMarkerKey(track); ok {
-		// A newer refresh owns this track; replace any stale tail marker.
+	markerBase, hasMarker := p.refreshTailMarkerKey(track)
+	markerKey := ""
+	if hasMarker {
+		markerKey = p.markerKey(markerBase, markerID)
+		// A newer refresh owns this track; install its own scoped marker.
 		_ = p.storeOwnedSweepMarker(markerKey, sweepQueuedMarkerTTL, markerID)
 	}
 	p.enqueueMeta = op
@@ -684,8 +767,8 @@ func (p *Provider) enqueueRefreshTailWithOp(track lyrics.TrackInfo, sources []st
 		p.enqueueMeta = Publication{}
 		p.enqueueRefresh = false
 		p.enqueueMarker = ""
-		if markerKey, ok := p.refreshTailMarkerKey(track); ok {
-			_ = p.clearSweepMarker(markerKey)
+		if markerKey != "" {
+			p.clearTaskMarker(markerKey, markerID)
 		}
 		return err
 	}

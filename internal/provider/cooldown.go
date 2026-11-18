@@ -26,6 +26,18 @@ func sourceFailureResetKey(sourceID string) string {
 	return "source-failure-reset:v1:" + sourceID
 }
 
+func sourceFailureUntilKey(sourceID string) string {
+	return "source-failure-until:v1:" + sourceID
+}
+
+func sourceFailureUpdatedKey(sourceID string) string {
+	return "source-failure-updated:v1:" + sourceID
+}
+
+func sourceFailureCountKey(sourceID string) string {
+	return "source-failure-count:v1:" + sourceID
+}
+
 const sourceFailureObservationPrefix = "source-failure-observation:v1:"
 const sourceFailureResetObservationPrefix = "source-failure-reset-observation:v1:"
 
@@ -41,12 +53,59 @@ func (p *Provider) validSourceFailure(state sourceFailureState) bool {
 }
 
 func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
+	if _, ok := p.controlMerge(); ok {
+		if state, found := p.readScalarSourceFailure(sourceID); found {
+			return state
+		}
+		return p.readLegacySourceFailure(sourceID)
+	}
 	if lister, ok := p.cache.(storeLister); ok {
 		if state, found := p.readObservedSourceFailure(sourceID, lister); found {
 			return state
 		}
 	}
 	return p.readLegacySourceFailure(sourceID)
+}
+
+func (p *Provider) readScalarSourceFailure(sourceID string) (sourceFailureState, bool) {
+	until, untilOK := p.readScalar(sourceFailureUntilKey(sourceID))
+	updated, updatedOK := p.readScalar(sourceFailureUpdatedKey(sourceID))
+	failures, countOK := p.readScalar(sourceFailureCountKey(sourceID))
+	if !untilOK || !updatedOK || !countOK || failures == 0 {
+		return sourceFailureState{}, false
+	}
+	state := sourceFailureState{Failures: uint8(min(failures, 5)), Until: until, UpdatedAt: updated}
+	if !p.validSourceFailure(state) {
+		return sourceFailureState{}, false
+	}
+	if state.UpdatedAt < p.readLegacyReset(sourceID) {
+		return sourceFailureState{}, true
+	}
+	return state, true
+}
+
+func (p *Provider) readScalar(key string) (int64, bool) {
+	value, exists, err := p.cache.Get(key)
+	if err != nil || !exists {
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(string(value), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func (p *Provider) readLegacyReset(sourceID string) int64 {
+	raw, exists, err := p.cache.Get(sourceFailureResetKey(sourceID))
+	if err != nil || !exists {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister) (sourceFailureState, bool) {
@@ -145,6 +204,15 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 	// regress newer failure state past a recovery reset.
 	state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
 	state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
+	if merger, ok := p.controlMerge(); ok {
+		state.Until = max(state.Until, p.now().Add(delay).UnixMilli())
+		state.UpdatedAt = max(state.UpdatedAt, observedAt.UnixMilli())
+		_ = merger.MergeMax(sourceFailureUntilKey(sourceID), state.Until, sourceFailureStateTTL)
+		_ = merger.MergeMax(sourceFailureUpdatedKey(sourceID), state.UpdatedAt, sourceFailureStateTTL)
+		_ = merger.MergeMax(sourceFailureCountKey(sourceID), int64(state.Failures), sourceFailureStateTTL)
+		p.storeLegacySourceFailure(sourceID, state)
+		return
+	}
 	value, marshalErr := json.Marshal(state)
 	if marshalErr == nil {
 		if _, canList := p.cache.(storeLister); canList {
@@ -157,6 +225,14 @@ func (p *Provider) rememberSourceFailure(sourceID string, started time.Time, err
 		// Keep the legacy key for older plugin readers.
 		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), value, sourceFailureStateTTL)
 	}
+}
+
+func (p *Provider) storeLegacySourceFailure(sourceID string, state sourceFailureState) {
+	value, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), value, sourceFailureStateTTL)
 }
 
 func (p *Provider) resetSourceFailure(sourceID string) {
@@ -176,6 +252,17 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 	resetAt := p.now().UnixMilli()
 	if !started.IsZero() {
 		resetAt = started.UnixMilli()
+	}
+	if merger, ok := p.controlMerge(); ok {
+		if state.UpdatedAt >= resetAt {
+			return
+		}
+		if err := merger.MergeMax(sourceFailureResetKey(sourceID), resetAt, sourceFailureStateTTL); err != nil {
+			p.logf(fmt.Sprintf("source-failure reset merge failed: %v", p.safeDiagnosticError(err)))
+			return
+		}
+		_ = p.cache.SetWithTTL(sourceFailureKey(sourceID), []byte("{}"), 1)
+		return
 	}
 	if lister, canList := p.cache.(storeLister); canList {
 		if p.readSourceFailureReset(sourceID, lister) >= resetAt {
@@ -203,6 +290,9 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 // failure or corrupt value fails open.
 func (p *Provider) Cooldown(key string) time.Duration {
 	untilUnix := p.cooldownDeadline(key)
+	if _, ok := p.controlMerge(); ok {
+		return cooldownRemaining(untilUnix, p.now())
+	}
 	if lister, ok := p.cache.(storeLister); ok {
 		if keys, err := lister.List(key + cooldownObservationSuffix); err == nil {
 			for _, observation := range keys {
@@ -214,7 +304,11 @@ func (p *Provider) Cooldown(key string) time.Duration {
 			}
 		}
 	}
-	remaining := time.Unix(untilUnix, 0).Sub(p.now())
+	return cooldownRemaining(untilUnix, p.now())
+}
+
+func cooldownRemaining(untilUnix int64, now time.Time) time.Duration {
+	remaining := time.Unix(untilUnix, 0).Sub(now)
 	if remaining <= 0 {
 		return 0
 	}
@@ -251,6 +345,12 @@ func (p *Provider) RememberCooldown(key string, retryAfter time.Duration) {
 	}
 	ttlSeconds := durationSecondsCeil(time.Unix(untilUnix, 0).Sub(now))
 	deadlineValue := []byte(strconv.FormatInt(untilUnix, 10))
+	if merger, ok := p.controlMerge(); ok {
+		if err := merger.MergeMax(key, untilUnix, ttlSeconds); err != nil {
+			p.logf(fmt.Sprintf("rate-limit cooldown merge failed: %v", p.safeDiagnosticError(err)))
+		}
+		return
+	}
 	if _, canList := p.cache.(storeLister); canList {
 		// Write the deadline-keyed observation first: if it cannot persist,
 		// leaving the legacy key untouched preserves an existing newer window

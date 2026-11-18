@@ -98,6 +98,9 @@ func testSweepDiscovery(t *testing.T) {
 	firstRevision := first.DiscoveryRevision
 	gate.Do(func() { close(releaseSweep) })
 	host.plugin.Idle(t)
+	if got := host.transport.count("unison.boidu.dev"); got != 1 {
+		t.Fatalf("foreground source requests = %d, want the sweep child to reuse the committed source", got)
+	}
 	before := host.transport.requests()
 	second := host.playback(t)
 	if len(second.StructuredLyrics) < 2 {
