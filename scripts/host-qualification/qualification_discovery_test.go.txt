@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/server/subsonic/responses"
 )
 
@@ -26,6 +27,7 @@ func TestLyricsDiscoveryQualification(t *testing.T) {
 	t.Run("foreground stays within three sources and two seconds", testForegroundBudget)
 	t.Run("export retained KV for an older host", testRetainedKVExport)
 	t.Run("refresh tail reaches deferred negative sources", testRefreshTail)
+	t.Run("config reload rejects a stale sweep continuation", testConfigReloadStaleContinuation)
 }
 
 func (h *qualificationHost) playbackRefresh(t *testing.T) responses.LyricsList {
@@ -418,6 +420,60 @@ func testForegroundBudget(t *testing.T) {
 	}
 	if foregroundCalls > 3 {
 		t.Fatalf("foreground provider calls = %d, want at most three", foregroundCalls)
+	}
+}
+
+func testConfigReloadStaleContinuation(t *testing.T) {
+	host := newQualificationHost(t, []string{"unison"}, func(request *http.Request) (int, []byte) {
+		switch {
+		case request.URL.Host == "unison.boidu.dev":
+			body, _ := json.Marshal(map[string]any{"success": true, "data": map[string]any{
+				"lyrics": "[00:01.00]old config line", "format": "lrc", "language": "en",
+			}})
+			return http.StatusOK, body
+		case request.URL.Host == "lyrics-api.boidu.dev":
+			body, _ := json.Marshal(map[string]string{"ttml": `<tt><body><p begin="1" end="2">new config line</p></body></tt>`})
+			return http.StatusOK, body
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+	first := host.playback(t)
+	if len(first.StructuredLyrics) == 0 || first.StructuredLyrics[0].Line[0].Value != "old config line" {
+		t.Fatalf("initial config playback = %#v", first.StructuredLyrics)
+	}
+	host.plugin.Idle(t)
+	trackKey := host.plugin.PublicationTrackKey(&model.MediaFile{
+		ID: "track-1", Title: qualificationTrackTitle, Artist: qualificationTrackArtist,
+		Album: "Qualification Album", Duration: 200,
+	})
+	generation, token, ok := host.plugin.Admission(t, trackKey)
+	if !ok || generation == "" || token == "" {
+		t.Fatal("initial operation did not leave an admission identity")
+	}
+	host.plugin.Configure(t, []string{"better-lyrics"}, "")
+	payload, err := json.Marshal(map[string]any{
+		"track": map[string]any{
+			"title": qualificationTrackTitle, "artist": qualificationTrackArtist,
+			"album": "Qualification Album", "duration": 200,
+		},
+		"publication": map[string]any{"generation": generation, "token": token, "kind": "sweep"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := host.transport.requests()
+	host.plugin.EnqueueTask(t, "lyrics-sweep", payload)
+	host.plugin.Idle(t)
+	if host.transport.requests() != before {
+		t.Fatal("stale continuation performed provider work after reload")
+	}
+	reloaded := host.playback(t)
+	if len(reloaded.StructuredLyrics) == 0 || reloaded.StructuredLyrics[0].Line[0].Value != "new config line" {
+		t.Fatalf("reloaded playback = %#v", reloaded.StructuredLyrics)
+	}
+	if reloaded.DiscoveryRevision == "" || reloaded.DiscoveryRevision == first.DiscoveryRevision {
+		t.Fatal("reload did not publish a new revision")
 	}
 }
 

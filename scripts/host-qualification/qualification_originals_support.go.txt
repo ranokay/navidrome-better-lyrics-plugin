@@ -7,7 +7,9 @@ package plugins
 
 import (
 	"archive/zip"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -186,6 +188,45 @@ func (h *QualificationPlugin) ExportKV(t testing.TB, destination string) {
 	if err := os.WriteFile(destination, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// PublicationTrackKey exposes the host's admission track identity.
+func (h *QualificationPlugin) PublicationTrackKey(mf *model.MediaFile) string {
+	return publicationTrackKey(mf)
+}
+
+// ActiveGeneration returns the host-owned publication generation.
+func (h *QualificationPlugin) ActiveGeneration(t testing.TB) string {
+	t.Helper()
+	var generation string
+	if err := h.kv.db.QueryRowContext(t.Context(), `SELECT generation FROM plugin_publication_generation WHERE id=1`).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	return generation
+}
+
+// Admission returns the current admission identity for a track.
+func (h *QualificationPlugin) Admission(t testing.TB, trackKey string) (string, string, bool) {
+	t.Helper()
+	var generation, token string
+	err := h.kv.db.QueryRowContext(t.Context(), `SELECT generation, token FROM plugin_publication_admissions WHERE track_key=?`, trackKey).Scan(&generation, &token)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return generation, token, true
+}
+
+// EnqueueTask injects a deterministic task payload into the real queue.
+func (h *QualificationPlugin) EnqueueTask(t testing.TB, queue string, payload []byte) string {
+	t.Helper()
+	id, err := h.tasks.Enqueue(t.Context(), queue, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // Delete removes test-owned KV keys under a prefix.
