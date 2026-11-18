@@ -106,6 +106,9 @@ func (p *Provider) GetLyricsOriginalPublished(track lyrics.TrackInfo, identity l
 	if _, err := p.commitPublication(p.discoveryComplete(track, p.activeSources())); err != nil {
 		return lyric.Original{}, "selection unavailable"
 	}
+	if p.publication != nil && p.publication.active {
+		p.releasePublication()
+	}
 	p.publication = nil
 	// A bounded bundle may have dropped this selection: only a selection that
 	// remains listed is addressable, and a dropped one reports unavailable
