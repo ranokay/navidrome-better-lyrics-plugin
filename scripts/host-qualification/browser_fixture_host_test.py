@@ -1,24 +1,39 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 import browser_fixture_host as host
 
 
-class RewriteKVStoreTest(unittest.TestCase):
-    def source(self):
-        return (
-            "package plugins\n\n"
-            'const notExpiredFilter = "(expires_at IS NULL OR expires_at >= datetime(\'now\'))"\n\n'
-            "func setValue() {\n"
-            "\t_, err := db.Exec(`\n"
-            "\t\tINSERT INTO kvstore (key, value, size, created_at, updated_at, expires_at)\n"
-            "\t\tVALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', ?))\n"
-            "\t\tON CONFLICT(key) DO UPDATE SET value = excluded.value\n"
-            "\t`, key, value, size, expiresAt)\n"
-            "}\n"
-        )
+def http_source():
+    return (
+        "package plugins\n\nimport (\n"
+        '\t"errors"\n'
+        '\t"net/http"\n'
+        ")\n\n"
+        "func newHTTPService() {\n"
+        "\tsvc.client = &http.Client{Transport: httpclient.NewTransport(svc.transport)}\n"
+        "}\n"
+    )
 
-    def test_overlays_ttl_clock_only_when_requested(self):
-        source = self.source()
+
+def kv_source():
+    return (
+        "package plugins\n\n"
+        'const notExpiredFilter = "(expires_at IS NULL OR expires_at >= datetime(\'now\'))"\n\n'
+        "func setValue() {\n"
+        "\t_, err := db.Exec(`\n"
+        "\t\tINSERT INTO kvstore (key, value, size, created_at, updated_at, expires_at)\n"
+        "\t\tVALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', ?))\n"
+        "\t\tON CONFLICT(key) DO UPDATE SET value = excluded.value\n"
+        "\t`, key, value, size, expiresAt)\n"
+        "}\n"
+    )
+
+
+class RewriteKVStoreTest(unittest.TestCase):
+    def test_overlays_ttl_clock(self):
+        source = kv_source()
         generated = host.rewrite_kvstore(source, "+25 hours")
         self.assertIn("var notExpiredFilter", generated)
         self.assertIn("qualificationKVClockTTLModifier", generated)
@@ -28,32 +43,56 @@ class RewriteKVStoreTest(unittest.TestCase):
         self.assertIn(host.KV_FILTER, source)
         self.assertNotIn("qualificationKVClockOffset", source)
 
-        neutral = host.rewrite_kvstore(self.source(), "")
-        self.assertIn('const qualificationKVClockOffset = ""', neutral)
+    def test_rejects_missing_or_invalid_clock_offsets(self):
+        for offset in ("", "25 hours", "+25 fortnights", "+25 hours\n", " +25 hours"):
+            with self.subTest(offset=offset):
+                with self.assertRaises(ValueError):
+                    host.rewrite_kvstore(kv_source(), offset)
+        with self.assertRaises(ValueError):
+            host.rewrite_kvstore("package plugins\n", "+25 hours")
+        with self.assertRaises(ValueError):
+            host.rewrite_kvstore(kv_source() + host.KV_TTL, "+25 hours")
 
-    def test_rejects_invalid_clock_offsets_and_unexpected_sources(self):
+
+class PrepareOverlaysTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.checkout = self.root / "host"
+        (self.checkout / "plugins").mkdir(parents=True)
+        (self.checkout / host.HTTPCLIENT).write_text(http_source())
+        self.overlay_dir = self.root / "overlay"
+        self.overlay_dir.mkdir()
+
+    def test_default_build_is_http_only_without_a_kvstore(self):
+        replacements, hashes = host.prepare_overlays(
+            self.checkout, self.overlay_dir, ""
+        )
+        self.assertEqual(list(replacements), [str(self.checkout / host.HTTPCLIENT)])
+        self.assertIn("overlaySHA256", hashes)
+        self.assertNotIn("kvOverlaySHA256", hashes)
+        self.assertFalse((self.overlay_dir / "host_kvstore.go").exists())
+
+    def test_clock_offset_overlays_the_kvstore(self):
+        (self.checkout / host.KVSTORE).write_text(kv_source())
+        replacements, hashes = host.prepare_overlays(
+            self.checkout, self.overlay_dir, "+25 hours"
+        )
+        self.assertEqual(len(replacements), 2)
+        self.assertIn(str(self.checkout / host.KVSTORE), replacements)
+        self.assertIn("kvOverlaySHA256", hashes)
+        self.assertTrue((self.overlay_dir / "host_kvstore.go").is_file())
+
+    def test_rejects_a_trailing_newline_before_overlaying(self):
+        (self.checkout / host.KVSTORE).write_text(kv_source())
         with self.assertRaises(ValueError):
-            host.rewrite_kvstore(self.source(), "+25 fortnights")
-        with self.assertRaises(ValueError):
-            host.rewrite_kvstore("package plugins\n", "")
-        with self.assertRaises(ValueError):
-            host.rewrite_kvstore(self.source() + host.KV_TTL, "")
+            host.prepare_overlays(self.checkout, self.overlay_dir, "+25 hours\n")
 
 
 class RewriteHTTPClientTest(unittest.TestCase):
-    def source(self):
-        return (
-            "package plugins\n\nimport (\n"
-            '\t"errors"\n'
-            '\t"net/http"\n'
-            ")\n\n"
-            "func newHTTPService() {\n"
-            "\tsvc.client = &http.Client{Transport: httpclient.NewTransport(svc.transport)}\n"
-            "}\n"
-        )
-
     def test_injects_env_gated_fixture_transport_without_changing_production_source(self):
-        source = self.source()
+        source = http_source()
         generated = host.rewrite_httpclient(source)
         self.assertIn('os.Getenv("BETTER_LYRICS_FIXTURES")', generated)
         self.assertIn("newQualificationFixtureTransport", generated)
@@ -61,13 +100,14 @@ class RewriteHTTPClientTest(unittest.TestCase):
         self.assertIn('"encoding/base64"', generated)
         self.assertIn('"encoding/json"', generated)
         self.assertIn('"os"', generated)
-        self.assertEqual(source, self.source())
+        self.assertIn(host.HOOK, source)
+        self.assertNotIn("newQualificationFixtureTransport", source)
 
     def test_requires_exactly_one_production_hook(self):
         with self.assertRaises(ValueError):
             host.rewrite_httpclient("package plugins\n")
         with self.assertRaises(ValueError):
-            host.rewrite_httpclient(self.source() + host.HOOK)
+            host.rewrite_httpclient(http_source() + host.HOOK)
 
 
 if __name__ == "__main__":

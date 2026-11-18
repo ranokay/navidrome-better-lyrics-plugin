@@ -161,7 +161,7 @@ func qualificationKVClockTTLModifier() string {
 
 
 def rewrite_kvstore(source: str, clock_offset: str) -> str:
-    if clock_offset and not CLOCK_OFFSET_PATTERN.match(clock_offset):
+    if not CLOCK_OFFSET_PATTERN.fullmatch(clock_offset or ""):
         raise ValueError("invalid qualification clock offset")
     if source.count(KV_FILTER) != 1:
         raise ValueError("expected exactly one plugin KV expiry filter")
@@ -181,6 +181,34 @@ def rewrite_kvstore(source: str, clock_offset: str) -> str:
         1,
     )
     return rewritten + (KV_CLOCK_HELPER % clock_offset)
+
+
+def prepare_overlays(
+    checkout: Path, overlay_dir: Path, clock_offset: str
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Write the HTTP-only overlay, plus the KV clock overlay only when asked.
+
+    The default invocation must keep working with the established HTTP-only
+    runner on a compatible host checkout that has no qualification clock
+    support, so host_kvstore.go is neither read nor replaced without an
+    explicit, strictly validated --clock-offset.
+    """
+    if clock_offset:
+        if not CLOCK_OFFSET_PATTERN.fullmatch(clock_offset):
+            raise ValueError("invalid qualification clock offset")
+    http_source = (checkout / HTTPCLIENT).read_text()
+    http_overlay = overlay_dir / "host_httpclient.go"
+    http_overlay.write_text(rewrite_httpclient(http_source))
+    replacements = {str(checkout / HTTPCLIENT): str(http_overlay)}
+    hashes = {"overlaySHA256": sha256(http_overlay)}
+    if not clock_offset:
+        return replacements, hashes
+    kv_source = (checkout / KVSTORE).read_text()
+    kv_overlay = overlay_dir / "host_kvstore.go"
+    kv_overlay.write_text(rewrite_kvstore(kv_source, clock_offset))
+    replacements[str(checkout / KVSTORE)] = str(kv_overlay)
+    hashes["kvOverlaySHA256"] = sha256(kv_overlay)
+    return replacements, hashes
 
 
 def sha256(path: Path) -> str:
@@ -211,32 +239,18 @@ def main() -> int:
         raise SystemExit("host checkout must contain go.mod")
     if not (checkout / "ui/build/index.html").is_file():
         raise SystemExit("host UI is not built; run `make buildjs` first")
-    source = (checkout / HTTPCLIENT).read_text()
-    generated = rewrite_httpclient(source)
-    kv_source = (checkout / KVSTORE).read_text()
-    kv_generated = rewrite_kvstore(kv_source, args.clock_offset)
     args.output.mkdir(parents=True, exist_ok=True)
     overlay_dir = args.output / "qualification"
     overlay_dir.mkdir(parents=True, exist_ok=True)
-    overlay_source = overlay_dir / "host_httpclient.go"
-    overlay_source.write_text(generated)
-    kv_overlay_source = overlay_dir / "host_kvstore.go"
-    kv_overlay_source.write_text(kv_generated)
+    replacements, hashes = prepare_overlays(
+        checkout, overlay_dir, args.clock_offset
+    )
     fixtures_copy = overlay_dir / "fixtures.json"
     shutil.copyfile(fixtures, fixtures_copy)
     package_copy = overlay_dir / "nd-better-lyrics.ndp"
     shutil.copyfile(package, package_copy)
     overlay_path = overlay_dir / "overlay.json"
-    overlay_path.write_text(
-        json.dumps(
-            {
-                "Replace": {
-                    str(checkout / HTTPCLIENT): str(overlay_source),
-                    str(checkout / KVSTORE): str(kv_overlay_source),
-                }
-            }
-        )
-    )
+    overlay_path.write_text(json.dumps({"Replace": replacements}))
     before = host_state(checkout)
     binary = args.output / "navidrome"
     subprocess.run(  # nosec B603
@@ -263,8 +277,7 @@ def main() -> int:
         "hostStatus": before[1],
         "packageSHA256": sha256(package_copy),
         "fixturesSHA256": sha256(fixtures_copy),
-        "overlaySHA256": sha256(overlay_source),
-        "kvOverlaySHA256": sha256(kv_overlay_source),
+        **hashes,
         "qualificationClockOffset": args.clock_offset,
         "binarySHA256": sha256(binary),
         "fixturePath": str(fixtures_copy),
