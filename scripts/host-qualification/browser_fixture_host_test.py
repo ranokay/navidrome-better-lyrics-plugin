@@ -18,12 +18,13 @@ class RewriteKVStoreTest(unittest.TestCase):
         )
 
     def test_overlays_ttl_clock_only_when_requested(self):
-        generated = host.rewrite_kvstore(self.source(), "+25 hours")
+        source = self.source()
+        generated = host.rewrite_kvstore(source, "+25 hours")
         self.assertIn("var notExpiredFilter", generated)
         self.assertIn("qualificationKVClockTTLModifier", generated)
         self.assertIn('const qualificationKVClockOffset = "+25 hours"', generated)
         self.assertIn("datetime('now', ?`", generated)
-        self.assertEqual(self.source(), self.source())
+        self.assertEqual(source, self.source())
 
         neutral = host.rewrite_kvstore(self.source(), "")
         self.assertIn('const qualificationKVClockOffset = ""', neutral)
