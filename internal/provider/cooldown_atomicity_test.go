@@ -200,8 +200,10 @@ func TestControlMergeFailureIsMonotonic(t *testing.T) {
 	p.resetSourceFailureBefore("one", time.UnixMilli(110_000))
 	now = time.UnixMilli(123_000)
 	p.rememberSourceFailure("one", time.UnixMilli(0), errors.New("upstream failed"))
-	if got := p.sourceFailureBackoff("one"); got != 10*time.Second {
-		t.Fatalf("merged backoff = %s, want the merged 10s window", got)
+	// The reset advanced the epoch to 110s, so this failure started before
+	// the recovery and must not extend the surviving window.
+	if got := p.sourceFailureBackoff("one"); got != 2*time.Second {
+		t.Fatalf("merged backoff = %s, want the surviving 2s window", got)
 	}
 	now = time.UnixMilli(125_000)
 	p.resetSourceFailureBefore("one", now)
@@ -423,5 +425,45 @@ func TestOutOfOrderFailureObservationsKeepEscalatedWindow(t *testing.T) {
 				t.Fatalf("backoff after out-of-order completion = %s, want the escalated 20s window", got)
 			}
 		})
+	}
+}
+
+func TestOlderRecoveryAdvancesResetEpoch(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(90_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	p.publisher = &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
+
+	p.rememberSourceFailure("one", now, errors.New("first failure"))
+	now = time.UnixMilli(300_000)
+	p.rememberSourceFailure("one", now, errors.New("post-reset failure"))
+	// A success that started before the newer failure must still advance the
+	// recovery epoch without hiding that failure.
+	p.resetSourceFailureBefore("one", time.UnixMilli(250_000))
+	now = time.UnixMilli(310_000)
+	p.rememberSourceFailure("one", time.UnixMilli(205_000), errors.New("late pre-recovery failure"))
+	if got := p.sourceFailureBackoff("one"); got != 0 {
+		t.Fatalf("backoff after a late pre-recovery failure = %s, want the newer window preserved", got)
+	}
+}
+
+func TestFallbackObservationCannotBypassCommittedReset(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(150_000)
+	cache := listableCache{newFakeLyricsCache()}
+	p := newTestProviderWithSources(nil, cache, func() time.Time { return now }, []source.Source{{ID: "one"}}, nil)
+	publisher := &fakePublisher{handled: true, active: "generation", control: true, cache: cache}
+	p.publisher = publisher
+	p.rememberSourceFailure("one", now, errors.New("pre-reset failure"))
+	now = time.UnixMilli(200_000)
+	p.resetSourceFailureBefore("one", now)
+	publisher.reduceErr = errors.New("reducer unavailable")
+	now = time.UnixMilli(300_000)
+	p.rememberSourceFailure("one", now, errors.New("post-reset failure"))
+	now = time.UnixMilli(301_000)
+	p.rememberSourceFailure("one", time.UnixMilli(150_000), errors.New("late pre-reset failure"))
+	if got := p.sourceFailureBackoff("one"); got != 4*time.Second {
+		t.Fatalf("backoff after a pre-reset fallback observation = %s, want the post-reset 4s window", got)
 	}
 }

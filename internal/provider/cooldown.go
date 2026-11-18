@@ -23,6 +23,13 @@ type sourceFailureState struct {
 	ObservedAt int64 `json:"observedAt,omitempty"`
 }
 
+func sourceFailureObservedAt(state sourceFailureState) int64 {
+	if state.ObservedAt != 0 {
+		return state.ObservedAt
+	}
+	return state.UpdatedAt
+}
+
 func sourceFailureKey(sourceID string) string {
 	return "source-failure:v1:" + sourceID
 }
@@ -51,9 +58,9 @@ func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 			return state
 		}
 		if lister, ok := p.cache.(storeLister); ok {
-			if state, found := p.readObservedSourceFailure(sourceID, lister); found {
-				resetAt := p.readLegacyReset(sourceID)
-				if state.UpdatedAt < resetAt {
+			if state, found := p.readObservedSourceFailure(sourceID, lister, 0); found {
+				resetAt := max(state.ResetAt, p.readLegacyReset(sourceID))
+				if sourceFailureObservedAt(state) < resetAt {
 					return sourceFailureState{}
 				}
 				state.ResetAt = resetAt
@@ -63,7 +70,7 @@ func (p *Provider) readSourceFailure(sourceID string) sourceFailureState {
 		return p.readLegacySourceFailure(sourceID)
 	}
 	if lister, ok := p.cache.(storeLister); ok {
-		if state, found := p.readObservedSourceFailure(sourceID, lister); found {
+		if state, found := p.readObservedSourceFailure(sourceID, lister, 0); found {
 			return state
 		}
 	}
@@ -83,7 +90,8 @@ func (p *Provider) readReducerSourceFailure(sourceID string) (sourceFailureState
 	observedValid := false
 	if _, marked, markerErr := p.cache.Get(failureFallbackMarkerKey(sourceID)); markerErr == nil && marked {
 		if lister, ok := p.cache.(storeLister); ok {
-			if observed, found := p.readObservedSourceFailure(sourceID, lister); found {
+			rowReset := max(rowState.ResetAt, p.readLegacyReset(sourceID))
+			if observed, found := p.readObservedSourceFailure(sourceID, lister, rowReset); found {
 				observedState, observedValid = observed, true
 			}
 		}
@@ -101,8 +109,8 @@ func (p *Provider) readReducerSourceFailure(sourceID string) (sourceFailureState
 		return sourceFailureState{ResetAt: rowState.ResetAt}, true
 	}
 	resetAt := max(max(state.ResetAt, rowState.ResetAt), p.readLegacyReset(sourceID))
-	if state.UpdatedAt < resetAt {
-		return sourceFailureState{}, true
+	if sourceFailureObservedAt(state) < resetAt {
+		return sourceFailureState{ResetAt: resetAt}, true
 	}
 	state.ResetAt = resetAt
 	return state, true
@@ -120,12 +128,12 @@ func (p *Provider) readLegacyReset(sourceID string) int64 {
 	return parsed
 }
 
-func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister) (sourceFailureState, bool) {
+func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister, resetFloor int64) (sourceFailureState, bool) {
 	keys, err := lister.List(sourceFailureObservationPrefix + sourceID + ":")
 	if err != nil {
 		return sourceFailureState{}, false
 	}
-	resetAt := p.readSourceFailureReset(sourceID, lister)
+	resetAt := max(p.readSourceFailureReset(sourceID, lister), resetFloor)
 	var best sourceFailureState
 	found := false
 	for _, key := range keys {
@@ -137,10 +145,9 @@ func (p *Provider) readObservedSourceFailure(sourceID string, lister storeLister
 		if json.Unmarshal(value, &state) != nil || !p.validSourceFailure(state) {
 			continue
 		}
-		if state.ObservedAt != 0 && state.ObservedAt < resetAt {
-			continue
-		}
-		if state.ObservedAt == 0 && state.UpdatedAt < resetAt {
+		// Sort by the merged timestamp but judge staleness by the failure's
+		// own start, including any reset that only the reducer row knows.
+		if sourceFailureObservedAt(state) < max(resetAt, state.ResetAt) {
 			continue
 		}
 		if !found || state.UpdatedAt > best.UpdatedAt ||
@@ -275,9 +282,8 @@ func (p *Provider) resetSourceFailureBefore(sourceID string, started time.Time) 
 		resetAt = started.UnixMilli()
 	}
 	if merger, ok := p.controlMerge(); ok {
-		if state.UpdatedAt >= resetAt {
-			return
-		}
+		// Always submit the conditional reset: the host keeps any failure
+		// newer than resetAt but still advances the recovery epoch.
 		if err := merger.ReduceFailure(sourceID, "reset", 0, 0, 0, resetAt, sourceFailureStateTTL); err == nil {
 			return
 		}
