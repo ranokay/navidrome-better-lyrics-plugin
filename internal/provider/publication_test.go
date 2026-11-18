@@ -270,3 +270,42 @@ func TestOriginalRefetchFailureReleasesAdmission(t *testing.T) {
 		t.Fatalf("releases = %d, want the failed refetch admission released", publisher.releases)
 	}
 }
+
+func TestPublicationDigestGolden(t *testing.T) {
+	t.Parallel()
+	write := publicationWriteWire{Key: "lyrics:v5:source:lrclib:track-1", Value: []byte("snapshot"), TTL: 300}
+	const expected = "e949adc58a9ca6d01ab4ea216421e10af619a14e2b2946153e7cda4937b3131b"
+	if got := publicationDigest([]publicationWriteWire{write}, "track-1", true); got != expected {
+		t.Fatalf("publicationDigest = %s, want %s", got, expected)
+	}
+}
+
+func TestNegativeCoveragePreservesCompletion(t *testing.T) {
+	t.Parallel()
+	src := source.Source{
+		ID: "only", Display: "Only", Hosts: []string{"only.example.test"}, DefaultEnabled: true,
+		Fetch: func(source.Runtime, lyrics.TrackInfo, time.Time) ([]lyric.Candidate, source.Health, error) {
+			return []lyric.Candidate{{Evidence: []lyric.Evidence{{Kind: "instrumental"}}}}, source.Degraded, errors.New("assertion with outage")
+		},
+	}
+	cache := newFakeLyricsCache()
+	p := newTestProviderWithSources(nil, cache, time.Now, []source.Source{src}, func(lyrics.TrackInfo) error { return nil })
+	track := lyrics.TrackInfo{Title: "Song", Artist: "Artist"}
+	_ = p.storeSweepMarker(p.doneMarkerKey(track, p.activeSources()), 3600)
+	p.preparePublication(Publication{}, "legacy")
+	if _, _, _, completion, _ := p.resolveLyrics(lyrics.GetLyricsRequest{Track: track}, false); !completion {
+		t.Fatal("completed marker did not survive the evidence-negative path")
+	}
+	key, _ := lyricsWinnerCacheKey(track, source.IDs(p.activeSources()))
+	raw, ok := cache.values[key]
+	if !ok {
+		t.Fatal("negative winner was not stored")
+	}
+	var envelope cachedLyricsEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !envelope.SweepComplete {
+		t.Fatal("negative winner stored stale incomplete coverage")
+	}
+}
