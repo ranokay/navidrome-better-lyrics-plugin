@@ -1,0 +1,547 @@
+//go:build qualification
+
+package plugins_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/server/subsonic/responses"
+)
+
+func TestLyricsDiscoveryQualification(t *testing.T) {
+	t.Run("sweep alternatives become visible before the classic TTL", testSweepDiscovery)
+	t.Run("classic cache remains reusable", testClassicCacheReuse)
+	t.Run("explicit refresh recovers a plugin-cached clean miss", testRefreshCleanMiss)
+	t.Run("explicit refresh respects transient failure backoff", testRefreshBackoff)
+	t.Run("explicit refresh respects Retry-After", testRetryAfter)
+	t.Run("classic writer cannot publish over a newer refresh", testClassicRefreshRace)
+	t.Run("classic writer cannot publish while refresh is in flight", testClassicRejectedWhileRefreshInFlight)
+	t.Run("enhanced callers coalesce", testEnhancedCoalescing)
+	t.Run("foreground stays within three sources and two seconds", testForegroundBudget)
+	t.Run("export retained KV for an older host", testRetainedKVExport)
+	t.Run("refresh tail reaches deferred negative sources", testRefreshTail)
+	t.Run("config reload rejects a stale sweep continuation", testConfigReloadStaleContinuation)
+}
+
+func (h *qualificationHost) playbackRefresh(t *testing.T) responses.LyricsList {
+	t.Helper()
+	_, _, body := h.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&refresh=true&"+h.auth())
+	var wrapper responses.JsonWrapper
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		t.Fatalf("decode refresh: %v: %s", err, body)
+	}
+	if wrapper.Subsonic.Status != responses.StatusOK || wrapper.Subsonic.LyricsList == nil {
+		t.Fatalf("refresh status = %q: %s", wrapper.Subsonic.Status, body)
+	}
+	return *wrapper.Subsonic.LyricsList
+}
+
+func lrclibRecord(text string) []byte {
+	record, _ := json.Marshal(map[string]any{
+		"id": 1250, "trackName": qualificationTrackTitle, "artistName": qualificationTrackArtist,
+		"duration": 200, "hasWordSync": false, "syncedLyrics": "[00:01.00]" + text,
+	})
+	return record
+}
+
+func ttmlFixture(t *testing.T) []byte {
+	t.Helper()
+	path := os.Getenv("BETTER_LYRICS_TTML_FIXTURE")
+	if path == "" {
+		t.Fatal("BETTER_LYRICS_TTML_FIXTURE must point at the committed TTML fixture")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func testSweepDiscovery(t *testing.T) {
+	ttml := ttmlFixture(t)
+	releaseSweep := make(chan struct{})
+	var gate sync.Once
+	var unisonMu sync.Mutex
+	unisonCalls := 0
+	host := newQualificationHost(t, []string{"unison", "binimum"}, func(request *http.Request) (int, []byte) {
+		switch {
+		case request.URL.Host == "unison.boidu.dev":
+			unisonMu.Lock()
+			unisonCalls++
+			unisonMu.Unlock()
+			body, _ := json.Marshal(map[string]any{"success": true, "data": map[string]any{
+				"lyrics": "[00:01.00]line result", "format": "lrc", "language": "en",
+			}})
+			return http.StatusOK, body
+		case request.URL.Path == "/":
+			body, _ := json.Marshal(map[string]any{"results": []map[string]any{{
+				"track_name": qualificationTrackTitle, "artist_name": qualificationTrackArtist,
+				"duration": 200, "lyricsUrl": "https://lyrics-api.binimum.org/q.ttml", "timing_type": "word",
+			}}})
+			return http.StatusOK, body
+		case request.URL.Path == "/q.ttml":
+			<-releaseSweep
+			return http.StatusOK, ttml
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+	first := host.playback(t)
+	if first.DiscoveryRevision == "" {
+		t.Fatal("first enhanced response has no discovery revision")
+	}
+	if first.DiscoveryComplete {
+		t.Fatal("sweep-completed coverage must not be claimed before the sweep finishes")
+	}
+	firstRevision := first.DiscoveryRevision
+	gate.Do(func() { close(releaseSweep) })
+	host.plugin.Idle(t)
+	unisonMu.Lock()
+	foregroundCalls := unisonCalls
+	unisonMu.Unlock()
+	if foregroundCalls != 1 {
+		t.Fatalf("foreground source requests = %d, want the sweep child to reuse the committed source", foregroundCalls)
+	}
+	before := host.transport.requests()
+	second := host.playback(t)
+	if len(second.StructuredLyrics) < 2 {
+		t.Fatalf("sweep alternatives = %d, want at least the TTML and LRC entries", len(second.StructuredLyrics))
+	}
+	if second.DiscoveryRevision == "" || second.DiscoveryRevision == firstRevision {
+		t.Fatalf("discovery revision did not change after sweep: %q -> %q", firstRevision, second.DiscoveryRevision)
+	}
+	if !second.DiscoveryComplete {
+		t.Fatal("completed sweep must be observable")
+	}
+	if host.transport.requests() != before {
+		t.Fatal("the next enhanced request must be served from committed plugin state, not new provider calls")
+	}
+}
+
+func testClassicCacheReuse(t *testing.T) {
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lrclib.net" {
+			return http.StatusOK, lrclibRecord("classic line")
+		}
+		return http.StatusNotFound, nil
+	})
+	before := host.transport.requests()
+	for range 2 {
+		status, _, body := host.get(t, "/getLyricsBySongId?id=track-1&"+host.auth())
+		if status != http.StatusOK {
+			t.Fatalf("classic status = %d: %s", status, body)
+		}
+	}
+	if host.transport.requests() != before+1 {
+		t.Fatalf("classic host cache provider calls = %d, want one", host.transport.requests()-before)
+	}
+	playback := host.playback(t)
+	if playback.DiscoveryRevision == "" {
+		t.Fatal("enhanced response did not negotiate publication")
+	}
+}
+
+func testRefreshCleanMiss(t *testing.T) {
+	var mu sync.Mutex
+	haveLyrics := false
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !haveLyrics {
+			return http.StatusNotFound, nil
+		}
+		return http.StatusOK, lrclibRecord("recovered line")
+	})
+	first := host.playback(t)
+	if first.DiscoveryRevision == "" {
+		_, _, body := host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&"+host.auth())
+		t.Fatalf("clean miss did not publish a revision: %s", body)
+	}
+	before := host.transport.requests()
+	second := host.playback(t)
+	if host.transport.requests() != before {
+		t.Fatal("a cached plugin miss must not refetch providers")
+	}
+	if second.DiscoveryRevision == "" {
+		t.Fatal("cached miss lost its discovery revision")
+	}
+	mu.Lock()
+	haveLyrics = true
+	mu.Unlock()
+	refreshResult := host.playbackRefresh(t)
+	if len(refreshResult.StructuredLyrics) == 0 || refreshResult.DiscoveryRevision == first.DiscoveryRevision {
+		t.Fatalf("refresh did not recover and publish: %#v revision=%q", refreshResult.StructuredLyrics, refreshResult.DiscoveryRevision)
+	}
+	refreshed := host.playback(t)
+	if len(refreshed.StructuredLyrics) == 0 || refreshed.DiscoveryRevision != refreshResult.DiscoveryRevision {
+		t.Fatalf("normal request did not retain the refreshed snapshot: %#v revision=%q", refreshed.StructuredLyrics, refreshed.DiscoveryRevision)
+	}
+}
+
+func testRefreshBackoff(t *testing.T) {
+	var mu sync.Mutex
+	failing := true
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		if failing {
+			return http.StatusInternalServerError, []byte("upstream down")
+		}
+		return http.StatusOK, lrclibRecord("backoff recovered")
+	})
+	_, _, _ = host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&"+host.auth())
+	before := host.transport.requests()
+	_, _, _ = host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&refresh=true&"+host.auth())
+	if host.transport.requests() != before {
+		t.Fatal("refresh bypassed the plugin failure backoff")
+	}
+	mu.Lock()
+	failing = false
+	mu.Unlock()
+	time.Sleep(6 * time.Second)
+	_, _, _ = host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&refresh=true&"+host.auth())
+	recovered := host.playback(t)
+	if len(recovered.StructuredLyrics) == 0 {
+		t.Fatal("refresh did not recover after the backoff window")
+	}
+}
+
+func testClassicRefreshRace(t *testing.T) {
+	var mu sync.Mutex
+	classicStarted := make(chan struct{}, 1)
+	releaseClassic := make(chan struct{})
+	published := make(chan responses.LyricsList, 1)
+	first := true
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		isFirst := first
+		first = false
+		mu.Unlock()
+		if isFirst {
+			classicStarted <- struct{}{}
+			<-releaseClassic
+			return http.StatusOK, lrclibRecord("obsolete classic")
+		}
+		return http.StatusOK, lrclibRecord("newer refresh")
+	})
+
+	classicDone := make(chan string, 1)
+	go func() {
+		_, _, body := host.get(t, "/getLyricsBySongId?id=track-1&"+host.auth())
+		classicDone <- string(body)
+	}()
+	<-classicStarted
+
+	// Observe the newer committed snapshot while the classic provider result is
+	// still paused.
+	refresh := host.playbackRefresh(t)
+	published <- refresh
+	if refresh.DiscoveryRevision == "" || len(refresh.StructuredLyrics) == 0 {
+		t.Fatal("refresh did not publish a committed snapshot")
+	}
+
+	close(releaseClassic)
+	classicBody := <-classicDone
+	if strings.Contains(classicBody, "obsolete classic") {
+		t.Fatal("the superseded classic result was served or cached")
+	}
+	next := host.playback(t)
+	if next.DiscoveryRevision != refresh.DiscoveryRevision {
+		t.Fatalf("next enhanced revision = %q, want %q", next.DiscoveryRevision, refresh.DiscoveryRevision)
+	}
+}
+
+func testRetryAfter(t *testing.T) {
+	var mu sync.Mutex
+	limited := true
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		if limited {
+			return http.StatusTooManyRequests, []byte("rate limited")
+		}
+		return http.StatusOK, lrclibRecord("retry recovered")
+	})
+	host.transport.header = func(request *http.Request) http.Header {
+		mu.Lock()
+		defer mu.Unlock()
+		if limited {
+			return http.Header{"Retry-After": {"2"}}
+		}
+		return nil
+	}
+	_, _, body := host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&"+host.auth())
+	if !strings.Contains(string(body), "retry after 2s") {
+		t.Fatalf("cooldown response did not expose Retry-After: %s", body)
+	}
+	before := host.transport.requests()
+	_, _, _ = host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&refresh=true&"+host.auth())
+	if host.transport.requests() != before {
+		t.Fatal("refresh bypassed Retry-After")
+	}
+	mu.Lock()
+	limited = false
+	mu.Unlock()
+	time.Sleep(3 * time.Second)
+	refreshed := host.playbackRefresh(t)
+	if len(refreshed.StructuredLyrics) == 0 {
+		t.Fatal("refresh did not recover after Retry-After")
+	}
+}
+
+func testClassicRejectedWhileRefreshInFlight(t *testing.T) {
+	classicStarted := make(chan struct{}, 1)
+	refreshStarted := make(chan struct{}, 1)
+	releaseClassic := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	var mu sync.Mutex
+	calls := 0
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		calls++
+		call := calls
+		mu.Unlock()
+		switch call {
+		case 1:
+			classicStarted <- struct{}{}
+			<-releaseClassic
+			return http.StatusOK, lrclibRecord("obsolete classic")
+		case 2:
+			refreshStarted <- struct{}{}
+			<-releaseRefresh
+			return http.StatusOK, lrclibRecord("newer refresh")
+		default:
+			return http.StatusOK, lrclibRecord("newer refresh")
+		}
+	})
+	classicDone := make(chan string, 1)
+	go func() {
+		_, _, body := host.get(t, "/getLyricsBySongId?id=track-1&"+host.auth())
+		classicDone <- string(body)
+	}()
+	<-classicStarted
+	refreshDone := make(chan responses.LyricsList, 1)
+	go func() { refreshDone <- host.playbackRefresh(t) }()
+	<-refreshStarted
+
+	// The refresh is admitted but has not committed. The classic writer must
+	// already be fenced.
+	close(releaseClassic)
+	classicBody := <-classicDone
+	if strings.Contains(classicBody, "obsolete classic") {
+		t.Fatal("classic result published while refresh held the admission")
+	}
+	close(releaseRefresh)
+	refresh := <-refreshDone
+	if len(refresh.StructuredLyrics) == 0 || refresh.DiscoveryRevision == "" {
+		t.Fatal("refresh did not commit after the in-flight rejection")
+	}
+	next := host.playback(t)
+	if next.DiscoveryRevision != refresh.DiscoveryRevision {
+		t.Fatalf("next enhanced revision = %q, want %q", next.DiscoveryRevision, refresh.DiscoveryRevision)
+	}
+}
+
+func testEnhancedCoalescing(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		return http.StatusOK, lrclibRecord("coalesced")
+	})
+	var wg sync.WaitGroup
+	revisions := make(chan string, 4)
+	for range 4 {
+		wg.Go(func() {
+			revisions <- host.playback(t).DiscoveryRevision
+		})
+	}
+	wg.Wait()
+	close(revisions)
+	first := ""
+	for revision := range revisions {
+		if revision == "" {
+			t.Fatal("coalesced request returned no revision")
+		}
+		if first == "" {
+			first = revision
+		}
+		if revision != first {
+			t.Fatal("coalesced requests observed different snapshots")
+		}
+	}
+	mu.Lock()
+	providerCalls := calls
+	mu.Unlock()
+	if providerCalls != 1 {
+		t.Fatalf("cold coalesced provider calls = %d, want one", providerCalls)
+	}
+	// A fresh positive would suppress provider work; make the source eligible
+	// again by using a clean miss, then recover it under concurrent refreshes.
+	missHost := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		if calls < 1000 {
+			return http.StatusNotFound, nil
+		}
+		return http.StatusOK, lrclibRecord("coalesced refresh")
+	})
+	_ = missHost.playback(t)
+	mu.Lock()
+	calls = 1000
+	mu.Unlock()
+	before := missHost.transport.requests()
+	for range 3 {
+		wg.Go(func() { _ = missHost.playbackRefresh(t) })
+	}
+	wg.Wait()
+	if missHost.transport.requests()-before != 1 {
+		t.Fatalf("concurrent refresh provider calls = %d, want one", missHost.transport.requests()-before)
+	}
+}
+
+func testForegroundBudget(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	host := newQualificationHost(t, []string{"unison", "binimum", "amll", "lrclib", "better-lyrics-legato"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		time.Sleep(900 * time.Millisecond)
+		return http.StatusNotFound, nil
+	})
+	start := time.Now()
+	_, _, _ = host.get(t, "/getLyricsBySongId?id=track-1&enhanced=true&"+host.auth())
+	elapsed := time.Since(start)
+	mu.Lock()
+	foregroundCalls := calls
+	mu.Unlock()
+	if elapsed > 3*time.Second {
+		t.Fatalf("foreground lookup took %v, want the 2s total budget", elapsed)
+	}
+	if foregroundCalls > 3 {
+		t.Fatalf("foreground provider calls = %d, want at most three", foregroundCalls)
+	}
+}
+
+func testConfigReloadStaleContinuation(t *testing.T) {
+	host := newQualificationHost(t, []string{"unison"}, func(request *http.Request) (int, []byte) {
+		switch {
+		case request.URL.Host == "unison.boidu.dev":
+			body, _ := json.Marshal(map[string]any{"success": true, "data": map[string]any{
+				"lyrics": "[00:01.00]old config line", "format": "lrc", "language": "en",
+			}})
+			return http.StatusOK, body
+		case request.URL.Host == "lyrics-api.boidu.dev":
+			body, _ := json.Marshal(map[string]string{"ttml": `<tt><body><p begin="1" end="2">new config line</p></body></tt>`})
+			return http.StatusOK, body
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+	first := host.playback(t)
+	if len(first.StructuredLyrics) == 0 || first.StructuredLyrics[0].Line[0].Value != "old config line" {
+		t.Fatalf("initial config playback = %#v", first.StructuredLyrics)
+	}
+	host.plugin.Idle(t)
+	trackKey := host.plugin.PublicationTrackKey(&model.MediaFile{
+		ID: "track-1", Title: qualificationTrackTitle, Artist: qualificationTrackArtist,
+		Album: "Qualification Album", Duration: 200,
+	})
+	generation, token, ok := host.plugin.Admission(t, trackKey)
+	if !ok || generation == "" || token == "" {
+		t.Fatal("initial operation did not leave an admission identity")
+	}
+	host.plugin.Configure(t, []string{"better-lyrics"}, "")
+	payload, err := json.Marshal(map[string]any{
+		"track": map[string]any{
+			"title": qualificationTrackTitle, "artist": qualificationTrackArtist,
+			"album": "Qualification Album", "duration": 200,
+		},
+		"publication": map[string]any{"generation": generation, "token": token, "kind": "sweep"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := host.transport.requests()
+	host.plugin.EnqueueTask(t, "lyrics-sweep", payload)
+	host.plugin.Idle(t)
+	if host.transport.requests() != before {
+		t.Fatal("stale continuation performed provider work after reload")
+	}
+	reloaded := host.playback(t)
+	if len(reloaded.StructuredLyrics) == 0 || reloaded.StructuredLyrics[0].Line[0].Value != "new config line" {
+		t.Fatalf("reloaded playback = %#v", reloaded.StructuredLyrics)
+	}
+	if reloaded.DiscoveryRevision == "" || reloaded.DiscoveryRevision == first.DiscoveryRevision {
+		t.Fatal("reload did not publish a new revision")
+	}
+}
+
+func testRetainedKVExport(t *testing.T) {
+	destination := os.Getenv("BETTER_LYRICS_RETAINED_KV_OUT")
+	if destination == "" {
+		t.Skip("BETTER_LYRICS_RETAINED_KV_OUT is not set")
+	}
+	host := newQualificationHost(t, []string{"lrclib"}, func(request *http.Request) (int, []byte) {
+		if request.URL.Host == "lrclib.net" {
+			return http.StatusOK, lrclibRecord("retained line")
+		}
+		return http.StatusNotFound, nil
+	})
+	_ = host.playback(t)
+	host.plugin.ExportKV(t, destination)
+}
+
+func testRefreshTail(t *testing.T) {
+	ttml := ttmlFixture(t)
+	var mu sync.Mutex
+	legatoReady := false
+	host := newQualificationHost(t, []string{"lrclib", "binimum", "better-lyrics", "better-lyrics-legato"}, func(request *http.Request) (int, []byte) {
+		mu.Lock()
+		ready := legatoReady
+		mu.Unlock()
+		switch {
+		case request.URL.Host == "lrclib.net":
+			return http.StatusNotFound, nil
+		case request.URL.Path == "/":
+			return http.StatusNotFound, nil
+		case request.URL.Path == "/q.ttml":
+			return http.StatusOK, ttml
+		case strings.Contains(request.URL.Path, "/kugou/getLyrics"):
+			if ready {
+				return http.StatusOK, []byte(`{"lyrics":"[00:01.00]tail line"}`)
+			}
+			return http.StatusNotFound, nil
+		default:
+			return http.StatusNotFound, nil
+		}
+	})
+	// Warm the first three source entries as clean misses, then enable the
+	// deferred fourth source.
+	_ = host.playback(t)
+	host.plugin.Idle(t)
+	mu.Lock()
+	legatoReady = true
+	mu.Unlock()
+	before := host.transport.requests()
+	_ = host.playbackRefresh(t)
+	host.plugin.Idle(t)
+	after := host.playback(t)
+	if len(after.StructuredLyrics) == 0 {
+		t.Fatal("tail did not recover the deferred source")
+	}
+	if host.transport.requests() <= before {
+		t.Fatal("tail did not perform the deferred provider request")
+	}
+}

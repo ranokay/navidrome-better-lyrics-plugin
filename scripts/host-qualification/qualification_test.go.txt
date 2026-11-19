@@ -160,6 +160,19 @@ func newQualificationHarness(t *testing.T, mode string, enabled ...string) *qual
 			t.Error(err)
 		}
 	})
+	if retained := os.Getenv("BETTER_LYRICS_RETAINED_KV"); retained != "" {
+		data, err := os.ReadFile(retained)
+		if err != nil {
+			t.Fatal(err)
+		}
+		destination := filepath.Join(dir, "data", "plugins", qualificationPluginID, "kvstore.db")
+		if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	h := &qualificationHarness{t: t, manager: m, packagePath: packagePath, transport: &qualificationTransport{mode: mode, requests: make(map[string]int)}}
 	for _, row := range manifest.Config.Schema.Properties.Sources.Default {
 		h.catalog = append(h.catalog, row.ID)
@@ -533,4 +546,21 @@ func TestBetterLyricsQualification(t *testing.T) {
 		// Cancel task work before cleanup; this scenario measures foreground only.
 		h.manager.cancel()
 	})
+}
+
+// TestLegacyHostRetainedKV loads the new WASM package in the older host with a
+// retained KV database produced by the new host. It proves the old import path
+// still instantiates and that the plugin does not fall through to publication
+// batch writes when the live host has no publication call metadata.
+func TestLegacyHostRetainedKV(t *testing.T) {
+	if os.Getenv("BETTER_LYRICS_RETAINED_KV") == "" {
+		t.Skip("BETTER_LYRICS_RETAINED_KV is not set")
+	}
+	h := newQualificationHarness(t, "rich", "better-lyrics", "unison")
+	if result, err := h.lookup("First paint"); err != nil || !strings.Contains(qualificationText(result), "original") {
+		t.Fatalf("classic lookup on the old host: %v %v", result, err)
+	}
+	if keys := h.keys("@navidrome/publication/commit:"); len(keys) != 0 {
+		t.Fatalf("legacy host accepted publication batches: %v", keys)
+	}
 }

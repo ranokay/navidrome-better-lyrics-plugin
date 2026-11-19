@@ -15,6 +15,8 @@ BASELINE_OVERLAY = "qualification_test.go.txt"
 ORIGINALS_TEST = "qualification_originals_test.go.txt"
 ORIGINALS_SUPPORT = "qualification_originals_support.go.txt"
 ORIGINALS_TEST_NAME = "TestLyricsOriginalsQualification"
+DISCOVERY_TEST = "qualification_discovery_test.go.txt"
+DISCOVERY_TEST_NAME = "TestLyricsDiscoveryQualification"
 
 
 def git_output(checkout: Path, *args: str) -> str:
@@ -44,13 +46,16 @@ def existing_path(parser: argparse.ArgumentParser, path: Path, directory: bool) 
     return resolved
 
 
-def overlay_files(script_dir: Path, originals: bool) -> dict[str, Path]:
-    if not originals:
+def overlay_files(script_dir: Path, originals: bool, discovery: bool = False) -> dict[str, Path]:
+    if not originals and not discovery:
         return {"plugins/zz_betterlyrics_qualification_test.go": script_dir / BASELINE_OVERLAY}
-    return {
+    files = {
         "plugins/zz_betterlyrics_qualification_support.go": script_dir / ORIGINALS_SUPPORT,
         "plugins/zz_betterlyrics_qualification_originals_test.go": script_dir / ORIGINALS_TEST,
     }
+    if discovery:
+        files["plugins/zz_betterlyrics_qualification_discovery_test.go"] = script_dir / DISCOVERY_TEST
+    return files
 
 
 def main() -> int:
@@ -59,6 +64,8 @@ def main() -> int:
     parser.add_argument("package", type=Path, help="trusted local plugin .ndp file")
     parser.add_argument("--originals", action="store_true",
                         help="run the optional variant/original runtime qualification")
+    parser.add_argument("--discovery", action="store_true",
+                        help="run the discovery/refresh/publication runtime qualification")
     parser.add_argument("--expect", choices=("originals", "legacy"), default="originals",
                         help="expected capability state for the originals run (default: originals)")
     args = parser.parse_args()
@@ -79,7 +86,7 @@ def main() -> int:
         parser.error("The host checkout must be the root of its Git worktree")
 
     script_dir = Path(__file__).resolve().parent
-    overlays = overlay_files(script_dir, args.originals)
+    overlays = overlay_files(script_dir, args.originals, args.discovery)
     for destination, source in overlays.items():
         if not source.is_file():
             parser.error(f"Missing qualification overlay: {source}")
@@ -103,7 +110,7 @@ def main() -> int:
             "BETTER_LYRICS_CACHE": str(Path(temporary) / "compiled"),
             "GOWORK": "off",
         }
-        if args.originals:
+        if args.originals or args.discovery:
             repo_root = script_dir.parent.parent
             env |= {
                 "BETTER_LYRICS_EXPECT": args.expect,
@@ -112,6 +119,8 @@ def main() -> int:
             }
             tags = "netgo,sqlite_fts5,qualification"
             test_name = ORIGINALS_TEST_NAME
+            if args.discovery:
+                test_name = DISCOVERY_TEST_NAME
         else:
             tags = "netgo,sqlite_fts5"
             test_name = "TestBetterLyricsQualification"

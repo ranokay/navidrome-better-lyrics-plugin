@@ -271,7 +271,7 @@ func TestFailureBackoffRemainsBoundedAndFailsOpen(t *testing.T) {
 	current := time.Unix(4000, 0)
 	p := newTestProviderWithDependencies(nil, newFakeLyricsCache(), func() time.Time { return current })
 	for _, expected := range []time.Duration{5, 10, 20, 40, 60, 60} {
-		p.rememberSourceFailure("outage", errors.New("upstream failed"))
+		p.rememberSourceFailure("outage", current, errors.New("upstream failed"))
 		got := p.sourceFailureBackoff("outage")
 		if got != expected*time.Second {
 			t.Fatalf("backoff = %s, want %s", got, expected*time.Second)

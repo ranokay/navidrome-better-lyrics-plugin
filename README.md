@@ -90,17 +90,24 @@ The plugin walks the enabled sources in configured order:
 Selection and caching rules:
 
 - Navidrome builds containing [#6465](https://github.com/navidrome/navidrome/pull/6465)
-  also cache the plugin response per plugin and track for five minutes, including
-  empty results and errors. Concurrent requests for the same track share one
-  lookup with a one-minute timeout. While that host cache entry remains valid,
-  Navidrome serves it without calling the plugin again. Background discoveries,
-  source-setting or credential changes, and recovery from a temporary provider
-  failure may therefore take up to five minutes to appear on a later request.
-  Polling during that period returns the cached response. The plugin's own
-  per-source caches and cooldowns still apply when Navidrome calls it.
-  That host change merged on 2026-11-15 and is not in the latest released
-  v0.64.2. Treat refresh after cache expiry as the baseline; prompt progressive
-  discovery requires an explicit upstream invalidation or refresh contract.
+  cache the classic plugin response per plugin and track for five minutes,
+  including clean misses. Concurrent classic requests share one lookup with a
+  one-minute timeout and provider errors remain retryable. Enhanced
+  (`enhanced=true`) requests are coalesced but not retained, so the next poll
+  can observe a completed background sweep without waiting for the classic
+  cache to expire.
+- A host that also exposes the live publication contract passes an opaque
+  generation and operation admission with classic, enhanced and original
+  calls. The plugin commits discovery-visible source, bundle, winner and
+  coverage writes atomically with a revision and completion flag. Enhanced
+  responses expose `discoveryRevision` and `discoveryComplete`; an explicit
+  `refresh=true` request supersedes older admitted work, retries eligible
+  negative coverage, and preserves provider cooldowns, Retry-After, failure
+  backoff, fresh positives and the three-source/two-second/750 ms foreground
+  budget. Deferred eligible sources are retried by a background refresh tail.
+  Old hosts keep the legacy direct-write path; old plugins on new hosts ignore
+  the additive fields and are never required to publish.
+  #6465 is in the companion candidate and is not in released v0.64.2.
 - The winner cache keys score against a fingerprint of the enabled and ordered
   source list, so reordering sources in Settings takes effect the next time
   Navidrome calls the plugin.

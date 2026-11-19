@@ -68,6 +68,37 @@ Run the runner's input and cleanup regressions with:
 mise run qualification-runner-check
 ```
 
+## Discovery, refresh and publication runtime mode
+
+```sh
+mise exec -- python3 scripts/host-qualification/run.py --discovery \
+  /path/to/companion-navidrome dist/nd-better-lyrics.ndp
+```
+
+This overlays the real Subsonic router/auth, WASI loader, KV and task services
+with a deterministic provider transport and exercises: classic cache reuse,
+sweep alternatives observable before the classic TTL, clean-miss and transient
+backoff/Retry-After recovery, an obsolete classic writer racing an admitted
+refresh, in-flight supersession, enhanced/refresh coalescing, the three-source
+foreground budget, the deferred refresh tail, config reload with a stale queued continuation, and
+retained-KV export. It
+records the host head and package SHA-256 and verifies the host checkout is
+unchanged.
+
+Set `BETTER_LYRICS_RETAINED_KV_OUT=/path/to/kvstore.db` to export the real
+plugin KV from the new host. Load that database with the new `.ndp` in the older
+host and run the legacy overlay:
+
+```sh
+BETTER_LYRICS_RETAINED_KV=/path/to/kvstore.db \
+  go test -tags=netgo,sqlite_fts5 -overlay old-host-overlay.json \
+  ./plugins -run '^TestLegacyHostRetainedKV$'
+```
+
+This proves the old import path still instantiates and that a retained
+publication key does not cause unconditional batch writes on a host that does
+not negotiate publication.
+
 ## Deterministic product-package browser host
 
 `browser_fixture_host.py` builds a real Navidrome binary with the production

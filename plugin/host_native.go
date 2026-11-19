@@ -10,6 +10,8 @@ import "github.com/ranokay/navidrome-better-lyrics-plugin/internal/provider"
 
 func defaultStore() provider.Store { return nil }
 
+func defaultPublisher() provider.Publisher { return nil }
+
 func defaultConfigLookup() provider.ConfigLookup { return nil }
 
 func createSweepQueue(string, int32) error { return nil }

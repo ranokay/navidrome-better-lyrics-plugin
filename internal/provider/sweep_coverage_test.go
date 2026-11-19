@@ -1020,8 +1020,11 @@ func TestGetLyrics_SweepEnqueueFailureReleasesSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := provider.sweepPendingMarkerKey(track, trackKey)
-	if ttl := cache.ttlsForKey[key]; ttl != 1 || marker.ExpiresAt != now.Unix()+1 {
-		t.Fatalf("release marker TTL=%d expiry=%d, want 1 second and %d", ttl, marker.ExpiresAt, now.Unix()+1)
+	if ttl := cache.ttlsForKey[key]; ttl != 1 || marker.ExpiresAt != now.Unix()-1 {
+		t.Fatalf("release marker TTL=%d expiry=%d, want an expired 1-second tombstone at %d", ttl, marker.ExpiresAt, now.Unix()-1)
+	}
+	if provider.sweepMarkerActive(key) {
+		t.Fatal("a failed enqueue left the pending marker active")
 	}
 }
 
