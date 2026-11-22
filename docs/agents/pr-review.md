@@ -24,4 +24,3 @@ separate from plugin delivery and a published release.
 Provider identifiers are not automatically private credentials. Establish the
 actual exposure and capability before alleging a secret leak; never reproduce
 private values in review output.
-
