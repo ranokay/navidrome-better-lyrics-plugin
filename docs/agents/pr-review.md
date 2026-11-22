@@ -24,7 +24,3 @@ separate from plugin delivery and a published release.
 Provider identifiers are not automatically private credentials. Establish the
 actual exposure and capability before alleging a secret leak; never reproduce
 private values in review output.
-
-PR-Agent is an optional reviewer. Its suggestions need source verification and
-appropriate tests before applying. It cannot replace local independent reviews,
-repository gates, runtime qualification, or maintainers' merge decisions.
