@@ -10,6 +10,28 @@ import (
 // implemented" return code, which the host treats as unsupported.
 const NotImplementedCode int32 = -2
 
+//go:wasmexport nd_lyrics_get_lyrics_published
+func _NdLyricsGetLyricsPublished() int32 {
+	if providerInstance == nil {
+		return NotImplementedCode
+	}
+	var input getLyricsPublishedRequestWire
+	if err := pdk.InputJSON(&input); err != nil {
+		pdk.SetError(err)
+		return -1
+	}
+	output, err := handleLyricsPublished(input)
+	if err != nil {
+		pdk.SetError(err)
+		return -1
+	}
+	if err := pdk.OutputJSON(output); err != nil {
+		pdk.SetError(err)
+		return -1
+	}
+	return 0
+}
+
 //go:wasmexport nd_lyrics_get_lyrics_v2
 func _NdLyricsGetLyricsV2() int32 {
 	if providerInstance == nil {

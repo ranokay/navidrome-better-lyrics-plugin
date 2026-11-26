@@ -5,6 +5,7 @@ import (
 
 	"github.com/navidrome/navidrome/plugins/pdk/go/lyrics"
 	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/lyric"
+	"github.com/ranokay/navidrome-better-lyrics-plugin/internal/provider"
 )
 
 // The optional lyrics-variant exports are written against the host's
@@ -60,14 +61,40 @@ type lyricsTextWire struct {
 	Match   *matchWire        `json:"match,omitempty"`
 }
 
+type publicationWire struct {
+	Generation string `json:"generation,omitempty"`
+	Token      string `json:"token,omitempty"`
+	CallID     string `json:"callId,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+}
+
+type discoveryWire struct {
+	Revision string `json:"revision,omitempty"`
+	Complete bool   `json:"complete,omitempty"`
+}
+
 type getLyricsV2RequestWire struct {
-	Track lyrics.TrackInfo `json:"track"`
+	Track       lyrics.TrackInfo `json:"track"`
+	Refresh     bool             `json:"refresh,omitempty"`
+	Publication *publicationWire `json:"publication,omitempty"`
 }
 
 type getLyricsV2ResponseWire struct {
-	Lyrics   []lyricsTextWire  `json:"lyrics"`
-	Source   *lyricsSourceWire `json:"source,omitempty"`
-	Evidence []evidenceWire    `json:"evidence,omitempty"`
+	Lyrics    []lyricsTextWire  `json:"lyrics"`
+	Source    *lyricsSourceWire `json:"source,omitempty"`
+	Evidence  []evidenceWire    `json:"evidence,omitempty"`
+	Discovery *discoveryWire    `json:"discovery,omitempty"`
+}
+
+type getLyricsPublishedRequestWire struct {
+	Track       lyrics.TrackInfo `json:"track"`
+	Publication *publicationWire `json:"publication,omitempty"`
+}
+
+type getLyricsPublishedResponseWire struct {
+	Lyrics    []lyricsTextWire  `json:"lyrics"`
+	Source    *lyricsSourceWire `json:"source,omitempty"`
+	Discovery *discoveryWire    `json:"discovery,omitempty"`
 }
 
 type getVariantsRequestWire struct {
@@ -91,8 +118,9 @@ type getVariantsResponseWire struct {
 }
 
 type getOriginalRequestWire struct {
-	Track    lyrics.TrackInfo `json:"track"`
-	Identity variantWire      `json:"identity"`
+	Track       lyrics.TrackInfo `json:"track"`
+	Identity    variantWire      `json:"identity"`
+	Publication *publicationWire `json:"publication,omitempty"`
 }
 
 type getOriginalResponseWire struct {
@@ -158,15 +186,36 @@ func originalToWire(info lyric.OriginalInfo) originalWire {
 	}
 }
 
+func publicationFromWire(wire *publicationWire) provider.Publication {
+	if wire == nil {
+		return provider.Publication{}
+	}
+	return provider.Publication{
+		Generation: wire.Generation, Token: wire.Token, CallID: wire.CallID, Kind: wire.Kind,
+	}
+}
+
+func discoveryToWire(discovery provider.Discovery) *discoveryWire {
+	if discovery.Revision == "" {
+		return nil
+	}
+	return &discoveryWire{Revision: discovery.Revision, Complete: discovery.Complete}
+}
+
 func handleLyricsV2(input getLyricsV2RequestWire) (getLyricsV2ResponseWire, error) {
 	if providerInstance == nil {
 		return getLyricsV2ResponseWire{}, fmt.Errorf("lyrics provider is not initialized")
 	}
-	response, err := providerInstance.GetLyricsV2(lyrics.GetLyricsRequest{Track: input.Track})
+	response, err := providerInstance.GetLyricsV2Published(
+		lyrics.GetLyricsRequest{Track: input.Track}, publicationFromWire(input.Publication), input.Refresh,
+	)
 	if err != nil {
 		return getLyricsV2ResponseWire{}, err
 	}
-	output := getLyricsV2ResponseWire{Lyrics: make([]lyricsTextWire, 0, len(response.Entries))}
+	output := getLyricsV2ResponseWire{
+		Lyrics:    make([]lyricsTextWire, 0, len(response.Entries)),
+		Discovery: discoveryToWire(response.Discovery),
+	}
 	if response.Source != nil {
 		output.Source = &lyricsSourceWire{Provider: response.Source.Provider, Format: response.Source.Format}
 	}
@@ -186,6 +235,32 @@ func handleLyricsV2(input getLyricsV2RequestWire) (getLyricsV2ResponseWire, erro
 	}
 	for _, evidence := range response.Evidence {
 		output.Evidence = append(output.Evidence, evidenceToWire(evidence))
+	}
+	return output, nil
+}
+
+func handleLyricsPublished(input getLyricsPublishedRequestWire) (getLyricsPublishedResponseWire, error) {
+	if providerInstance == nil {
+		return getLyricsPublishedResponseWire{}, fmt.Errorf("lyrics provider is not initialized")
+	}
+	response, err := providerInstance.GetLyricsPublished(
+		lyrics.GetLyricsRequest{Track: input.Track}, publicationFromWire(input.Publication),
+	)
+	if err != nil {
+		return getLyricsPublishedResponseWire{}, err
+	}
+	output := getLyricsPublishedResponseWire{Lyrics: make([]lyricsTextWire, 0, len(response.Lyrics))}
+	if response.Source != nil {
+		output.Source = &lyricsSourceWire{Provider: response.Source.Provider, Format: response.Source.Format}
+	}
+	for _, entry := range response.Lyrics {
+		text := lyricsTextWire{Lang: entry.Lang, Text: entry.Text}
+		if entry.Source != nil {
+			text.Source = &lyricsSourceWire{Provider: entry.Source.Provider, Format: entry.Source.Format}
+		} else if output.Source != nil {
+			text.Source = output.Source
+		}
+		output.Lyrics = append(output.Lyrics, text)
 	}
 	return output, nil
 }
@@ -219,7 +294,7 @@ func handleOriginal(input getOriginalRequestWire) (getOriginalResponseWire, erro
 		return getOriginalResponseWire{}, fmt.Errorf("lyrics provider is not initialized")
 	}
 	identity := variantFromWire(input.Identity)
-	document, reason := providerInstance.GetLyricsOriginal(input.Track, identity)
+	document, reason := providerInstance.GetLyricsOriginalPublished(input.Track, identity, publicationFromWire(input.Publication))
 	output := getOriginalResponseWire{Identity: input.Identity, Available: reason == "", UnavailableReason: reason}
 	if reason != "" {
 		return output, nil

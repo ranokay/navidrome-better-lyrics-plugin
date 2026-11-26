@@ -170,6 +170,9 @@ type cachedLyricsEnvelope struct {
 	// source data is promoted again. Older winners lack this bound and must be
 	// rebuilt from their source entries instead of renewing their age.
 	SourceExpiresAt int64 `json:"sourceExpiresAt,omitempty"`
+	// Owner records the enqueue that created a pending/tail marker so a
+	// stale task can clear only its own marker.
+	Owner string `json:"owner,omitempty"`
 }
 
 // winnerCacheTLSeconds maps a candidate's timing quality to the winner entry TTL.
@@ -290,6 +293,26 @@ func (p *Provider) storeCandidateBytes(key string, value []byte, oversized bool,
 		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), MaxCacheEntryBytes))
 		return false
 	}
+	if p.publication != nil && (p.publication.denied || p.publication.failed) {
+		// A denied scope or a rejected commit must never fall back to an
+		// unadmitted direct write.
+		return false
+	}
+	if p.publication != nil && p.publication.active {
+		// The host publication transaction enforces the quota and applies all
+		// writes atomically; buffering here keeps provider I/O outside its lock.
+		return p.storeDiscoveryBytes(key, value, ttl)
+	}
+	return p.storeDirectBytes(key, value, oversized, ttl)
+}
+
+// storeDirectBytes is the legacy/control path: immutable originals and hosts
+// without publication support keep the previous direct write behavior.
+func (p *Provider) storeDirectBytes(key string, value []byte, oversized bool, ttl int64) bool {
+	if oversized {
+		p.logf(fmt.Sprintf("lyrics cache entry skipped: %d bytes exceeds %d-byte limit", len(value), MaxCacheEntryBytes))
+		return false
+	}
 	if usageStore, ok := p.cache.(lyricsCacheUsageStore); ok {
 		used, err := usageStore.StorageUsed()
 		if err != nil {
@@ -330,10 +353,19 @@ func (p *Provider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool
 	if err != nil {
 		return false
 	}
+	if p.publication != nil && p.publication.active {
+		if len(value) > MaxCacheEntryBytes {
+			return false
+		}
+		// Buffered writes count as coverage only because the sweep's done
+		// marker commits in the same transaction; a rejected batch publishes
+		// neither the miss nor completion.
+		return p.storeDiscoveryBytes(key, value, negativeLyricsCacheTTLSeconds)
+	}
 	if !p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, negativeLyricsCacheTTLSeconds) {
 		return false
 	}
-	// An oversized/evicted write must not count as coverage.
+	// An oversized/evicted direct write must not count as coverage.
 	_, exists, _ := p.cache.Get(key)
 	return exists
 }
@@ -344,6 +376,27 @@ func (p *Provider) cacheSourceMiss(track lyrics.TrackInfo, sourceID string) bool
 func (p *Provider) readCachedSourceCoverage(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, bool) {
 	candidate, _, ok := p.readCachedSourceCoverageWithExpiry(track, sourceID)
 	return candidate, ok
+}
+
+// readCachedSourcePositive reports a fresh positive fetched under the current
+// credential. Explicit refresh reuses it; it never treats a cached miss as
+// coverage, so eligible negative sources are retried.
+func (p *Provider) readCachedSourcePositive(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, bool) {
+	candidate, _, ok := p.readCachedSourcePositiveWithExpiry(track, sourceID)
+	return candidate, ok
+}
+
+func (p *Provider) readCachedSourcePositiveWithExpiry(track lyrics.TrackInfo, sourceID string) (lyric.Candidate, int64, bool) {
+	key, ok := lyricsCacheKeyForSource(track, sourceID)
+	if !ok {
+		return lyric.Candidate{}, 0, false
+	}
+	envelope, found := p.readCachedEnvelope(key)
+	if !found || envelope.Generation != lyricsCacheGeneration || envelope.Credentials != p.sourceCredentialsFingerprint(sourceID) {
+		return lyric.Candidate{}, 0, false
+	}
+	candidate := cachedCandidate(envelope)
+	return candidate, envelope.ExpiresAt, candidate.Present()
 }
 
 // readCachedSourceCoverageWithExpiry reads whichever per-source entry exists

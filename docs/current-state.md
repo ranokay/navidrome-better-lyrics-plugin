@@ -150,18 +150,32 @@ compatibility claim or replacing the PDK.
 | [#6032: earlier coalescing proposal](https://github.com/navidrome/navidrome/pull/6032) | Closed without merge | Historical reference only. No pending work depends on this PR. Use #6465 for the actual host behavior. |
 | [#6465: plugin response cache/coalescing](https://github.com/navidrome/navidrome/pull/6465) | Merged 2026-11-15; absent from v0.64.2 | Navidrome maintainers own release delivery. Plugin maintainers qualify builds containing it under #25 and update release-specific documentation when shipped. |
 
-Builds containing #6465 cache the entire plugin response per plugin/track for
-five minutes, including misses and errors. They coalesce concurrent lookups
-with a one-minute timeout. A poll during that cache lifetime does not call the
-plugin, so it cannot reveal new sweep results or immediately apply source and
-credential changes. The old five-second/sixty-second progressive-fill plan is
-not the current contract for this route.
+Builds containing #6465 retain the classic plugin response per plugin/track
+for five minutes and coalesce concurrent classic lookups. Enhanced lookups are
+coalesced but not retained, so completed sweep results are visible to the next
+enhanced request without waiting for that classic TTL.
 
-The baseline is eventual refresh on a request after host-cache expiry. Prompt
-progressive discovery requires an explicit upstream refresh/invalidation
-contract and verification of that route against a running host. Carry that
-dependency through #6033 and #25 rather than adding another plugin cache or
-promising that client polling bypasses the host cache.
+The companion host candidate additionally negotiates a live publication
+contract through the existing KV host functions (no new WASM imports):
+- the host mints a per-load generation and an operation admission;
+- the plugin commits discovery-visible source, bundle, winner and coverage
+  writes, a snapshot digest, revision and completion in one conditional
+  transaction;
+- a superseded sweep or queued continuation cannot write results, revision or
+  completion after a refresh, configuration/credential change, reload or
+  A→B→A activation;
+- `refresh=true` and the background refresh tail retry eligible negative
+  coverage while preserving cooldowns, Retry-After, failure backoff, fresh
+  positives and the foreground source/time budget;
+- cooldowns, salts, originals and task markers retain their separate safety
+  paths and bounds.
+
+Enhanced responses expose `discoveryRevision` and `discoveryComplete`.
+Old hosts use the legacy direct-write path; old plugins ignore the additive
+fields. The five-minute classic cache remains the baseline until a host
+releases the companion contract. Runtime evidence and its exact package/host
+heads are recorded under `scripts/host-qualification` rather than inferred
+from a build alone.
 
 ## Dependencies and upgrades
 

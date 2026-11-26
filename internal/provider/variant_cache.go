@@ -95,7 +95,7 @@ func (p *Provider) storeOriginalArtifact(track lyrics.TrackInfo, candidate lyric
 		p.logf(fmt.Sprintf("lyrics original encode failed: %v", p.safeDiagnosticError(err)))
 		return false
 	}
-	return p.storeCandidateBytes(key, value, len(value) > MaxCacheEntryBytes, ttl)
+	return p.storeDirectBytes(key, value, len(value) > MaxCacheEntryBytes, ttl)
 }
 
 // readOriginalArtifact reads one exact identity's document without renewing it.

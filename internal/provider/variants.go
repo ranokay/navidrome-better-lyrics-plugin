@@ -83,9 +83,10 @@ type VariantEntry struct {
 // V2Response is the optional playback response: every representation from every
 // source, winner first, each carrying its exact identity.
 type V2Response struct {
-	Entries  []VariantEntry
-	Source   *lyrics.LyricsSource
-	Evidence []lyric.Evidence
+	Entries   []VariantEntry
+	Source    *lyrics.LyricsSource
+	Evidence  []lyric.Evidence
+	Discovery Discovery
 }
 
 // VariantSummary is one listing row. PlaybackIndex is advisory: identity is the
